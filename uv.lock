@@ -1369,7 +1369,7 @@ wheels = [
 ]
 
 [[package]]
-name = "pi-context-runtime"
+name = "pi-context-memory"
 version = "0.0.0"
 source = { virtual = "." }
 dependencies = [

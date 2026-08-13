@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
   "generatedBy": "scripts/validate-source-recall.mjs",
-  "runId": "source-recall-2026-08-13T17-17-04-708Z",
-  "recordedAt": "2026-08-13T17:17:24.419Z",
+  "runId": "source-recall-2026-08-13T17-49-28-054Z",
+  "recordedAt": "2026-08-13T17:49:46.566Z",
   "piVersion": "0.84.1",
   "openVikingVersion": "0.4.13",
   "openVikingConfig": {
@@ -11,7 +11,7 @@
     "effective": {
       "defaultAccount": "source-recall-validation",
       "defaultUser": "pi-context-memory",
-      "storageWorkspace": ".artifacts/source-recall/source-recall-2026-08-13T17-17-04-708Z/openviking-data",
+      "storageWorkspace": ".artifacts/source-recall/source-recall-2026-08-13T17-49-28-054Z/openviking-data",
       "embedding": {
         "dense": {
           "cache_dir": "./.cache/openviking/models",
@@ -38,18 +38,18 @@
       "watchSchedulerEnabled": false,
       "server": {
         "host": "127.0.0.1",
-        "port": 50956,
+        "port": 64352,
         "agent_evolution": {
           "enabled": false
         }
       }
     },
-    "effectiveSha256": "57a6f17f5de4ef58fdd81387719ff7b30e1078ceed965de8e5f76d820ec67d76",
+    "effectiveSha256": "4dcc629ebd8afc9cc15cc1b9910078387da81d425a6e5fb2e929699784780c6c",
     "controlledByRunner": true,
     "denseEmbeddingProvider": "local"
   },
   "implementation": {
-    "sourceManifestSha256": "42e560f3248004c4fd3293561997d148ed6f24409cc55f1ea085de2abc9472fc",
+    "sourceManifestSha256": "0d488135019acc97c678a7573aab6301258a9d0e9bd6995bf3fa9692902f4823",
     "files": [
       {
         "path": ".pi/extensions/pi-context-memory/index.ts",
@@ -69,7 +69,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "df899566aec7d26ee3669c3e0a42ace9e6368b9e370d416fcacc937be7894a56"
+        "sha256": "5412a67094ec9413d831e51d95487244d2d6071eec899fdbb0bf41363767ed1d"
       },
       {
         "path": "scripts/check-validation-evidence.mjs",
@@ -89,14 +89,14 @@
       },
       {
         "path": "uv.lock",
-        "sha256": "4e1c85ba3c59642cb030d1ce915427f97910941f4ee737047c7c90f1a7782ffd"
+        "sha256": "910184bff539fd56b4b7f8fc2ee46439f3113c7394c1538d60ef3a5e3c78f094"
       },
       {
         "path": "validation/fixtures/openviking-source-recall.json",
         "sha256": "3192252aa9b87a6cdd481b273142c7e3a3692e3bd253800c1bbb9d200ab591d0"
       }
     ],
-    "gitCommit": "b2d8762bac79d7db3fa4fa663b30d50a246199dc",
+    "gitCommit": "4d594e7637245ce03803414292ce0af69baaf1a5",
     "workingTreeDirty": true
   },
   "passed": true,
@@ -144,8 +144,8 @@
     "branchCurrentRouteCandidates": 3
   },
   "sourceHashes": {
-    "common": "0155b8f83461d9f1a817c1d4b3482f4e25a901cb9f2caf57166ea2b80fcf15cb",
-    "branchB": "0865319d58f0fd9ad4bbdb29a80ef7bd6fe88eb460b3cbcfc6c30ca460f1ac63"
+    "common": "37ffa83319e0858ab26fd601455606bb18eb56b00d952e9e1e613025eddc988d",
+    "branchB": "f8643b7bf403ca338fa071571ef8cf37a5e96cfe835f613850e70cccbb42df56"
   },
   "limitations": [
     "The local scope covers source coordination and OpenViking retrieval with local dense embeddings.",

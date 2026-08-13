@@ -12,34 +12,35 @@
 
 归档和索引使用独立队列；当前本地证据覆盖队列协调、索引准备、正常空结果和后端错误语义。Provider 并发与故障后的 Agent 连续性由代表性长任务纵向实验验证。
 
-当前有效证据：
+当前证据状态：
 
-- [`validation/evidence/source-archive.json`](../validation/evidence/source-archive.json)：session 隔离、branch 切换、来源恢复、完整结果与存储失败边界；
-- [`validation/evidence/source-recall.json`](../validation/evidence/source-recall.json)：受控 OpenViking 配置、真实向量索引、队列边界、当前路线召回、来源预览和 Pi 权威 entry 展开。
+- [`validation/evidence/source-archive.json`](../validation/evidence/source-archive.json)：与当前实现一致，覆盖 session 隔离、branch 切换、来源恢复、完整结果与存储失败边界；
+- [`validation/evidence/source-recall.json`](../validation/evidence/source-recall.json)：与当前实现一致，覆盖受控 OpenViking、真实向量索引、队列边界、当前路线召回、来源预览和 Pi 权威 entry 展开。
 
-`node scripts/check-validation-evidence.mjs` 核对两份 evidence 与当前实现。两个验证 runner 使用本地资源。
+`node scripts/check-validation-evidence.mjs` 当前确认两份 evidence 与实现一致。两个验证 runner 均使用本地资源。
 
 ## 3. 当前主导约束
 
-当前能力依赖任务模型主动调用显式召回，任务模型上下文继续由 Pi 管理。代表性长任务需要进一步区分召回触发、查询质量、候选质量和累计工作状态对任务连续性的影响。
+当前交付聚焦让扩展自动构造并采用有界工作上下文。显式召回继续提供来源恢复，Pi 原生上下文当前承担模型输入；当前纵向能力建立路线采用状态、安全切换和增强/Pi 原生状态展示。
 
-完整成本优势要求自动上下文优化先形成可运行能力。随后用同一任务、模型、工具边界、checker 和重复次数运行原生 Pi / 增强路径成对实验，验证两边任务质量与完整 API 账单。
+当前本地 evidence 证明来源归档与显式召回边界；自动上下文纵向 evidence 将通过实际 Provider 请求证明路线隔离、降级和状态一致性，并验证 OpenViking Working Memory 与 context assembly 的有效性。
+
+完整成本优势在上述能力可运行后，以同一任务、模型、工具边界、checker 和重复次数运行原生 Pi / 增强路径成对实验，验证两边任务质量与完整 API 账单。
 
 ## 4. 当前交付边界
 
-**目标**：确定显式来源召回在代表性长任务中的质量边界，并识别当前最限制任务连续性的因素。
+**目标**：完成最小自动有界上下文纵向能力，并确保 Pi 对话回退、分支与原生压缩始终可用，扩展状态始终反映模型输入实际采用增强记忆还是 Pi 原生路径。
 
 **需要完成**：
 
-- 使用共享 fixture、模型和最终 checker 运行 Pi 原生路径与当前显式召回路径；
-- 覆盖多轮目标更新、冲突 branch、工具证据和压缩后的任务继续；
-- 记录召回调用、查询命中、权威展开和最终任务结果；
-- 从 trace 区分召回触发、查询、候选和累计工作状态问题；
-- 根据证据选择自动召回或 Working Memory 的最小纵向实现。
+- 建立覆盖多轮目标更新、冲突 branch、工具证据、Pi 压缩和压缩后继续的共享长任务 fixture；
+- 以 OpenViking Session Working Memory 和 context assembly 为基础，在当前 session 与路线约束下构造并采用有界增强上下文；
+- Pi 回退、`/tree`、`/fork`、`/clone` 或 `/resume` 后，以当前 leaf 重建采用边界；新路线增强上下文准备期间保持 Pi 原生模型输入；
+- 手动、阈值和溢出触发的 Pi 原生压缩继续承担安全底座；增强准备、故障和恢复期间由该路径接续；
+- 扩展运行期间持续显示“增强记忆”或“Pi 原生”，状态以实际 Provider 请求采用结果为准；
+- 保存路线、上下文消息哈希、采用状态、降级和恢复 trace，并运行同任务的原生 Pi / 增强路径最终 checker。
 
-**完成条件**：至少一个代表性任务分布可重复运行，trace 和最终 checker 能够确定下一主导约束。
-
-自动注入、Pi context 控制、用户级跨 session memory、后端抽象和生产保留策略由后续证据决定。
+**完成条件**：至少一个代表性任务分布可重复运行；[`features/context-enhancement-state.md`](features/context-enhancement-state.md) 与 [`validation/context-enhancement-state.md`](validation/context-enhancement-state.md) 的回退、压缩、路线隔离和状态条件全部通过；增强路径任务质量不劣于原生 Pi，并能够进入完整成本成对验证。
 
 ## 5. 推进规则
 
@@ -47,8 +48,7 @@
 
 ## 6. 下一执行入口
 
-1. 建立需要压缩后继续规划、核对工具证据并处理事实更新的代表性任务；
-2. 对 Pi 原生与显式 `recall_session` 路径重复运行，保存召回调用、候选、展开和最终 checker trace；
-3. 按召回触发、查询、候选和累计工作状态分类结果；
-4. 实现证据确定的最小自动记忆能力；
-5. 在自动上下文优化纵向交付中建立同任务的原生 Pi / 增强路径成本实验。
+1. 建立 [`validation/context-enhancement-state.md`](validation/context-enhancement-state.md) 定义的长任务、路线切换、压缩、故障和状态 fixture；
+2. 基于 OpenViking Session Working Memory 和 context assembly，实现以 Pi 当前 session、leaf 和 branch 为采用条件的有界增强上下文；
+3. 接入 Pi 上下文、tree、session 与 compaction 生命周期，完成原生降级和持久状态标识；
+4. 运行原生 Pi / 增强路径质量与完整成本成对实验，并按结果重新识别主导约束。

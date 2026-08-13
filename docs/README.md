@@ -4,8 +4,6 @@
 
 `docs/` 保存产品与架构战略之下的当前功能、设计、契约、验证、运行和开发状态文档。文档体系的类别、权威关系和生命周期由 [`DOCUMENTION.md`](../DOCUMENTION.md) 定义；本文只维护当前地图。
 
-产品及 Pi 扩展的唯一名称是 `pi-context-memory`。当前仓库、远程地址和 Python 依赖锁沿用 `pi-context-runtime` 作为实现工程标识；该标识不定义产品名或用户能力。
-
 上层权威来源：
 
 - [`PRODUCT.md`](../PRODUCT.md)：产品目标、范围、优先级和价值评价；
@@ -31,39 +29,42 @@ docs/
 
 ## 3. 当前文档
 
-| 文档 | 当前责任 |
-| --- | --- |
-| [`DEVELOPMENT.md`](DEVELOPMENT.md) | 当前可运行状态、证据、主导约束和唯一下一入口 |
-| [`features/README.md`](features/README.md) | 功能规格索引 |
-| [`features/session-recall.md`](features/session-recall.md) | 当前 session/branch 内的显式来源召回行为 |
-| [`system/README.md`](system/README.md) | 跨模块系统设计索引 |
-| [`system/source-archiving.md`](system/source-archiving.md) | Pi 权威路线进入本地来源归档的流程 |
-| [`system/source-recall.md`](system/source-recall.md) | 本地来源进入 OpenViking派生索引并受控召回的流程 |
-| [`modules/README.md`](modules/README.md) | 架构模块与内部设计映射 |
-| [`modules/pi-integration.md`](modules/pi-integration.md) | Pi 生命周期、归档、索引与工具集成边界 |
-| [`modules/session-memory-coordination.md`](modules/session-memory-coordination.md) | session、当前 branch 与来源有效性协调 |
-| [`modules/long-term-memory.md`](modules/long-term-memory.md) | session 来源副本与完整结果文件承载 |
-| [`modules/recall-and-provenance.md`](modules/recall-and-provenance.md) | OpenViking候选排序、当前路线过滤与来源展开 |
-| [`modules/quality-and-cost-observation.md`](modules/quality-and-cost-observation.md) | 独立于扩展运行的开发期任务质量与 API 成本验证 |
-| [`validation/README.md`](validation/README.md) | 验证规格与证据入口索引 |
-| [`validation/source-archive.md`](validation/source-archive.md) | 来源归档隔离、恢复、完整结果与存储边界验证 |
-| [`validation/source-recall.md`](validation/source-recall.md) | OpenViking索引、显式召回、权威展开与错误语义验证 |
-| [`operations/README.md`](operations/README.md) | 当前可用行为的运行与维护索引 |
-| [`operations/source-archive.md`](operations/source-archive.md) | 本地来源归档配置、诊断与清理 |
-| [`operations/session-recall.md`](operations/session-recall.md) | OpenViking依赖、召回工具、索引恢复与降级 |
+| 文档                                                                                 | 当前责任                                         |
+| ------------------------------------------------------------------------------------ | ------------------------------------------------ |
+| [`DEVELOPMENT.md`](DEVELOPMENT.md)                                                   | 当前可运行状态、证据、主导约束和唯一下一入口     |
+| [`features/README.md`](features/README.md)                                           | 功能规格索引                                     |
+| [`features/session-recall.md`](features/session-recall.md)                           | 当前 session/branch 内的显式来源召回行为         |
+| [`features/context-enhancement-state.md`](features/context-enhancement-state.md)     | 自动上下文增强与 Pi 回退、原生压缩和状态标识     |
+| [`system/README.md`](system/README.md)                                               | 跨模块系统设计索引                               |
+| [`system/source-archiving.md`](system/source-archiving.md)                           | Pi 权威路线进入本地来源归档的流程                |
+| [`system/source-recall.md`](system/source-recall.md)                                 | 本地来源进入 OpenViking派生索引并受控召回的流程  |
+| [`modules/README.md`](modules/README.md)                                             | 架构模块与内部设计映射                           |
+| [`modules/pi-integration.md`](modules/pi-integration.md)                             | Pi 生命周期、归档、索引与工具集成边界            |
+| [`modules/session-memory-coordination.md`](modules/session-memory-coordination.md)   | session、当前 branch 与来源有效性协调            |
+| [`modules/long-term-memory.md`](modules/long-term-memory.md)                         | session 来源副本与完整结果文件承载               |
+| [`modules/recall-and-provenance.md`](modules/recall-and-provenance.md)               | OpenViking候选排序、当前路线过滤与来源展开       |
+| [`modules/quality-and-cost-observation.md`](modules/quality-and-cost-observation.md) | 独立于扩展运行的开发期任务质量与 API 成本验证    |
+| [`validation/README.md`](validation/README.md)                                       | 验证规格与证据入口索引                           |
+| [`validation/source-archive.md`](validation/source-archive.md)                       | 来源归档隔离、恢复、完整结果与存储边界验证       |
+| [`validation/source-recall.md`](validation/source-recall.md)                         | OpenViking索引、显式召回、权威展开与错误语义验证 |
+| [`validation/context-enhancement-state.md`](validation/context-enhancement-state.md) | 上下文增强回退、原生压缩与状态一致性验证         |
+| [`operations/README.md`](operations/README.md)                                       | 当前可用行为的运行与维护索引                     |
+| [`operations/source-archive.md`](operations/source-archive.md)                       | 本地来源归档配置、诊断与清理                     |
+| [`operations/session-recall.md`](operations/session-recall.md)                       | OpenViking依赖、召回工具、索引恢复与降级         |
 
 当前没有需要独立演进的共享契约文档。
 
 ## 4. 按问题导航
 
-| 当前问题 | 入口 |
-| --- | --- |
-| 产品为什么存在、什么结果有价值 | [`PRODUCT.md`](../PRODUCT.md) |
-| 系统责任与依赖方向 | [`ARCHITECTURE.md`](../ARCHITECTURE.md) |
-| 文档应建在哪里 | [`DOCUMENTION.md`](../DOCUMENTION.md) |
-| 项目现在做到哪里、下一步是什么 | [`DEVELOPMENT.md`](DEVELOPMENT.md) |
-| 任务模型怎样召回早期来源 | [`features/session-recall.md`](features/session-recall.md) |
-| 来源归档怎样运行 | [`operations/source-archive.md`](operations/source-archive.md) |
+| 当前问题                         | 入口                                                           |
+| -------------------------------- | -------------------------------------------------------------- |
+| 产品为什么存在、什么结果有价值   | [`PRODUCT.md`](../PRODUCT.md)                                  |
+| 系统责任与依赖方向               | [`ARCHITECTURE.md`](../ARCHITECTURE.md)                        |
+| 文档应建在哪里                   | [`DOCUMENTION.md`](../DOCUMENTION.md)                          |
+| 项目现在做到哪里、下一步是什么   | [`DEVELOPMENT.md`](DEVELOPMENT.md)                             |
+| 任务模型怎样召回早期来源         | [`features/session-recall.md`](features/session-recall.md)     |
+| 上下文增强怎样兼容 Pi 回退并展示状态 | [`features/context-enhancement-state.md`](features/context-enhancement-state.md) |
+| 来源归档怎样运行                 | [`operations/source-archive.md`](operations/source-archive.md) |
 | 安装项目依赖、启动并使用来源召回 | [`operations/session-recall.md`](operations/session-recall.md) |
 
 ## 5. 维护要求

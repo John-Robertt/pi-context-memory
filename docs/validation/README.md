@@ -2,16 +2,17 @@
 
 ## 1. 目录角色
 
-本目录保存当前可执行的验证设计与证据入口，说明产品结果、架构边界、模块设计和契约的证明方法。验证类别和生命周期服从 [`DOCUMENTION.md`](../../DOCUMENTION.md)。
+本目录保存当前验证设计与有效证据入口，说明产品结果、架构边界、模块设计和契约的证明方法。验证类别和生命周期服从 [`DOCUMENTION.md`](../../DOCUMENTION.md)。
 
-## 2. 当前验证
+## 2. 验证规格与证据
 
 | 验证规格 | 当前责任 | 证据入口 |
 | --- | --- | --- |
 | [`source-archive.md`](source-archive.md) | 日常验证来源归档的 session 隔离、branch 约束、来源恢复和完整结果 | [`../../validation/evidence/source-archive.json`](../../validation/evidence/source-archive.json) |
 | [`source-recall.md`](source-recall.md) | 日常验证 OpenViking 来源索引、显式召回边界和权威展开 | [`../../validation/evidence/source-recall.json`](../../validation/evidence/source-recall.json) |
+| [`context-enhancement-state.md`](context-enhancement-state.md) | 验证自动上下文增强与 Pi 回退、原生压缩和状态标识的一致性 | 自动上下文纵向 runner 与稳定 evidence |
 
-两个 runner 使用本地资源。`scripts/validation-evidence.mjs` 集中维护实现输入与必需 check 集；runner 在执行前后核对输入哈希，并在完整通过后更新稳定 evidence。
+来源归档与来源召回 runner 使用本地资源。`scripts/validation-evidence.mjs` 集中维护实现输入与必需 check 集；runner 在执行前后核对输入哈希，并在完整通过后更新稳定 evidence。自动上下文的证据责任见对应验证规格。
 
 ```bash
 node scripts/validate-source-archive.mjs
@@ -40,5 +41,5 @@ checker 核对 evidence schema、精确 check 集、通过状态、文件集合�
 - 日常验证证明当前实现正确性；
 - 原始运行产物写入 Git 忽略的 `.artifacts/`；
 - 稳定 evidence 保存脱敏检查、实现输入和结果摘要；
-- 每项验证规格都具有当前责任、执行入口和维护路径；
-- 新成本验证替换本节的待交付定义，并与自动上下文优化在同一纵向交付中完成。
+- 每项验证规格明确证据责任与维护路径，可运行能力同时提供执行入口；
+- 完整成本验证与自动上下文优化在同一纵向交付中完成，并由本节索引其稳定证据。

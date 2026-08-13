@@ -1,5 +1,5 @@
 {
-  "default_account": "pi-context-runtime",
+  "default_account": "pi-context-memory",
   "default_user": "pi-context-memory",
   "storage": {
     "workspace": "./.artifacts/openviking/data"
