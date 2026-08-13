@@ -21,7 +21,7 @@
 
 ## 3. 当前主导约束
 
-当前交付聚焦让扩展自动构造并采用有界工作上下文。显式召回继续提供来源恢复，Pi 原生上下文当前承担模型输入；当前纵向能力建立路线采用状态、安全切换和增强/Pi 原生状态展示。
+当前交付聚焦让扩展自动构造并采用有界工作上下文。OpenViking Working Memory 进入该路径前，首先需要建立最小、可重复的记忆模型配置与项目托管实例重启能力；显式召回继续提供来源恢复，Pi 原生上下文当前承担模型输入。
 
 当前本地 evidence 证明来源归档与显式召回边界；自动上下文纵向 evidence 将通过实际 Provider 请求证明路线隔离、降级和状态一致性，并验证 OpenViking Working Memory 与 context assembly 的有效性。
 
@@ -33,6 +33,7 @@
 
 **需要完成**：
 
+- 按 [`features/memory-model-configuration.md`](features/memory-model-configuration.md) 和 [`system/memory-model-runtime.md`](system/memory-model-runtime.md) 建立从项目锁定 OpenViking能力描述生成核心记忆模型配置的转换层，以及项目托管 OpenViking安全重启；
 - 建立覆盖多轮目标更新、冲突 branch、工具证据、Pi 压缩和压缩后继续的共享长任务 fixture；
 - 以 OpenViking Session Working Memory 和 context assembly 为基础，在当前 session 与路线约束下构造并采用有界增强上下文；
 - Pi 回退、`/tree`、`/fork`、`/clone` 或 `/resume` 后，以当前 leaf 重建采用边界；新路线增强上下文准备期间保持 Pi 原生模型输入；
@@ -40,7 +41,7 @@
 - 扩展运行期间持续显示“增强记忆”或“Pi 原生”，状态以实际 Provider 请求采用结果为准；
 - 保存路线、上下文消息哈希、采用状态、降级和恢复 trace，并运行同任务的原生 Pi / 增强路径最终 checker。
 
-**完成条件**：至少一个代表性任务分布可重复运行；[`features/context-enhancement-state.md`](features/context-enhancement-state.md) 与 [`validation/context-enhancement-state.md`](validation/context-enhancement-state.md) 的回退、压缩、路线隔离和状态条件全部通过；增强路径任务质量不劣于原生 Pi，并能够进入完整成本成对验证。
+**完成条件**：[`validation/memory-model-runtime.md`](validation/memory-model-runtime.md) 的配置、所有权、重启和降级条件通过；至少一个代表性任务分布可重复运行；[`features/context-enhancement-state.md`](features/context-enhancement-state.md) 与 [`validation/context-enhancement-state.md`](validation/context-enhancement-state.md) 的回退、压缩、路线隔离和状态条件全部通过；增强路径任务质量不劣于原生 Pi，并能够进入完整成本成对验证。
 
 ## 5. 推进规则
 
@@ -48,7 +49,8 @@
 
 ## 6. 下一执行入口
 
-1. 建立 [`validation/context-enhancement-state.md`](validation/context-enhancement-state.md) 定义的长任务、路线切换、压缩、故障和状态 fixture；
-2. 基于 OpenViking Session Working Memory 和 context assembly，实现以 Pi 当前 session、leaf 和 branch 为采用条件的有界增强上下文；
-3. 接入 Pi 上下文、tree、session 与 compaction 生命周期，完成原生降级和持久状态标识；
-4. 运行原生 Pi / 增强路径质量与完整成本成对实验，并按结果重新识别主导约束。
+1. 按 [`validation/memory-model-runtime.md`](validation/memory-model-runtime.md) 实现并验证从项目锁定 OpenViking能力描述生成核心配置的转换层、`/memory-model` 和 `/restart-viking`；
+2. 建立 [`validation/context-enhancement-state.md`](validation/context-enhancement-state.md) 定义的长任务、路线切换、压缩、故障和状态 fixture；
+3. 基于 OpenViking Session Working Memory 和 context assembly，实现以 Pi 当前 session、leaf 和 branch 为采用条件的有界增强上下文；
+4. 接入 Pi 上下文、tree、session 与 compaction 生命周期，完成原生降级和持久状态标识；
+5. 运行原生 Pi / 增强路径质量与完整成本成对实验，并按结果重新识别主导约束。
