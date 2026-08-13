@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "generatedBy": "scripts/validate-source-archive.mjs",
+  "runId": "source-archive-2026-08-13T17-17-04-688Z",
+  "recordedAt": "2026-08-13T17:17:05.403Z",
+  "piVersion": "0.84.1",
+  "implementation": {
+    "sourceManifestSha256": "797d8033d091c33d7cd7ae44f725bf019838e59f1b9c5093f9225232a39eacff",
+    "files": [
+      {
+        "path": ".pi/extensions/pi-context-memory/index.ts",
+        "sha256": "e923070efabb8d28ba3e62f83deaf4b68d2fc3cf3f775f6b205afff4da7a6be1"
+      },
+      {
+        "path": ".pi/extensions/pi-context-memory/long-term-memory.ts",
+        "sha256": "2ccf1fa89d0eff97dc021a13d78ecf1cd22ce1257d6c45fcf96af99ba511dabe"
+      },
+      {
+        "path": ".pi/extensions/pi-context-memory/recall-and-provenance.ts",
+        "sha256": "f74a59a9edf4412c970944412dcbfad254ce3d3904f1a4ecd38687f77264a35f"
+      },
+      {
+        "path": ".pi/extensions/pi-context-memory/session-memory-coordination.ts",
+        "sha256": "c0788b658e3a601f7bd10c331ea6a91708dfc745c14ae7a29b93d2e121217408"
+      },
+      {
+        "path": "scripts/check-validation-evidence.mjs",
+        "sha256": "1b64785fecbf855d28a79e7d642c9c4339d610ef5761d53b073f68e7c06743c5"
+      },
+      {
+        "path": "scripts/validate-source-archive.mjs",
+        "sha256": "cb85d463414618ab080276f8ca8f46f9e29f6039a147e7ce3c8a425cf79db7c7"
+      },
+      {
+        "path": "scripts/validation-evidence.mjs",
+        "sha256": "789b2c308e87f26d6d1693cd7fb05adafa6127a1c97695ab1d22a672cb2d492d"
+      }
+    ],
+    "gitCommit": "b2d8762bac79d7db3fa4fa663b30d50a246199dc",
+    "workingTreeDirty": true
+  },
+  "passed": true,
+  "checks": {
+    "noProviderRequests": true,
+    "unpersistedSessionSkipped": true,
+    "sessionIsolation": true,
+    "branchFiltering": true,
+    "sourceRestoration": true,
+    "completeLargeResult": true,
+    "corruptedBlobRejected": true,
+    "largeResultPublicationAtomic": true,
+    "largeResultCopyTimeoutEnforced": true,
+    "invalidRouteRejected": true,
+    "storageFailurePropagates": true
+  },
+  "sourceCounts": {
+    "firstSessionHistorical": 3,
+    "firstSessionCurrentBranch": 2,
+    "secondSessionCurrentBranch": 1
+  },
+  "largeResult": {
+    "bytes": 163840,
+    "sha256": "9116ea1c9940f77b043ac221ef7c4833fbfc3f126e3ee70f70c4ed7f81d26016"
+  },
+  "limitations": [
+    "The local scope covers source storage and coordination with a zero-request local Provider probe.",
+    "Derived memory, recall quality, Provider lifecycle, and complete API cost use their dedicated validation paths.",
+    "The archive covers persisted Pi sessions on the local file system; cross-machine synchronization and retention policy remain future operational responsibilities."
+  ]
+}

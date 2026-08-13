@@ -1,0 +1,155 @@
+{
+  "schemaVersion": 1,
+  "generatedBy": "scripts/validate-source-recall.mjs",
+  "runId": "source-recall-2026-08-13T17-17-04-708Z",
+  "recordedAt": "2026-08-13T17:17:24.419Z",
+  "piVersion": "0.84.1",
+  "openVikingVersion": "0.4.13",
+  "openVikingConfig": {
+    "templatePath": "validation/fixtures/openviking-source-recall.json",
+    "templateSha256": "3192252aa9b87a6cdd481b273142c7e3a3692e3bd253800c1bbb9d200ab591d0",
+    "effective": {
+      "defaultAccount": "source-recall-validation",
+      "defaultUser": "pi-context-memory",
+      "storageWorkspace": ".artifacts/source-recall/source-recall-2026-08-13T17-17-04-708Z/openviking-data",
+      "embedding": {
+        "dense": {
+          "cache_dir": "./.cache/openviking/models",
+          "dimension": 512,
+          "input": "text",
+          "model": "bge-small-zh-v1.5-f16",
+          "provider": "local"
+        }
+      },
+      "vlmEnabled": false,
+      "memory": {
+        "extraction_enabled": false,
+        "session_skill_extraction_enabled": false,
+        "eager_prefetch": false,
+        "link_enabled": false,
+        "session_auto_commit": {
+          "default_enabled": false,
+          "idle_enabled": false
+        }
+      },
+      "retrieval": {
+        "enable_intent": false
+      },
+      "watchSchedulerEnabled": false,
+      "server": {
+        "host": "127.0.0.1",
+        "port": 50956,
+        "agent_evolution": {
+          "enabled": false
+        }
+      }
+    },
+    "effectiveSha256": "57a6f17f5de4ef58fdd81387719ff7b30e1078ceed965de8e5f76d820ec67d76",
+    "controlledByRunner": true,
+    "denseEmbeddingProvider": "local"
+  },
+  "implementation": {
+    "sourceManifestSha256": "42e560f3248004c4fd3293561997d148ed6f24409cc55f1ea085de2abc9472fc",
+    "files": [
+      {
+        "path": ".pi/extensions/pi-context-memory/index.ts",
+        "sha256": "e923070efabb8d28ba3e62f83deaf4b68d2fc3cf3f775f6b205afff4da7a6be1"
+      },
+      {
+        "path": ".pi/extensions/pi-context-memory/long-term-memory.ts",
+        "sha256": "2ccf1fa89d0eff97dc021a13d78ecf1cd22ce1257d6c45fcf96af99ba511dabe"
+      },
+      {
+        "path": ".pi/extensions/pi-context-memory/recall-and-provenance.ts",
+        "sha256": "f74a59a9edf4412c970944412dcbfad254ce3d3904f1a4ecd38687f77264a35f"
+      },
+      {
+        "path": ".pi/extensions/pi-context-memory/session-memory-coordination.ts",
+        "sha256": "c0788b658e3a601f7bd10c331ea6a91708dfc745c14ae7a29b93d2e121217408"
+      },
+      {
+        "path": "pyproject.toml",
+        "sha256": "df899566aec7d26ee3669c3e0a42ace9e6368b9e370d416fcacc937be7894a56"
+      },
+      {
+        "path": "scripts/check-validation-evidence.mjs",
+        "sha256": "1b64785fecbf855d28a79e7d642c9c4339d610ef5761d53b073f68e7c06743c5"
+      },
+      {
+        "path": "scripts/install-dependencies.mjs",
+        "sha256": "3350d7ca57ab3731bf68ca62a37492b6e2c1ab0ccd5952b51e49022b718a6e7e"
+      },
+      {
+        "path": "scripts/validate-source-recall.mjs",
+        "sha256": "10e5efe815f051ea19dac13975378f3dae1215b6ad16ea8c2a66b55519305e0b"
+      },
+      {
+        "path": "scripts/validation-evidence.mjs",
+        "sha256": "789b2c308e87f26d6d1693cd7fb05adafa6127a1c97695ab1d22a672cb2d492d"
+      },
+      {
+        "path": "uv.lock",
+        "sha256": "4e1c85ba3c59642cb030d1ce915427f97910941f4ee737047c7c90f1a7782ffd"
+      },
+      {
+        "path": "validation/fixtures/openviking-source-recall.json",
+        "sha256": "3192252aa9b87a6cdd481b273142c7e3a3692e3bd253800c1bbb9d200ab591d0"
+      }
+    ],
+    "gitCommit": "b2d8762bac79d7db3fa4fa663b30d50a246199dc",
+    "workingTreeDirty": true
+  },
+  "passed": true,
+  "checks": {
+    "abortedSynchronizationStopsTraversal": true,
+    "backgroundBacklogCollapsed": true,
+    "pendingRequiredShared": true,
+    "requiredStartedAfterBackground": true,
+    "waitsForCompleteRound": true,
+    "postStartInvocationQueued": true,
+    "timedOutSynchronizationCancelled": true,
+    "shutdownRejectedWaiter": true,
+    "cancelledPendingRemoved": true,
+    "synchronousFailureRejected": true,
+    "requiredPrioritizedOverBackground": true,
+    "returnToRunningRouteDropsStaleBackground": true,
+    "localEmbeddingConfigured": true,
+    "vectorsOnly": true,
+    "stableNoSplitResources": true,
+    "idempotentResources": true,
+    "concurrentMismatchRejected": true,
+    "concurrentRebuildConverged": true,
+    "deletedIndexRestored": true,
+    "noSemanticProcessing": true,
+    "noContentWrite": true,
+    "sessionIsolation": true,
+    "branchFiltering": true,
+    "staleBranchCandidatesExcludedBeforeRanking": true,
+    "oldSourceRejected": true,
+    "sourceRestoration": true,
+    "searchBounded": true,
+    "expansionBounded": true,
+    "noSourcesShortCircuit": true,
+    "emptyResultDistinct": true,
+    "backendFailureDistinct": true,
+    "immutableMismatchRejected": true,
+    "authorityMismatchRejected": true,
+    "insecureRemoteRejected": true
+  },
+  "candidateCounts": {
+    "indexedResources": 49,
+    "sentinelBackendCandidates": 3,
+    "sentinelCurrentRouteCandidates": 3,
+    "branchBackendCandidates": 3,
+    "branchCurrentRouteCandidates": 3
+  },
+  "sourceHashes": {
+    "common": "0155b8f83461d9f1a817c1d4b3482f4e25a901cb9f2caf57166ea2b80fcf15cb",
+    "branchB": "0865319d58f0fd9ad4bbdb29a80ef7bd6fe88eb460b3cbcfc6c30ca460f1ac63"
+  },
+  "limitations": [
+    "The local scope covers source coordination and OpenViking retrieval with local dense embeddings.",
+    "Provider task quality, automatic memory, Working Memory, context construction, and complete API cost require a future paired task experiment after the product implements automatic context optimization.",
+    "OpenViking LLM, VLM, memory extraction, and Working Memory remain disabled in this runner."
+  ]
+}

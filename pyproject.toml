@@ -1,0 +1,11 @@
+[project]
+name = "pi-context-runtime"
+version = "0.0.0"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "openviking[local-embed]==0.4.13",
+  "xxhash<4", # OpenViking 0.4.13 passes text values to the xxhash 3.x API.
+]
+
+[tool.uv]
+package = false

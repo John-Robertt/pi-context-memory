@@ -1,0 +1,38 @@
+{
+  "default_account": "pi-context-runtime",
+  "default_user": "pi-context-memory",
+  "storage": {
+    "workspace": "./.artifacts/openviking/data"
+  },
+  "embedding": {
+    "dense": {
+      "provider": "local",
+      "model": "bge-small-zh-v1.5-f16",
+      "dimension": 512,
+      "input": "text",
+      "cache_dir": "./.cache/openviking/models"
+    }
+  },
+  "vlm": {},
+  "memory": {
+    "extraction_enabled": false,
+    "session_skill_extraction_enabled": false,
+    "eager_prefetch": false,
+    "link_enabled": false,
+    "session_auto_commit": {
+      "default_enabled": false,
+      "idle_enabled": false
+    }
+  },
+  "retrieval": {
+    "enable_intent": false
+  },
+  "enable_watch_scheduler": false,
+  "server": {
+    "host": "127.0.0.1",
+    "port": 1933,
+    "agent_evolution": {
+      "enabled": false
+    }
+  }
+}
