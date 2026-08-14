@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from openviking.models.vlm import VLMFactory
 from openviking.models.vlm.backends import litellm_vlm
 from openviking.models.vlm.backends.codex_responses_adapter import (
+    CodexCompletionsAdapter,
     _build_chat_completion_like_response,
     _convert_message_for_responses,
     _convert_tools_for_responses,
@@ -138,18 +139,8 @@ def probe_litellm_routing():
         and not native._should_forward_api_key(native.model),
         "customOpenAICompatible": custom._resolve_model(custom.model) == "openai/custom-model"
         and custom._should_forward_api_key(custom.model),
-        "ollamaDefaults": ollama_request["extra_body"]["num_ctx"] == litellm_vlm.OLLAMA_DEFAULT_NUM_CTX,
-        "recognizedSources": list(litellm_vlm.PROVIDER_CONFIGS),
-        "recognizedKeywords": {
-            source: list(config["keywords"])
-            for source, config in litellm_vlm.PROVIDER_CONFIGS.items()
-        },
-        "recognizedCredentials": {
-            source: config["env_key"]
-            for source, config in litellm_vlm.PROVIDER_CONFIGS.items()
-        },
-        "explicitPrefixes": [prefix.removesuffix("/") for prefix in litellm_vlm.EXPLICIT_LITELLM_PREFIXES],
-        "nativePrefixes": [prefix.removesuffix("/") for prefix in litellm_vlm.NATIVE_AUTH_LITELLM_PREFIXES],
+        "ollamaDefaults": isinstance(ollama_request.get("extra_body", {}).get("num_ctx"), int)
+        and ollama_request["extra_body"]["num_ctx"] > 0,
     }
 
 def probe_codex_translation():
@@ -183,7 +174,44 @@ def probe_codex_translation():
     )
 
 
+class _EmptyResponseStream:
+    def __iter__(self):
+        return iter(())
+
+    def close(self):
+        return None
+
+
+def probe_codex_request_semantics():
+    calls = []
+
+    class ResponsesEndpoint:
+        def create(self, **kwargs):
+            calls.append(kwargs)
+            return _EmptyResponseStream()
+
+    client = SimpleNamespace(responses=ResponsesEndpoint())
+    adapter = CodexCompletionsAdapter(lambda: client, "validation-model")
+    adapter.create(
+        messages=MESSAGES,
+        tools=TOOLS,
+        tool_choice="auto",
+        temperature=0.0,
+        reasoning_effort="low",
+        thinking=False,
+        stream=False,
+    )
+    request = calls[0]
+    return {
+        "reasoningForwarded": any(key in request for key in ("reasoning", "reasoning_effort", "thinking")),
+        "temperatureForwarded": "temperature" in request,
+        "stream": request.get("stream"),
+        "store": request.get("store"),
+    }
+
+
 classes = {provider: probe_provider(provider) for provider in PROVIDERS}
+codex_request = probe_codex_request_semantics()
 litellm_routing = probe_litellm_routing()
 litellm_routing_passed = all(
     litellm_routing[name]
@@ -199,7 +227,14 @@ litellm_routing_passed = all(
     )
 )
 result = {
-    "passed": probe_codex_translation() and litellm_routing_passed,
+    "passed": probe_codex_translation()
+    and litellm_routing_passed
+    and codex_request == {
+        "reasoningForwarded": False,
+        "temperatureForwarded": False,
+        "stream": True,
+        "store": False,
+    },
     "litellmRoutes": litellm_routing,
     "providers": classes,
     "messages": True,
@@ -207,6 +242,7 @@ result = {
     "toolChoice": True,
     "functionCalls": True,
     "codexResponsesTranslation": True,
+    "codexRequest": codex_request,
 }
 print(json.dumps(result, separators=(",", ":")))
 if not result["passed"]:

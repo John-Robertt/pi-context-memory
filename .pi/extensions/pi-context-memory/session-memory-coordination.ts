@@ -6,6 +6,7 @@ import {
   type SourceEntry,
   type SourceRecord,
 } from "./long-term-memory.ts";
+import { isSourceEntry, largeResultOf } from "./pi-session-protocol.ts";
 
 export interface SessionRouteSnapshot extends SessionIdentity {
   leafId: string | null;
@@ -251,28 +252,6 @@ export interface ResolvedSource {
   authoritativeEntry: SourceEntry;
 }
 
-function isSourceEntry(value: unknown): value is SourceEntry {
-  if (!value || typeof value !== "object") return false;
-  const entry = value as Record<string, unknown>;
-  return (
-    typeof entry.type === "string"
-    && typeof entry.id === "string"
-    && entry.id.length > 0
-    && (entry.parentId === null || typeof entry.parentId === "string")
-    && typeof entry.timestamp === "string"
-  );
-}
-
-function largeResultOf(entry: SourceEntry): { toolCallId: string; fullOutputPath: string } | undefined {
-  if (entry.type !== "message" || !entry.message || typeof entry.message !== "object") return undefined;
-  const message = entry.message as Record<string, unknown>;
-  if (message.role !== "toolResult" || typeof message.toolCallId !== "string") return undefined;
-  if (!message.details || typeof message.details !== "object") return undefined;
-  const fullOutputPath = (message.details as Record<string, unknown>).fullOutputPath;
-  return typeof fullOutputPath === "string" && fullOutputPath.length > 0
-    ? { toolCallId: message.toolCallId, fullOutputPath }
-    : undefined;
-}
 
 export class SessionMemoryCoordinator {
   private readonly identity: SessionIdentity;

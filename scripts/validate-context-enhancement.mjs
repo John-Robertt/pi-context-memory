@@ -2,7 +2,7 @@
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { createServer } from "node:http";
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -13,10 +13,8 @@ import {
 import { FileLongTermMemory } from "../.pi/extensions/pi-context-memory/long-term-memory.ts";
 import { compileOpenVikingConfig } from "../.pi/extensions/pi-context-memory/memory-model-configuration.ts";
 import { SessionMemoryCoordinator } from "../.pi/extensions/pi-context-memory/session-memory-coordination.ts";
-import {
-  isStructuredWorkingMemoryOverview,
-  projectRouteEntries,
-} from "../.pi/extensions/pi-context-memory/session-working-memory.ts";
+import { normalizeSessionContext } from "../.pi/extensions/pi-context-memory/openviking-protocol.ts";
+import { projectRouteEntries } from "../.pi/extensions/pi-context-memory/session-working-memory.ts";
 import {
   applyPreparedWorkingContext,
   formatWorkingContext,
@@ -413,6 +411,8 @@ async function runPiAdoptionCase(openViking) {
   const runtimeDir = join(caseDir, "runtime");
   const observationLog = join(caseDir, "observations.jsonl");
   const settingsPath = join(caseDir, "memory-model.jsonc");
+  const settingsTargetDir = join(caseDir, "memory-model-target");
+  const settingsTargetPath = join(settingsTargetDir, "memory-model.jsonc");
   const providerPath = join(caseDir, "local-provider.ts");
   const lifecycleControlPath = join(caseDir, "lifecycle-control.ts");
   mkdirSync(home, { recursive: true });
@@ -430,7 +430,9 @@ async function runPiAdoptionCase(openViking) {
     HOME: home,
     PCR_OPENVIKING_VLM_API_KEY: "local-validation",
   });
-  writeFileSync(settingsPath, `${JSON.stringify({ memoryModel: memorySetting })}\n`, "utf8");
+  mkdirSync(settingsTargetDir, { recursive: true });
+  writeFileSync(settingsTargetPath, `${JSON.stringify({ memoryModel: memorySetting })}\n`, "utf8");
+  symlinkSync(settingsTargetPath, settingsPath);
 
   const launchId = `context-enhancement-${process.pid}`;
   writeJson(join(runtimeDir, "launcher.lock"), { launchId, launcherPid: process.pid });
@@ -579,11 +581,25 @@ async function runPiAdoptionCase(openViking) {
       () => readObservations(observationLog).filter((event) => event.type === "agent_settled").length >= 4,
       "fourth Pi agent settlement",
     );
-    writeRuntimeState(settingsFingerprint, "post-ready-wrong-config");
+    const invalidationsBeforeMismatch = readObservations(observationLog)
+      .filter((event) => event.type === "memory_model_generation_invalidated").length;
+    writeFileSync(settingsTargetPath, `${JSON.stringify({ memoryModel: null })}\n`, "utf8");
+    await waitFor(
+      () => readObservations(observationLog).filter((event) => event.type === "memory_model_generation_invalidated").length > invalidationsBeforeMismatch,
+      "post-ready symlink-target generation invalidation",
+    );
     await client.send("prompt", { message: "fifth post-ready mismatch prompt" });
     await waitFor(
       () => readObservations(observationLog).filter((event) => event.type === "agent_settled").length >= 5,
       "fifth Pi agent settlement",
+    );
+    const recoveryObservationOffset = readObservations(observationLog).length;
+    writeFileSync(settingsTargetPath, `${JSON.stringify({ memoryModel: memorySetting })}\n`, "utf8");
+    await waitFor(
+      () => readObservations(observationLog).slice(recoveryObservationOffset)
+        .some((event) => event.type === "working_context_ready"),
+      "post-mismatch symlink-target recovery",
+      10_000,
     );
     const promptAndSettle = async (message) => {
       const observationOffset = readObservations(observationLog).length;
@@ -644,10 +660,25 @@ async function runPiAdoptionCase(openViking) {
       const actualIds = mirror?.batches.flat().flatMap((message) => message.source_message_ids) ?? [];
       return JSON.stringify(actualIds) === JSON.stringify(expectedIds);
     };
+    const invalidationsBeforeRuntimeMismatch = readObservations(observationLog)
+      .filter((event) => event.type === "memory_model_generation_invalidated").length;
+    writeRuntimeState(settingsFingerprint, "post-ready-wrong-runtime-config");
+    await waitFor(
+      () => readObservations(observationLog).filter((event) => event.type === "memory_model_generation_invalidated").length > invalidationsBeforeRuntimeMismatch,
+      "post-ready runtime generation invalidation",
+    );
+    const postReadyRuntimeMismatchRun = await promptAndSettle("sixth post-ready runtime mismatch prompt");
+    const runtimeRecoveryOffset = readObservations(observationLog).length;
     writeRuntimeState(settingsFingerprint);
-    await promptAndSettle("sixth lifecycle baseline prompt");
+    await waitFor(
+      () => readObservations(observationLog).slice(runtimeRecoveryOffset)
+        .some((event) => event.type === "working_context_ready"),
+      "post-ready runtime recovery",
+      10_000,
+    );
+    await promptAndSettle("seventh lifecycle baseline prompt");
     const backendFailureOffset = readObservations(observationLog).length;
-    openViking.state.failContextCount = 2;
+    openViking.state.failContextCount = 1;
     await promptAndSettle("backend failure preparation prompt");
     await waitFor(
       () => readObservations(observationLog).slice(backendFailureOffset).some((event) => event.type === "working_context_error"),
@@ -818,9 +849,9 @@ async function runPiAdoptionCase(openViking) {
       return status === (requestEvent.contextPath === "enhanced" ? "增强记忆" : "Pi 原生");
     });
     const workingContextErrors = observations.filter((event) => event.type === "working_context_error");
-    const expectedWorkingContextErrors = workingContextErrors.filter((event) => event.error === "OpenViking HTTP 503: controlled context failure").length === 2
+    const expectedWorkingContextErrors = workingContextErrors.filter((event) => event.error === "OpenViking HTTP 503: controlled context failure").length === 1
       && workingContextErrors.every((event) => event.error === "OpenViking HTTP 503: controlled context failure"
-        || (event.error === "OpenViking assembled an empty working context" && event.leafId === rootNavigation.newLeafId));
+        || (event.error === "OpenViking context response has no source-verifiable active messages" && event.leafId === rootNavigation.newLeafId));
     const lifecycle = {
       treeRoundTrip: plainToBranchPoint.newLeafId === branchPointId
         && plainToA.newLeafId === originalLeafId
@@ -871,8 +902,9 @@ async function runPiAdoptionCase(openViking) {
     };
     const providerRequestObservations = observations.filter((event) => event.type === "before_provider_request");
     const firstProviderRequest = providerRequestObservations[0];
-    const mismatchedRuntimeRequest = providerRequestObservations[1];
-    const postReadyMismatchRequest = providerRequestObservations[4];
+    const coldStartMismatchedRuntimeRequest = providerRequestObservations[1];
+    const postReadyMismatchedRuntimeRequest = providerRequestObservations[4];
+    const firstWorkingContextReady = observations.find((event) => event.type === "working_context_ready");
     const enhancedContext = observations.findLast((event) => event.type === "context" && event.contextPath === "enhanced");
     const enhancedProviderRequest = observations.findLast((event) => event.type === "before_provider_request" && event.contextPath === "enhanced");
     const finalPayload = provider.state.payloads[3];
@@ -890,12 +922,19 @@ async function runPiAdoptionCase(openViking) {
       spoofedMarkerRemainsNative: firstProviderRequest?.contextPath === "pi-native"
         && firstProviderRequest?.payloadHasEnhancedContext === true
         && firstProviderRequest?.contextDecision === "pi-native",
+      contextHookNonBlocking: typeof firstProviderRequest?.sequence === "number"
+        && typeof firstWorkingContextReady?.sequence === "number"
+        && firstProviderRequest.sequence < firstWorkingContextReady.sequence,
       mismatchedRuntimeRemainsNative: firstProviderRequest?.contextPath === "pi-native"
         && firstProviderRequest?.contextDecision === "pi-native"
-        && mismatchedRuntimeRequest?.contextPath === "pi-native"
-        && mismatchedRuntimeRequest?.contextDecision === "pi-native"
-        && postReadyMismatchRequest?.contextPath === "pi-native"
-        && postReadyMismatchRequest?.contextDecision === "pi-native",
+        && coldStartMismatchedRuntimeRequest?.contextPath === "pi-native"
+        && coldStartMismatchedRuntimeRequest?.contextDecision === "pi-native"
+        && postReadyMismatchedRuntimeRequest?.contextPath === "pi-native"
+        && postReadyMismatchedRuntimeRequest?.contextDecision === "pi-native"
+        && postReadyRuntimeMismatchRun.observations.some((event) =>
+          event.type === "before_provider_request"
+          && event.contextPath === "pi-native"
+          && event.contextDecision === "pi-native"),
       currentTurnOnly: priorPromptMessages.length === 0,
       lifecycle,
       providerRequests: provider.state.payloads.length,
@@ -932,13 +971,92 @@ try {
     "## Files & Context",
     "## Errors & Corrections",
     "## Open Issues",
+    "The active route remains bounded to verified Pi source identifiers and rejects any stale or unverifiable upstream context before adoption.",
   ].join("\n");
-  checks.workingMemoryStructureValidated = isStructuredWorkingMemoryOverview(structuredOverview)
-    && !isStructuredWorkingMemoryOverview("# Session Summary\n\n**Overview**: 10 turns, 20 messages")
-    && !isStructuredWorkingMemoryOverview(structuredOverview.replace("## Open Issues", "### Open Issues"))
-    && !isStructuredWorkingMemoryOverview(structuredOverview.replace("## Current State\n## Task & Goals", "## Task & Goals\n## Current State"))
-    && !isStructuredWorkingMemoryOverview(`${structuredOverview}\n## Extra`);
+  const localizedOverview = structuredOverview
+    .replace("## Session Title", "## 会话标题")
+    .replace("## Current State", "## 当前状态");
+  const normalizedContext = normalizeSessionContext({
+    latest_archive_overview: localizedOverview,
+    messages: [{ role: "user", parts: [{ type: "text", text: "active route" }], source_message_ids: ["b000000c"] }],
+  });
+  let genericFallbackRejected = false;
+  let malformedContextRejected = false;
+  let missingSourceIdsRejected = false;
+  let unknownContentShapeRejected = false;
+  let localizedOverviewOnlyRejected = false;
+  try {
+    normalizeSessionContext({ latest_archive_overview: "# Session Summary\n\n**Overview**: 10 turns, 20 messages", messages: [] });
+  } catch {
+    genericFallbackRejected = true;
+  }
+  try {
+    normalizeSessionContext({ latest_archive_overview: localizedOverview, messages: [{ parts: [], source_message_ids: [42] }] });
+  } catch {
+    malformedContextRejected = true;
+  }
+  try {
+    normalizeSessionContext({
+      latest_archive_overview: localizedOverview,
+      messages: [{ role: "user", parts: [{ type: "text", text: "unverified" }] }],
+    });
+  } catch {
+    missingSourceIdsRejected = true;
+  }
+  try {
+    normalizeSessionContext({
+      latest_archive_overview: localizedOverview,
+      messages: [{ role: "user", content: [{ type: "text", text: "unknown" }], source_message_ids: ["b000000c"] }],
+    });
+  } catch {
+    unknownContentShapeRejected = true;
+  }
+  try {
+    normalizeSessionContext({ latest_archive_overview: "# 会话摘要\n\n10 轮，20 条消息", messages: [] });
+  } catch {
+    localizedOverviewOnlyRejected = true;
+  }
+  checks.workingContextResponseNormalized = normalizedContext.overview === localizedOverview
+    && normalizedContext.messages[0]?.text === "active route"
+    && normalizedContext.messages[0]?.sourceMessageIds[0] === "b000000c"
+    && Number.isFinite(normalizedContext.estimatedTokens)
+    && genericFallbackRejected
+    && malformedContextRejected
+    && missingSourceIdsRejected
+    && unknownContentShapeRejected
+    && localizedOverviewOnlyRejected;
 
+  const incompatiblePiEntries = [
+    {
+      type: "message",
+      id: "pi-unknown-block",
+      parentId: null,
+      timestamp: "2026-01-01T00:00:00.000Z",
+      message: { role: "user", content: [{ type: "input_text", text: "must not disappear" }] },
+    },
+    {
+      type: "message",
+      id: "pi-unknown-role",
+      parentId: null,
+      timestamp: "2026-01-01T00:00:00.000Z",
+      message: { role: "future-role", content: "must not disappear" },
+    },
+    {
+      type: "compaction",
+      id: "pi-malformed-compaction",
+      parentId: null,
+      timestamp: "2026-01-01T00:00:00.000Z",
+      summary: "summary without a retained boundary",
+    },
+  ];
+  checks.piProtocolFailClosed = incompatiblePiEntries.every((entry) => {
+    try {
+      projectRouteEntries([entry]);
+      return false;
+    } catch {
+      return true;
+    }
+  });
   const common = routeEntries("common");
   const branchA = routeEntries("branchA");
   const branchB = routeEntries("branchB");
@@ -1003,8 +1121,8 @@ try {
     && preparedB.content.includes("Working memory")
     && preparedB.content.includes("b000000c");
   const boundaryContext = formatWorkingContext(routeB, {
-    latestArchiveOverview: "O".repeat(5_000),
-    messages: [{ role: "user", parts: [{ type: "text", text: "A".repeat(5_000) }], source_message_ids: ["boundary"] }],
+    overview: "O".repeat(5_000),
+    messages: [{ role: "user", text: "A".repeat(5_000), sourceMessageIds: ["boundary"] }],
     estimatedTokens: 2_500,
   }, 1_600);
   checks.contextBounded = preparedB.content.length <= 1_600
@@ -1146,6 +1264,7 @@ try {
   const piAdoption = await runPiAdoptionCase(openViking);
   checks.piContextHookAdopted = piAdoption.adopted;
   checks.providerStateUnspoofable = piAdoption.spoofedMarkerRemainsNative;
+  checks.contextHookNonBlocking = piAdoption.contextHookNonBlocking;
   checks.mismatchedRuntimeRejected = piAdoption.mismatchedRuntimeRemainsNative;
   checks.providerPayloadCurrentTurn = piAdoption.currentTurnOnly;
   checks.localProviderOnly = piAdoption.providerRequests > 5 && openViking.state.providerRequests === 0;

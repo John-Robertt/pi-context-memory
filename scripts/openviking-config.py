@@ -5,15 +5,7 @@ import sys
 from copy import deepcopy
 
 from openviking import __version__ as openviking_version
-from openviking.models.vlm.registry import get_all_provider_names
-from openviking.models.vlm.backends.litellm_vlm import (
-    EXPLICIT_LITELLM_PREFIXES,
-    NATIVE_AUTH_LITELLM_PREFIXES,
-    PROVIDER_CONFIGS,
-)
-from openviking_cli.utils.config.open_viking_config import OpenVikingConfig
-from openviking_cli.utils.config.vlm_config import VLMConfig
-
+from openviking_cli.utils.config import OpenVikingConfig, VLMConfig
 CREDENTIAL_ENV = "PCR_OPENVIKING_VLM_API_KEY"
 SETTING_FIELDS = frozenset({"provider", "model", "api_base", "api_version"})
 CONNECTION_FIELDS = {
@@ -42,51 +34,9 @@ def vlm_properties():
     return schema, root["properties"]
 
 
-def describe_litellm_routes():
-    recognized = []
-    for source, config in PROVIDER_CONFIGS.items():
-        prefix = config["litellm_prefix"]
-        patterns = (
-            [f"{prefix}/<model-id>"]
-            if prefix
-            else ["<OpenAI-model-id>", "openai/<model-id>"]
-        )
-        recognized.append(
-            {
-                "source": source,
-                "modelPatterns": patterns,
-                "keywords": list(config["keywords"]),
-                "credentialEnvironment": config["env_key"],
-            }
-        )
-    return {
-        "catalogUrl": "https://docs.litellm.ai/docs/providers",
-        "recognized": recognized,
-        "explicit": [
-            {
-                "prefix": prefix.removesuffix("/"),
-                "nativeAuthentication": prefix in NATIVE_AUTH_LITELLM_PREFIXES,
-            }
-            for prefix in EXPLICIT_LITELLM_PREFIXES
-        ],
-        "specialModelPatterns": [
-            {"source": "zhipu", "modelPattern": "zai/<glm-model-id>"},
-        ],
-        "customOpenAICompatible": {
-            "modelPattern": "openai/<model-id>",
-            "apiBaseRequired": True,
-        },
-    }
-
 def describe():
-    providers = get_all_provider_names()
-    if set(providers) != set(CONNECTION_FIELDS):
-        missing = sorted(set(providers) - set(CONNECTION_FIELDS))
-        obsolete = sorted(set(CONNECTION_FIELDS) - set(providers))
-        raise ValueError(
-            f"OpenViking provider policy is out of date (missing={missing}, obsolete={obsolete})"
-        )
     schema, properties = vlm_properties()
+    providers = list(CONNECTION_FIELDS)
     return {
         "openVikingVersion": openviking_version,
         "providers": [
@@ -109,9 +59,8 @@ def describe():
         },
         "vlmSchemaSha256": stable_hash(schema),
         "credentialEnvironment": CREDENTIAL_ENV,
-        "litellmRoutes": describe_litellm_routes(),
+        "litellmCatalogUrl": "https://docs.litellm.ai/docs/providers",
     }
-
 
 def normalized_setting(value):
     if not isinstance(value, dict):
@@ -166,10 +115,6 @@ def compile_config(payload):
     vlm = {
         "provider": provider,
         "model": setting["model"],
-        "temperature": 0.0,
-        "max_retries": 3,
-        "thinking": False,
-        "stream": False,
     }
     for field in ("api_base", "api_version"):
         if field in setting:

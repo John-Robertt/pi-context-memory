@@ -8,23 +8,20 @@
 
 ## 2. 配置转换
 
-验证从项目锁定依赖加载 OpenViking Provider registry 与 `VLMConfig` schema，并为 registry 中的每个 Provider生成配置 fixture；OpenAI-compatible服务和 LiteLLM路由使用代表性连接配置覆盖对应扩展路径。
+验证扩展明确支持的 Provider 子集能够通过项目安装的 OpenViking 聚合配置入口，并为每个受支持 Provider 生成配置 fixture。OpenAI-compatible 服务和 LiteLLM 使用代表性连接配置覆盖对应转换路径。
 
 固定检查包括：
 
-- JSONC 模板和编译器观察到的 Provider 集合与 OpenViking registry 一致，模板包含全部字段与认证提示；
-- LiteLLM 路由能力直接来自锁定 backend；模板逐来源覆盖规范前缀、关键词顺序、凭据环境变量、显式路由、云原生认证、`zai/` 特例和自定义 OpenAI-compatible 写法；adapter probe 核对关键词冲突、凭据分支、前缀补全、显式路由保留及来源专用默认值；
+- 上游新增未知 Provider 不进入用户配置面，也不会使已有受支持 Provider 失效；
+- 配置桥只使用 OpenViking 聚合导出的 `OpenVikingConfig` 与 `VLMConfig` 校验入口，不读取其私有 registry 或 backend 路由表；
+- 模板说明扩展验证的 Provider、必要字段、认证入口、少量显式云路由示例和 LiteLLM 官方目录，不复制内部关键词和路由顺序；
+- 生成配置不主动覆盖跨 Provider 语义不一致的 `thinking`、reasoning、temperature 或 stream；adapter probe 另外核对最终 Codex Responses 请求未转发 reasoning/temperature；
 - 默认路径严格为隔离 HOME 下的 `.pi/pi-context-memory.jsonc`，缺失目录不向组或其他用户开放，缺失文件以 `0600` 原子独占创建；已有和悬空符号链接保持不变；
 - 空文件、纯注释和 `memoryModel: null` 均表示未配置；普通注释、字符串内 URL 和尾逗号可解析；
-- 语法错误包含文件与行列，语义错误包含配置字段；未知根字段和模型字段被拒绝；已有文件均不被检查、命令或启动器覆盖；
-- 模型 ID 按所选 Provider语义进入生成配置；
-- 每个 Provider生成正确的连接字段和公共默认值；
-- 环境变量、云原生凭据链和 Provider/OpenViking认证存储与生成产物、状态、日志及 Pi session 保持分离；
-- 运行中实例在 JSONC 语法、未知 Provider、空模型、缺失连接字段、无效 schema 或凭据错误时保持不变；
-- 相同输入产生相同配置指纹，运行配置可从用户 JSONC、项目基础配置和 OpenViking schema 重建。
+- 语法和语义错误形成有路径的脱敏诊断，已有文件不被检查、命令或启动器覆盖；
+- 凭据与生成产物、状态、日志及 Pi session 分离，相同输入产生相同配置指纹。
 
-生成结果直接通过项目安装的 OpenViking schema 解析。Provider registry 中的每一项都是必需检查，依赖升级后同一入口自动观察并验证新的集合。
-
+生成结果直接通过项目安装的 OpenViking 配置入口解析。依赖升级后由维护者重新运行同一入口；固定版本 VLM adapter 探针继续单独观察消息、tools、tool choice 和 function call 行为，但其内部路由细节不进入生产配置契约。
 ## 3. 命令语义
 
 使用隔离项目和 faux Pi Provider 验证：
@@ -58,7 +55,7 @@
 
 在当前实例停止前、新实例启动中和 readiness 后分别发起受控调用，证明：
 
-- 应用配置期间 Pi Agent 继续，模型上下文采用 Pi 原生路径；
+- 配置检查、应用或服务准备期间，Pi `context` 不等待这些操作，任务请求立即使用 Pi 原生路径；
 - 在途 OpenViking请求结束为受控失败，后续有效工作按当前路线重新提交；
 - 显式召回失败形成 Pi 可处理的错误结果；
 - readiness 后保持“Pi 原生”，直到当前 session 与路线核验通过的增强结果实际进入 Provider 请求；
@@ -66,7 +63,7 @@
 
 ## 6. 模型能力边界
 
-本地协议替身覆盖项目锁定 OpenViking依赖中的 VLM adapter 类型，检查消息、tools、tool choice 与 function call 转换。Provider registry 决定配置范围，协议探针证明 adapter 行为，两者使用独立通过条件。
+本地协议替身覆盖项目锁定 OpenViking 依赖中的 VLM adapter 类型，检查消息、tools、tool choice 与 function call 转换。扩展支持的用户配置面和固定版本 adapter 行为分别验证；后者不反向定义生产配置范围。
 
 具体模型的 Working Memory create/update 能力由真实受控 fixture 或实际调用确认。能力不足时，Pi 原生路径继续任务并提供模型能力诊断。
 

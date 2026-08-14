@@ -1,4 +1,6 @@
 import type { SourceEntry } from "./long-term-memory.ts";
+import type { NormalizedOpenVikingMessage } from "./openviking-protocol.ts";
+import { currentUserMessageIndex } from "./pi-session-protocol.ts";
 import {
   OpenVikingSessionMemory,
   type AssembledSessionContext,
@@ -27,30 +29,9 @@ function positiveInteger(value: number | undefined, fallback: number, name: stri
   return resolved;
 }
 
-function projectionSources(message: unknown): string {
-  if (!message || typeof message !== "object") return "";
-  const sourceIds = (message as Record<string, unknown>).source_message_ids;
-  return Array.isArray(sourceIds)
-    ? sourceIds.filter((value): value is string => typeof value === "string").join(",")
-    : "";
-}
-
-function projectionMessageText(message: unknown): string {
-  if (!message || typeof message !== "object") return "";
-  const value = message as Record<string, unknown>;
-  const role = typeof value.role === "string" ? value.role : "unknown";
-  const parts = Array.isArray(value.parts) ? value.parts : [];
-  const texts: string[] = [];
-  for (const part of parts) {
-    if (!part || typeof part !== "object") continue;
-    const item = part as Record<string, unknown>;
-    if (item.type === "text" && typeof item.text === "string") texts.push(item.text);
-    if (item.type === "context" && typeof item.abstract === "string") texts.push(item.abstract);
-    if (item.type === "tool" && typeof item.tool_output === "string") texts.push(item.tool_output);
-  }
-  const sourceIds = projectionSources(value);
-  const body = texts.join("\n").trim();
-  return body ? `[${role}${sourceIds ? `; Pi entries ${sourceIds}` : ""}]\n${body}` : "";
+function projectionMessageText(message: NormalizedOpenVikingMessage): string {
+  const sourceIds = message.sourceMessageIds.join(",");
+  return `[${message.role}${sourceIds ? `; Pi entries ${sourceIds}` : ""}]\n${message.text}`;
 }
 
 function boundedMiddle(value: string, maxChars: number): string {
@@ -68,7 +49,7 @@ export function formatWorkingContext(
   maxChars = DEFAULT_MAX_CONTEXT_CHARS,
 ): string {
   if (!Number.isSafeInteger(maxChars) || maxChars < 256) throw new Error("Context character limit must be at least 256");
-  const overview = context.latestArchiveOverview.trim();
+  const overview = context.overview.trim();
   const active = context.messages.map(projectionMessageText).filter(Boolean).join("\n\n");
   if (!overview && !active) return "";
   let result = [
@@ -96,14 +77,7 @@ export function formatWorkingContext(
 }
 
 export function applyPreparedWorkingContext<T>(messages: readonly T[], prepared: PreparedWorkingContext): T[] {
-  let currentPromptIndex = -1;
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const message = messages[index] as unknown;
-    if (message && typeof message === "object" && (message as Record<string, unknown>).role === "user") {
-      currentPromptIndex = index;
-      break;
-    }
-  }
+  const currentPromptIndex = currentUserMessageIndex(messages);
   if (currentPromptIndex < 0 || !prepared.content) return [...messages];
   const enhancedMessage = {
     role: "custom",
@@ -163,7 +137,7 @@ export class WorkingContextOptimizer {
       openVikingSessionId: prepared.openVikingSessionId,
       content,
       estimatedTokens: prepared.context.estimatedTokens,
-      hasWorkingMemory: prepared.context.latestArchiveOverview.trim().length > 0,
+      hasWorkingMemory: prepared.context.overview.length > 0,
     };
   }
 }

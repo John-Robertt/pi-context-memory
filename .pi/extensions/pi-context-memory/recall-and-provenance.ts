@@ -1,15 +1,12 @@
 import { createHash, randomUUID } from "node:crypto";
-import { request as httpRequest } from "node:http";
-import { request as httpsRequest } from "node:https";
-import { isIP } from "node:net";
 
 import type { SessionIdentity, SourceEntry, SourceRecord } from "./long-term-memory.ts";
-
+import { OpenVikingHttpClient } from "./openviking-protocol.ts";
+import { normalizePiEntry } from "./pi-session-protocol.ts";
 const DEFAULT_NAMESPACE = "viking://resources/pi-context-memory";
 const MAX_INDEX_CHARS = 64_000;
 const SEARCH_PREVIEW_CHARS = 1_200;
 const MAX_BACKEND_CANDIDATES = 100;
-const MAX_RESPONSE_BYTES = 10 * 1024 * 1024;
 
 interface OpenVikingResource {
   uri: string;
@@ -43,55 +40,8 @@ function sha256(value: string): string {
   return createHash("sha256").update(value).digest("hex");
 }
 
-function normalizedBaseUrl(value: string): string {
-  const url = new URL(value);
-  if (url.protocol !== "http:" && url.protocol !== "https:") {
-    throw new Error("OpenViking URL must use HTTP or HTTPS");
-  }
-  const hostname = url.hostname.replace(/^\[|\]$/g, "");
-  const ipv4 = isIP(hostname) === 4 ? hostname.split(".").map(Number) : undefined;
-  const loopback = hostname === "localhost"
-    || hostname === "::1"
-    || (ipv4 !== undefined && ipv4[0] === 127);
-  if (url.protocol === "http:" && !loopback) {
-    throw new Error("Remote OpenViking URLs must use HTTPS");
-  }
-  return url.toString().replace(/\/$/, "");
-}
-
-function textOfContent(content: unknown): string {
-  if (typeof content === "string") return content;
-  if (!Array.isArray(content)) return "";
-  const parts: string[] = [];
-  for (const block of content) {
-    if (!block || typeof block !== "object") continue;
-    const value = block as Record<string, unknown>;
-    if (value.type === "text" && typeof value.text === "string") parts.push(value.text);
-    if (value.type === "toolCall") {
-      parts.push(`Tool call ${String(value.name ?? "unknown")}: ${JSON.stringify(value.arguments ?? {})}`);
-    }
-    if (value.type === "image") parts.push("[image]");
-  }
-  return parts.join("\n");
-}
-
 export function sourceText(entry: SourceEntry): string {
-  if (entry.type === "message" && entry.message && typeof entry.message === "object") {
-    const message = entry.message as Record<string, unknown>;
-    const header = [
-      `message_role: ${String(message.role ?? "unknown")}`,
-      typeof message.toolName === "string" ? `tool_name: ${message.toolName}` : "",
-      typeof message.isError === "boolean" ? `tool_error: ${message.isError}` : "",
-    ].filter(Boolean);
-    const content = textOfContent(message.content);
-    const execution = message.role === "bashExecution"
-      ? [`command: ${String(message.command ?? "")}`, `output:\n${String(message.output ?? "")}`].join("\n")
-      : "";
-    return [...header, content || execution].filter(Boolean).join("\n");
-  }
-  if (typeof entry.summary === "string") return entry.summary;
-  if (entry.type === "custom_message") return textOfContent(entry.content);
-  return "";
+  return normalizePiEntry(entry).text;
 }
 
 function bounded(value: string, maxChars: number): { content: string; truncated: boolean } {
@@ -114,22 +64,8 @@ function indexedContent(record: SourceRecord): string {
     body.truncated ? "\n[index projection truncated]" : "",
   ].filter((line) => line !== "").join("\n");
 }
-
-function envelopeResult(value: unknown): unknown {
-  if (!value || typeof value !== "object") throw new Error("OpenViking returned an invalid JSON envelope");
-  const envelope = value as Record<string, unknown>;
-  if (envelope.status === "error") {
-    const error = envelope.error && typeof envelope.error === "object"
-      ? envelope.error as Record<string, unknown>
-      : undefined;
-    throw new Error(`OpenViking error: ${String(error?.message ?? "unknown error")}`);
-  }
-  return "result" in envelope ? envelope.result : envelope;
-}
-
 export class OpenVikingSourceRecall {
-  private readonly baseUrl: string;
-  private readonly apiKey: string | undefined;
+  private readonly client: OpenVikingHttpClient;
   private readonly timeoutMs: number;
   private readonly namespace: string;
   private readonly inFlight = new Map<string, { contentSha256: string; promise: Promise<void> }>();
@@ -140,8 +76,7 @@ export class OpenVikingSourceRecall {
     timeoutMs = 30_000,
     namespace = DEFAULT_NAMESPACE,
   ) {
-    this.baseUrl = normalizedBaseUrl(baseUrl);
-    this.apiKey = apiKey;
+    this.client = new OpenVikingHttpClient(baseUrl, apiKey, timeoutMs);
     this.timeoutMs = timeoutMs;
     this.namespace = namespace.replace(/\/$/, "");
   }
@@ -163,77 +98,10 @@ export class OpenVikingSourceRecall {
     return signal ? AbortSignal.any([signal, timeout]) : timeout;
   }
 
-  private async request(
-    method: string,
-    path: string,
-    body?: unknown,
-    signal?: AbortSignal,
-    contentType = "application/json",
-  ): Promise<{ status: number; result: unknown }> {
-    const serializedBody = body === undefined
-      ? undefined
-      : Buffer.isBuffer(body) ? body : Buffer.from(JSON.stringify(body));
-    const headers: Record<string, string> = { "content-type": contentType };
-    if (serializedBody !== undefined) headers["content-length"] = String(Buffer.byteLength(serializedBody));
-    if (this.apiKey) headers["x-api-key"] = this.apiKey;
-    const url = new URL(`${this.baseUrl}/api/v1${path}`);
-    const transport = url.protocol === "https:" ? httpsRequest : httpRequest;
-
-    let status = 0;
-    let statusText = "";
-    let text: string;
-    try {
-      text = await new Promise<string>((resolveResponse, rejectResponse) => {
-        const request = transport(url, {
-          method,
-          headers,
-          signal: this.signal(signal),
-        }, (response) => {
-          status = response.statusCode ?? 0;
-          statusText = response.statusMessage ?? "";
-          const chunks: Buffer[] = [];
-          let responseBytes = 0;
-          response.on("data", (chunk: Buffer) => {
-            responseBytes += chunk.length;
-            if (responseBytes > MAX_RESPONSE_BYTES) {
-              response.destroy(new Error("OpenViking response exceeded 10 MiB"));
-              return;
-            }
-            chunks.push(chunk);
-          });
-          response.on("end", () => resolveResponse(Buffer.concat(chunks).toString("utf8")));
-          response.on("error", rejectResponse);
-        });
-        request.on("error", rejectResponse);
-        if (serializedBody !== undefined) request.write(serializedBody);
-        request.end();
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      throw new Error(`OpenViking request failed: ${message}`);
-    }
-
-    let payload: unknown;
-    try {
-      payload = text.length > 0 ? JSON.parse(text) : {};
-    } catch {
-      throw new Error(`OpenViking returned non-JSON response (${status})`);
-    }
-    if (status < 200 || status >= 300) {
-      const envelope = payload && typeof payload === "object" ? payload as Record<string, unknown> : undefined;
-      const detail = envelope?.error && typeof envelope.error === "object"
-        ? String((envelope.error as Record<string, unknown>).message ?? statusText)
-        : statusText;
-      const error = new Error(`OpenViking HTTP ${status}: ${detail}`) as Error & { status?: number };
-      error.status = status;
-      throw error;
-    }
-    return { status, result: envelopeResult(payload) };
-  }
 
   private async readContent(uri: string, signal?: AbortSignal): Promise<string | undefined> {
     try {
-      const response = await this.request("GET", `/content/read?uri=${encodeURIComponent(uri)}`, undefined, signal);
+      const response = await this.client.request("GET", `/api/v1/content/read?uri=${encodeURIComponent(uri)}`, undefined, signal);
       if (typeof response.result !== "string") throw new Error("OpenViking content read did not return text");
       return response.result;
     } catch (error) {
@@ -277,9 +145,9 @@ export class OpenVikingSourceRecall {
       Buffer.from(content),
       Buffer.from(`\r\n--${boundary}--\r\n`),
     ]);
-    const response = await this.request(
+    const response = await this.client.request(
       "POST",
-      "/resources/temp_upload",
+      "/api/v1/resources/temp_upload",
       body,
       signal,
       `multipart/form-data; boundary=${boundary}`,
@@ -301,7 +169,7 @@ export class OpenVikingSourceRecall {
     signal?: AbortSignal,
   ): Promise<void> {
     const tempFileId = await this.uploadContent("source.md", content, signal);
-    const response = await this.request("POST", "/resources", {
+    const response = await this.client.request("POST", "/api/v1/resources", {
       temp_file_id: tempFileId,
       to: this.sourceContainerUri(identity, entryId),
       processing_mode: "vectors_only",
@@ -314,17 +182,11 @@ export class OpenVikingSourceRecall {
       throw new Error("OpenViking resource add returned an invalid result");
     }
     const result = response.result as Record<string, unknown>;
-    const queue = result.queue_status as Record<string, unknown> | undefined;
-    const semantic = queue?.Semantic as Record<string, unknown> | undefined;
-    const embedding = queue?.Embedding as Record<string, unknown> | undefined;
-    if (
-      result.status !== "success"
-      || result.root_uri !== this.sourceContainerUri(identity, entryId)
-      || semantic?.processed !== 0
-      || semantic?.error_count !== 0
-      || embedding?.error_count !== 0
-    ) {
-      throw new Error(`OpenViking did not complete vector-only indexing for ${entryId}`);
+    if (result.status !== undefined && result.status !== "success") {
+      throw new Error(`OpenViking resource add failed for ${entryId}`);
+    }
+    if (result.root_uri !== undefined && result.root_uri !== this.sourceContainerUri(identity, entryId)) {
+      throw new Error(`OpenViking resource add returned the wrong root URI for ${entryId}`);
     }
   }
 
@@ -392,7 +254,7 @@ export class OpenVikingSourceRecall {
       return { hits: [], backendCandidates: 0, currentRouteCandidates: 0 };
     }
     const backendLimit = Math.min(MAX_BACKEND_CANDIDATES, Math.max(20, limit * 5));
-    const response = await this.request("POST", "/search/find", {
+    const response = await this.client.request("POST", "/api/v1/search/find", {
       query,
       target_uri: [...currentByUri.keys()],
       context_type: ["resource"],
@@ -408,9 +270,13 @@ export class OpenVikingSourceRecall {
     const hits: RecallHit[] = [];
     let currentRouteCandidates = 0;
     for (const value of result.resources) {
-      if (!value || typeof value !== "object") continue;
+      if (!value || typeof value !== "object") {
+        throw new Error("OpenViking search returned an invalid resource candidate");
+      }
       const candidate = value as Partial<OpenVikingResource>;
-      if (typeof candidate.uri !== "string" || typeof candidate.score !== "number" || !Number.isFinite(candidate.score)) continue;
+      if (typeof candidate.uri !== "string" || typeof candidate.score !== "number" || !Number.isFinite(candidate.score)) {
+        throw new Error("OpenViking search returned an invalid resource candidate");
+      }
       const source = currentByUri.get(candidate.uri);
       if (!source || seen.has(candidate.uri)) continue;
       seen.add(candidate.uri);

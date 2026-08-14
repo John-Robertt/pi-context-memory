@@ -6,7 +6,7 @@
 
 ## 2. 目标与责任边界
 
-当前设计复用 OpenViking `0.4.13` 的本地 embedding、向量索引和相关性排序。Pi session、当前 branch 和原始 entry 决定召回生效范围并承担事实权威；OpenViking资源承担可重建索引责任。
+当前设计复用项目适配的 OpenViking 本地 embedding、向量索引和相关性排序，外部协议及兼容责任由 [`../contracts/openviking-adapter.md`](../contracts/openviking-adapter.md) 统一定义。Pi session、当前 branch 和原始 entry 决定召回生效范围并承担事实权威；OpenViking resource 只承担可重建索引责任。
 
 本流程只拥有来源向量索引和显式召回。Session Working Memory、context assembly 与自动采用已经进入 [`context-enhancement.md`](context-enhancement.md) 的独立流程；两者共享 Pi 路线权威，但不共享队列、排序或失败状态。
 
@@ -21,8 +21,7 @@ Pi 当前路线
 ```
 
 外部布局为 `<namespace>/<session-hash>/<entry-hash>/source.md`。每个 entry 使用独立资源子树，因为 OpenViking会把同一 `to` URI 的后续 `add_resource` 视为资源树新快照；共享 session 目标会覆盖先前来源。`parse_mode=no_split` 防止长 Markdown 按标题改写 leaf URI。同步完成后必须从预期 URI 读回相同内容，已有内容不一致时拒绝覆盖。
-
-来源投影只保留可检索任务文本：用户、assistant、工具、bash、自定义上下文以及压缩或 branch 摘要；模型切换、thinking level、label 等控制 entry 不进入索引。单项投影有固定上限，长内容保留首尾并标记省略。
+Pi 集成规范化边界决定哪些 entry 具有可检索任务文本并统一解释消息、工具、bash、自定义上下文和压缩 checkpoint；模型切换、thinking level、label 等控制 entry 不进入索引。召回模块只负责有界 Markdown 投影，长内容保留首尾并标记省略。
 
 索引发生在本地来源归档之后，并与归档队列分离。同一 session 只保留最新的未启动后台路线，显式同步优先于所有未启动后台索引；索引变慢、失败或服务停止不能延迟 Provider 请求，也不能使已经成功的来源归档失败。索引可由当前来源重新构建。
 
@@ -42,7 +41,7 @@ Pi 当前路线
   → 返回有界内容
 ```
 
-OpenViking只在当前 branch 的精确来源 URI 列表内排序，旧 branch 资源不会占用候选名额；返回的目录、未知 URI和重复 URI仍由本地核对丢弃。过滤保持 OpenViking原始排序，不实现第二套相关性算法。后端最多返回 100 个候选，最终最多返回 10 项。
+OpenViking 只在当前 branch 的精确来源 URI 列表内排序；合法但不属于当前路线的 URI 和重复 URI 由本地核对排除，任一缺少合法 URI 或有限数值 score 的候选则使本次搜索失败，不能表现为正常空结果。过滤保持 OpenViking 原始排序，不实现第二套相关性算法。后端最多返回 100 个候选，最终最多返回 10 项。
 
 显式工具执行前会同步完成当前路线的本地归档；搜索重新同步当前 prompt 之前的历史来源并核对 OpenViking 中的精确 URI，避免为了回答一次召回而把本次 query、tool call 和 tool result 先写入索引。
 

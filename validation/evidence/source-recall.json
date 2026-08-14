@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
   "generatedBy": "scripts/validate-source-recall.mjs",
-  "runId": "source-recall-2026-08-14T14-39-53-228Z",
-  "recordedAt": "2026-08-14T14:40:13.534Z",
+  "runId": "source-recall-2026-08-14T16-50-06-379Z",
+  "recordedAt": "2026-08-14T16:50:26.242Z",
   "piVersion": "0.84.1",
   "openVikingVersion": "0.4.13",
   "openVikingConfig": {
@@ -11,7 +11,7 @@
     "effective": {
       "defaultAccount": "source-recall-validation",
       "defaultUser": "pi-context-memory",
-      "storageWorkspace": ".artifacts/source-recall/source-recall-2026-08-14T14-39-53-228Z/openviking-data",
+      "storageWorkspace": ".artifacts/source-recall/source-recall-2026-08-14T16-50-06-379Z/openviking-data",
       "embedding": {
         "dense": {
           "cache_dir": "./.cache/openviking/models",
@@ -38,22 +38,22 @@
       "watchSchedulerEnabled": false,
       "server": {
         "host": "127.0.0.1",
-        "port": 65115,
+        "port": 56482,
         "agent_evolution": {
           "enabled": false
         }
       }
     },
-    "effectiveSha256": "65bf67d0d5e14b0b60689d130db460287ef49b07ec9554e3b964707f488c7d2f",
+    "effectiveSha256": "f4cf0b0616a2f3d21af2443757fde22f926976a690f7e1ede5d5c04df501ed0f",
     "controlledByRunner": true,
     "denseEmbeddingProvider": "local"
   },
   "implementation": {
-    "sourceManifestSha256": "a67483bec769eecdacf2e3a418e6de97c601b8a9ca70df4b3e31a95a0a9bc9c3",
+    "sourceManifestSha256": "e0ebddda76ffbad37bab905db830b2249f13b3fd5a93ce0a02ff77d6a3260067",
     "files": [
       {
         "path": ".pi/extensions/pi-context-memory/index.ts",
-        "sha256": "c9f3146005c207cbe5a3e9ff3c7266bac94c56189395c7297a3ad55ac9c3ed0c"
+        "sha256": "af4fbe321a6cf05d78d6ca2f9766b9750c6c3f6e679a12039a0988fd426d2636"
       },
       {
         "path": ".pi/extensions/pi-context-memory/long-term-memory.ts",
@@ -61,23 +61,31 @@
       },
       {
         "path": ".pi/extensions/pi-context-memory/memory-model-configuration.ts",
-        "sha256": "c70a333a0a3d8426353612f63190b0b7fdc545bb248d3e2438fb1c622f380192"
+        "sha256": "2608d22ad9cd53bb882fff1001a94dc9bc21f484f18574cd0fd011a36f2d2788"
+      },
+      {
+        "path": ".pi/extensions/pi-context-memory/openviking-protocol.ts",
+        "sha256": "d0806e2d26aceeb657dad183fe0a047211fadf3de02531d56a0d61c814d44c05"
+      },
+      {
+        "path": ".pi/extensions/pi-context-memory/pi-session-protocol.ts",
+        "sha256": "b9eccbcf704078778e5c7b7bb8f404b85a2e15180626b86deb82279b231a7a98"
       },
       {
         "path": ".pi/extensions/pi-context-memory/recall-and-provenance.ts",
-        "sha256": "f74a59a9edf4412c970944412dcbfad254ce3d3904f1a4ecd38687f77264a35f"
+        "sha256": "6303fe0902240b19ce6b1f082783c55583eb8a4733a16ad8702a39ccbf40e1af"
       },
       {
         "path": ".pi/extensions/pi-context-memory/session-memory-coordination.ts",
-        "sha256": "c464139d3d3fe7ce173f8d3469b7ff81523cfe200ca5e040e8f7abde877d708f"
+        "sha256": "9d02cdeb8168a7ab39501cc41d9fcb6e9b3add6c5e467dbe9cc47fe44332d2a4"
       },
       {
         "path": ".pi/extensions/pi-context-memory/session-working-memory.ts",
-        "sha256": "ae6eb91e9021aab383ac6cd745edc69e57c860715daf928893b287bfe10e9640"
+        "sha256": "388b3e1ff19984dca962c6fc6f65a49810610cf5843e6f84056a466db95135bf"
       },
       {
         "path": ".pi/extensions/pi-context-memory/working-context-optimization.ts",
-        "sha256": "acdb4afeb3c28b662a0ea26b644d32cca89ee68e2135119175dc12aa84244588"
+        "sha256": "13ee7afc300599ed460079d4999ad923ea2c955d19daf4b84e45e0f7973316e0"
       },
       {
         "path": "pyproject.toml",
@@ -93,11 +101,11 @@
       },
       {
         "path": "scripts/validate-source-recall.mjs",
-        "sha256": "528095da583f544b6345fa03073cfe324c9f4bc64122a2dcabc15334d7036b7d"
+        "sha256": "cf1ba7902a9715da812c0701984367675127d84a17fe4c6b2aef5479a5b4c27c"
       },
       {
         "path": "scripts/validation-evidence.mjs",
-        "sha256": "625a344f1e6f41b94d1451b4a69f54ea1d35015dd4ab73b81fc7f69959cd4e22"
+        "sha256": "8dbf189f6178d558e6795114caec470f779a26e941c43b2b02dfdb58ae86a8d8"
       },
       {
         "path": "uv.lock",
@@ -108,7 +116,7 @@
         "sha256": "3192252aa9b87a6cdd481b273142c7e3a3692e3bd253800c1bbb9d200ab591d0"
       }
     ],
-    "gitCommit": "34fadc2e2870773f472f7e1abc6ac7e37460b415",
+    "gitCommit": "ee37dd7ec21fe619857902a8589a3853e2eb1a4f",
     "workingTreeDirty": true
   },
   "passed": true,
@@ -132,7 +140,7 @@
     "concurrentMismatchRejected": true,
     "concurrentRebuildConverged": true,
     "deletedIndexRestored": true,
-    "noSemanticProcessing": true,
+    "resourceDiagnosticsOptional": true,
     "noContentWrite": true,
     "sessionIsolation": true,
     "branchFiltering": true,
@@ -144,6 +152,7 @@
     "noSourcesShortCircuit": true,
     "emptyResultDistinct": true,
     "backendFailureDistinct": true,
+    "malformedSearchRejected": true,
     "immutableMismatchRejected": true,
     "authorityMismatchRejected": true,
     "insecureRemoteRejected": true
@@ -156,8 +165,8 @@
     "branchCurrentRouteCandidates": 3
   },
   "sourceHashes": {
-    "common": "cd146a962e73cd70087da7535b943752bd8024e120bcd968f87ba6afdc708e48",
-    "branchB": "e3f528411c6acf970882918f69cce66c87eb77d41ad0b63f0c101fdf10fb9e42"
+    "common": "00b078a8ddee39969e38d82e7ebf55d2e48de5b51dd44c488ceb073c99192ab0",
+    "branchB": "8812387de03f60b520784218dc09cbcf2c44bb61a70fdf74ba4a5b69d543ddf8"
   },
   "limitations": [
     "The local scope covers source coordination and OpenViking retrieval with local dense embeddings.",

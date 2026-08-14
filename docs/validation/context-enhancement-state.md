@@ -32,9 +32,10 @@ runner 使用协议兼容的 OpenViking 与本地任务 Provider 替身，不访
 - Pi entry ID 通过 `source_message_ids` 进入 Working Memory；
 - OpenViking Session create、batch append、commit、task polling 和 context assembly 协议完整执行；
 - Pi compaction 投影保留 `firstKeptEntryId` 范围、压缩后条目，并兼容自包含 `retainedTail`；
-- overview 与 active history 受固定预算和字符上限约束；
+- Working Memory overview 的标题、语言和可选 token 统计不构成生产协议；本地归一化拒绝缺失来源 ID、未知内容形态、空 active tail、通用失败回退和其它 malformed 响应；
+- `context` hook 在后台配置和 Working Memory 尚未完成时先发送 Pi 原生请求；已就绪后配置文件或 runtime state 变化先使旧代际失效，再后台恢复；
 - 当前 prompt 及其后的 assistant/tool 消息保持原对象和顺序；
-- Pi `context` hook 的有效代际真实本地 Provider payload 采用增强历史；启动时与已 ready 后的 setting/config 指纹失配、首轮和故障路径均保持 Pi 原生；
+- Pi `context` hook 的有效代际真实本地 Provider payload 采用增强历史；启动时失配、已 ready 后的 runtime state 或符号链接配置目标变化、首轮和故障路径均保持 Pi 原生；
 - 用户文本包含增强标题时仍不能伪造 Provider 采用状态；
 - 后端故障期间实际请求与 UI 保持 Pi 原生，同路线重建成功后恢复增强；失败不留下可采用的部分结果，扩展自建 Session 在正常关闭和创建响应仍在途时均得到清理；
 - `/tree` A→B→A、回到根、带与不带 branch summary 的选择均按操作后 leaf 重建，并在关键路线实际发送 Provider 请求核对采用与分支隔离；
@@ -54,7 +55,7 @@ runner 使用协议兼容的 OpenViking 与本地任务 Provider 替身，不访
 node scripts/validate-context-quality.mjs
 ```
 
-该 runner 强制 Pi `0.84.1` 与 OpenViking `0.4.13`，固定单次 native→enhanced 顺序，并由两 arm 共用的观察扩展核对任务模型、thinking、active tools、system prompt 与 Provider 模型配置；任务要求从当前路线事实判定方案而非复述历史中的最终标签，增强 arm 还必须观察结构化 Working Memory 就绪并在实际 Provider 请求采用。稳定结果保存于 [`../../validation/evidence/context-quality.json`](../../validation/evidence/context-quality.json)。当前证据中两个 arm 均返回 `bounded-current-route` 与来源 `b000000c`，不采用已放弃路线；这只证明该固定 fixture 的一次路线连续性样本，不代表一般质量等价。
+该 runner 的 evidence 坐标固定为 Pi `0.84.1` 与 OpenViking `0.4.13`，固定单次 native→enhanced 顺序，并由两 arm 共用观察扩展核对任务模型、Pi thinking、active tools、system prompt 与 Provider 模型配置。记忆模型条件由独立 adapter probe 观察最终 Codex Responses 请求：reasoning 与 temperature 未被转发，内部流式传输开启，因此 reasoning 使用 Provider 默认，不能由 Pi 的 `thinking: off` 外推。任务要求从当前路线事实判定方案，增强 arm 还必须观察 Working Memory 就绪并在实际 Provider 请求采用。稳定结果保存于 [`../../validation/evidence/context-quality.json`](../../validation/evidence/context-quality.json)。当前两个 arm 均返回 `bounded-current-route` 与来源 `b000000c` 并排除废弃路线；这只证明一个固定 fixture 的单次样本。
 
 当前尚未闭合的是完整 API 成本：质量 runner 保存 Pi session 任务模型统计，但 OpenViking 记忆生成请求尚未与 Provider 最终账单逐 generation 归集，因此不能据此宣称完整成本优势。
 

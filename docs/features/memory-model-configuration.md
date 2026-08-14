@@ -8,7 +8,7 @@ OpenViking原生配置、运行配置格式和进程通信由系统设计统一�
 
 ## 2. 目标与边界
 
-系统在 `~/.pi/pi-context-memory.jsonc` 维护用户级 OpenViking VLM 配置。文件不存在时创建合法的空配置，并以注释列出项目锁定 OpenViking 版本支持的全部 Provider、模型目标、连接字段及认证入口；已有文件始终由用户拥有，系统不自动覆盖或修复。
+系统在 `~/.pi/pi-context-memory.jsonc` 维护用户级 OpenViking VLM 配置。文件不存在时创建合法空配置，并以注释列出扩展当前验证和转换的 Provider、必要连接字段及认证入口；已有文件始终由用户拥有，系统不自动覆盖。项目锁定的 OpenViking 版本用于可复现安装，不把其全部内部能力变成用户配置承诺。
 
 记忆模型设置独立于 Pi `/model` 的任务模型设置。修改记忆模型保持当前任务模型和 Pi session branch 不变，也不产生任务模型调用或对话消息。
 
@@ -18,9 +18,9 @@ OpenViking原生配置、运行配置格式和进程通信由系统设计统一�
 
 `/memory-model` 创建缺失模板并显示配置文件路径、当前有效配置、项目托管实例实际加载的模型及二者是否一致。命令只检查和展示，不重写 JSONC；用户直接编辑文件后使用 `/restart-viking` 应用。
 
-JSONC 根只接受可为空的 `memoryModel`，其非空值通过锁定 OpenViking 的 Provider registry、字段能力和完整 schema 校验。语法错误报告文件与行列，语义错误报告配置字段；空配置表示不启用记忆模型，执行 `/restart-viking` 会切换为无 VLM 基础服务。
+JSONC 根只接受可为空的 `memoryModel`，其非空值通过扩展支持面和 OpenViking 当前配置入口校验。语法错误报告文件与行列，语义错误报告配置字段；空配置表示不启用记忆模型，执行 `/restart-viking` 会切换为无 VLM 基础服务。
 
-`provider: "litellm"` 表示多来源路由层，不等同于单一模型来源。模板从锁定 OpenViking LiteLLM backend 列出内置来源的规范模型前缀、关键词识别顺序和来源凭据环境变量，以及保持原样的显式云路由、云原生认证范围、`zai/` 特例和自定义 OpenAI-compatible 写法。LiteLLM 官方目录仅作为更多格式参考；未列路由不属于当前模板保证范围。
+`provider: "litellm"` 表示多来源路由层，`model` 使用标准 `provider/model` 表达；具体来源、特殊路由和凭据以 LiteLLM 当前官方目录为准，扩展不复制其内部关键词和路由表。
 ## 4. `/restart-viking`
 
 `/restart-viking` 将当前有效的用户级记忆模型配置应用到当前项目启动器管理的 OpenViking 实例。命令在执行期间显示“正在应用”，并在新实例达到 readiness 后返回实际加载的来源和模型。
@@ -41,7 +41,7 @@ readiness 检查只验证本地服务，不产生外部 Provider 调用。具体
 ## 6. 完成条件
 
 - 用户只填写 OpenViking VLM Provider、模型和该 Provider 要求的必要连接信息，其余 OpenViking 配置由系统生成；
-- 可选范围与项目锁定 OpenViking版本的 VLM 能力描述一致；
+- 可选范围是扩展当前验证和转换的稳定子集，上游新增未知能力不影响已有配置；
 - 凭据与用户 JSONC、Pi session 和运行状态保持分离；
 - `/memory-model` 只检查并准确区分用户配置和运行实例，不覆盖用户文件；
 - `/restart-viking` 只控制项目启动器拥有的实例，并在 readiness 后报告实际加载设置；

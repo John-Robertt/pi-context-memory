@@ -5,6 +5,7 @@ import { createServer } from "node:net";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { compileOpenVikingConfig } from "../.pi/extensions/pi-context-memory/memory-model-configuration.ts";
 
 import {
   assertImplementationEvidenceUnchanged,
@@ -332,6 +333,18 @@ async function runArm(name, model, openViking) {
 
 const task = parseModel(taskModel, "PCR_QUALITY_MODEL");
 const memory = parseModel(memoryModel, "PCR_QUALITY_MEMORY_MODEL");
+const adapterProbe = JSON.parse(commandOutput(
+  join(root, ".venv/bin/python"),
+  [join(root, "scripts/validate-openviking-vlm-adapters.py")],
+));
+const memoryRequestSemantics = memory.provider === "openai-codex" && adapterProbe.passed === true
+  ? {
+    adapter: "Codex Responses",
+    reasoningForwarded: adapterProbe.codexRequest?.reasoningForwarded,
+    temperatureForwarded: adapterProbe.codexRequest?.temperatureForwarded,
+    stream: adapterProbe.codexRequest?.stream,
+  }
+  : undefined;
 const runtimeDir = join(artifactRoot, "openviking-runtime");
 const settingsPath = join(artifactRoot, "memory-model.jsonc");
 const baseConfigPath = join(artifactRoot, "openviking-base.json");
@@ -342,6 +355,13 @@ baseConfig.server.host = "127.0.0.1";
 baseConfig.server.port = port;
 writeJson(baseConfigPath, baseConfig);
 writeJson(settingsPath, { memoryModel: memory });
+const compiledMemoryModel = await compileOpenVikingConfig(root, memory, {
+  ...process.env,
+  PCR_MEMORY_MODEL_SETTINGS: settingsPath,
+  PCR_OPENVIKING_BASE_CONFIG: baseConfigPath,
+});
+const explicitMemoryRequestControls = ["thinking", "temperature", "max_retries", "stream"]
+  .filter((field) => Object.hasOwn(compiledMemoryModel.config.vlm, field));
 writeFileSync(observerPath, [
   "import { createHash } from \"node:crypto\";",
   "import { appendFileSync } from \"node:fs\";",
@@ -402,6 +422,9 @@ try {
     enhancedContextAdopted: enhanced.adopted && enhanced.observations.enhancedProviderRequests > 0,
     realWorkingMemoryReady: enhanced.observations.workingContextReady > 0,
     sameTaskModel: native.model === taskModel && enhanced.model === taskModel,
+    memoryRequestSemanticsObserved: memoryRequestSemantics?.reasoningForwarded === false
+      && memoryRequestSemantics.temperatureForwarded === false
+      && memoryRequestSemantics.stream === true,
     pairedConditions: Boolean(native.condition)
       && JSON.stringify(native.condition) === JSON.stringify(enhanced.condition),
   };
@@ -416,6 +439,14 @@ try {
     piVersion,
     openVikingVersion,
     models: { task: taskModel, memory: memoryModel },
+    memoryModelCondition: {
+      configFingerprint: compiledMemoryModel.configFingerprint,
+      explicitRequestControls: explicitMemoryRequestControls,
+      adapterRequest: memoryRequestSemantics,
+      reasoningSemantics: memoryRequestSemantics?.reasoningForwarded === false
+        ? "provider-default"
+        : "adapter-specific",
+    },
     fixture: {
       path: "validation/fixtures/context-enhancement-long-task.json",
       name: fixture.name,

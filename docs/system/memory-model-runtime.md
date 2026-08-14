@@ -6,24 +6,23 @@
 
 ## 2. 配置权威与数据边界
 
-默认用户级 `~/.pi/pi-context-memory.jsonc` 是记忆模型目标的唯一权威来源；受控部署或验证可用 `PCR_MEMORY_MODEL_SETTINGS` 统一覆盖 Pi 与启动器读取的路径，覆盖路径在该运行环境中取代默认路径而不形成第二份配置。根结构只包含可为空的 `memoryModel`；非空值是 OpenViking VLM schema 的受控投影，由以下部分组成：
+默认用户级 `~/.pi/pi-context-memory.jsonc` 是记忆模型目标的唯一权威来源；受控部署或验证可用 `PCR_MEMORY_MODEL_SETTINGS` 统一覆盖 Pi 与启动器读取的路径，覆盖路径在该运行环境中取代默认路径而不形成第二份配置。根结构只包含可为空的 `memoryModel`；非空值是扩展明确支持的最小配置面：
 
-- `provider`：来自项目锁定 OpenViking版本的 Provider registry；
+- `provider`：扩展当前能够转换并由项目 OpenViking 配置入口验证的 Provider；
 - `model`：对应 Provider 接受的模型 ID 或路由表达式；
-- Provider schema 要求且无法由系统推导的具体非凭据连接字段。
+- 该 Provider 当前必要且无法推导的非凭据连接字段。
 
 界面中的“来源”映射到规范 `provider`。OpenAI-compatible服务通过 `provider: "openai"` 和相应 `api_base` 表达，LiteLLM路由按其模型路由语义表达。配置结构只由 OpenViking schema 明确定义且当前来源需要的字段组成。
 
-文件缺失时，长时记忆模块根据锁定 OpenViking 能力原子独占创建 `0600` JSONC 模板；模板以注释列出全部 Provider 和字段，`memoryModel: null` 表示未配置。已有文件只读解析，系统不自动迁移、修复或覆盖；语法诊断保留行列，语义诊断定位到 `memoryModel`。该用户配置独立于 Pi session 历史和 `/model` 任务模型。
+文件缺失时，长时记忆模块根据扩展当前支持的配置面原子独占创建 `0600` JSONC 模板；模板说明支持的 Provider、必要字段和认证入口，`memoryModel: null` 表示未配置。已有文件只读解析，不自动覆盖用户内容；语法诊断保留行列，语义诊断定位到 `memoryModel`。该用户配置独立于 Pi session 历史和 `/model` 任务模型。
 运行配置由项目基础配置、公共 VLM 默认值和有效用户配置编译为可重建的 `.artifacts/openviking/runtime/openviking.json`。`state.json` 分别记录实际 ready 实例的 `active*` 配置事实与当前应用目标的 `target*` 配置事实，并保存冷启动配置诊断、启动器与子进程 PID、操作 ID、阶段和 readiness；失败目标不会伪装成运行配置。`launcher.json` 保存本地控制入口、启动标识和操作期限，`launcher.lock` 原子约束同一项目运行目录只有一个生命周期所有者。这些生成文件都不承担业务事实权威。
-普通 Provider 的密钥由 `PCR_OPENVIKING_VLM_API_KEY` 提供，生成配置只保存该环境变量占位符。LiteLLM 的 API-key 来源也可使用该入口；未设置时由 LiteLLM 读取模板逐来源列出的环境变量，或使用 Bedrock、SageMaker、Vertex AI 等云原生凭据。用户 JSONC、运行状态、日志和 Pi session 均不保存展开后的 API key、OAuth token、云凭据或认证响应。
+普通 Provider 的密钥由 `PCR_OPENVIKING_VLM_API_KEY` 提供，生成配置只保存该环境变量占位符。LiteLLM 的 API-key 来源也可使用该入口；未设置时由 LiteLLM 按官方目录读取来源环境变量或使用云原生认证。模板只提供当前验证的少量显式云路由示例，不复制完整凭据 registry。用户 JSONC、运行状态、日志和 Pi session 均不保存展开后的 API key、OAuth token、云凭据或认证响应。
 
 ## 3. 来源覆盖与转换规则
 
-锁定 OpenViking 的 Provider registry、`VLMConfig` schema 与 LiteLLM backend 路由元数据共同定义可配置范围。注释模板和编译器从同一能力描述获得 Provider、字段、认证类型及 LiteLLM 内置来源；依赖升级后，同一验证入口重新核对模板与转换覆盖。
+扩展维护一个稳定、最小的用户配置面，并通过 [`../contracts/openviking-adapter.md`](../contracts/openviking-adapter.md) 把它转换为当前 OpenViking 配置。配置桥只依赖 OpenViking 聚合导出的配置校验入口，不复制其完整 Provider registry 或 backend 内部路由表；上游新增未知能力不得使现有受支持配置失效。依赖升级后，验证入口重新核对每个受支持配置仍能被目标 OpenViking 加载。
 
-用户提供的模型 ID 按 Provider 语义进入生成配置。LiteLLM 的 `model` 是 `provider/model` 路由：锁定 backend 按既定顺序扫描整个模型字符串的关键词，补全已识别来源前缀，并保持 Azure、Bedrock、SageMaker、Vertex AI 等显式路由和 `zai/` 特例；设置自定义端点时使用 `openai/<model-id>`。模板只保证这些由锁定 backend 明确描述和验证的路由，LiteLLM 官方目录中的其它格式仅作参考。项目转换层不把上游来源压成普通单一 Provider。
-
+用户提供的模型 ID 按所选 Provider 语义进入生成配置。LiteLLM 使用标准 `provider/model` 路由；具体来源、凭据和特殊格式以其当前官方目录为准，扩展只承诺模板中明确列出的形式。`thinking`、reasoning 和 temperature 等参数不具有跨 Provider 的统一语义；产品结论必须来自目标适配器最终请求，未转发的参数使用 Provider 默认。
 配置通过 schema 表示 OpenViking能够加载该调用目标；模型能力表示具体模型能够可靠完成 Working Memory tool calling。两项事实分别观测，模型能力不足时由 Pi 原生路径继续任务。
 
 ## 4. 正常控制流
@@ -75,4 +74,4 @@ OpenViking 在服务进程内缓存 VLM 实例，因此用户配置变化通过�
 
 ## 7. 验证与校准
 
-[`../validation/memory-model-runtime.md`](../validation/memory-model-runtime.md) 及其稳定 evidence 证明配置转换覆盖项目锁定 OpenViking 版本的全部 Provider、连接字段保持有界、凭据保持分离、启动器所有权可靠、并发应用确定，以及配置加载、服务就绪、模型能力和上下文采用四项事实相互独立。
+[`../validation/memory-model-runtime.md`](../validation/memory-model-runtime.md) 及其稳定 evidence 证明扩展支持配置面能够通过当前项目依赖校验、上游默认参数不被伪统一、凭据保持分离、启动器所有权可靠、并发应用确定，以及配置加载、服务就绪、模型能力和上下文采用四项事实相互独立。OpenViking 字段和版本兼容统一服从 [`../contracts/openviking-adapter.md`](../contracts/openviking-adapter.md)。

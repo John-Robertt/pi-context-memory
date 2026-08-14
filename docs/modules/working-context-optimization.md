@@ -17,7 +17,7 @@
 3. 当前 prompt 及其后的 assistant tool call、tool result 保持 Pi 原生对象和顺序；
 4. 没有当前 prompt、assembled context 为空或路线结果未就绪时不替换消息；
 5. 输出只提供派生上下文和来源 entry ID 线索，关键事实仍通过 `recall_session` 回到 Pi 权威 entry；
-6. 非空 Working Memory overview 必须具备 OpenViking `0.4.13` 的完整七段结构，通用回退摘要不能进入增强上下文。
+6. 输入必须已经由 OpenViking 适配层归一化；overview 的语言和标题不参与有效性判断，已知通用失败回退与 malformed 响应不能进入增强上下文。
 
 ## 3. 构造与采用边界
 

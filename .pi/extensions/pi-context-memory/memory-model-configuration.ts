@@ -23,25 +23,13 @@ export interface ProviderCapability {
   credential: "environment" | "environment-or-native" | "optional-environment-or-native";
 }
 
-export interface LiteLLMRouteCapabilities {
-  catalogUrl: string;
-  recognized: Array<{
-    source: string;
-    modelPatterns: string[];
-    keywords: string[];
-    credentialEnvironment: string;
-  }>;
-  specialModelPatterns: Array<{ source: string; modelPattern: string }>;
-  explicit: Array<{ prefix: string; nativeAuthentication: boolean }>;
-  customOpenAICompatible: { modelPattern: string; apiBaseRequired: boolean };
-}
 export interface MemoryModelCapabilities {
   openVikingVersion: string;
   providers: ProviderCapability[];
   settingFields: Record<string, unknown>;
   vlmSchemaSha256: string;
   credentialEnvironment: string;
-  litellmRoutes: LiteLLMRouteCapabilities;
+  litellmCatalogUrl: string;
 }
 
 export interface CompiledOpenVikingConfig {
@@ -250,23 +238,6 @@ export function describeMemoryModelCapabilities(
   return loading;
 }
 
-function appendLiteLLMRouteComments(lines: string[], routes: LiteLLMRouteCapabilities): void {
-  lines.push("  // LiteLLM 是多来源路由层，model 使用 <litellm-provider>/<model-id>，不是固定来源的模型名。");
-  lines.push(`  // 更多 LiteLLM 格式参考：${routes.catalogUrl}（未列路由不属于当前模板保证范围）`);
-  lines.push("  // backend 按下列顺序扫描整个模型字符串的关键词；请优先使用明确前缀以避免误识别。");
-  lines.push("  // OpenViking 内置识别并补全的来源：");
-  for (const route of routes.recognized) {
-    lines.push(`  //   ${route.source}: ${route.modelPatterns.join(" 或 ")}；关键词 ${route.keywords.join(", ")}；凭据变量 ${route.credentialEnvironment}（按来源需要）`);
-  }
-  for (const route of routes.specialModelPatterns) {
-    lines.push(`  //   ${route.source} 特殊模型格式：${route.modelPattern}`);
-  }
-  lines.push("  // OpenViking 保持原样的显式路由：");
-  for (const route of routes.explicit) {
-    lines.push(`  //   ${route.prefix}/<model-id>${route.nativeAuthentication ? "（使用云原生凭据）" : ""}`);
-  }
-  lines.push(`  // 自定义 OpenAI-compatible：model 为 ${routes.customOpenAICompatible.modelPattern}，并填写 api_base。`);
-}
 function memoryModelTemplate(capabilities: MemoryModelCapabilities): string {
   const lines = [
     "{",
@@ -275,7 +246,7 @@ function memoryModelTemplate(capabilities: MemoryModelCapabilities): string {
     "  // 保存有效配置后，在 Pi 中执行 /restart-viking 应用。",
     "  \"memoryModel\": null,",
     "",
-    `  // OpenViking ${capabilities.openVikingVersion} 支持的 VLM Provider：`,
+    `  // 扩展在 OpenViking ${capabilities.openVikingVersion} 上验证的记忆模型 Provider：`,
   ];
   for (const provider of capabilities.providers) {
     const model = provider.name === "azure" ? "<deployment-name>" : provider.name === "litellm" ? "<litellm-provider>/<model-id>" : "<model-id>";
@@ -287,7 +258,12 @@ function memoryModelTemplate(capabilities: MemoryModelCapabilities): string {
           ? `使用 ${MEMORY_MODEL_CREDENTIAL_ENV} 或 OpenViking 原生认证`
           : `需要时使用 ${MEMORY_MODEL_CREDENTIAL_ENV}，否则使用原生认证`;
     lines.push(`  // ${provider.name}:`);
-    if (provider.name === "litellm") appendLiteLLMRouteComments(lines, capabilities.litellmRoutes);
+    if (provider.name === "litellm") {
+      lines.push("  // LiteLLM 是多来源路由层，model 使用 <litellm-provider>/<model-id>。");
+      lines.push("  // 显式云路由示例：bedrock/<model-id>、sagemaker/<endpoint-name>、vertex_ai/<model-id>。");
+      lines.push("  // 自定义 OpenAI-compatible：model 使用 openai/<model-id>，并填写 api_base。");
+      lines.push(`  // 更多路由和来源认证以 LiteLLM 当前目录为准：${capabilities.litellmCatalogUrl}`);
+    }
     lines.push("  // {");
     lines.push(`  //   \"provider\": \"${provider.name}\",`);
     lines.push(`  //   \"model\": \"${model}\"${provider.required.length + provider.optional.length > 0 ? "," : ""}`);

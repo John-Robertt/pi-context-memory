@@ -281,42 +281,15 @@ async function validateConfiguration() {
   const capabilities = await describeMemoryModelCapabilities(root);
   const providers = capabilities.providers.map((item) => item.name);
   const expectedProviders = ["volcengine", "openai", "azure", "kimi", "glm", "litellm", "openai-codex"];
-  const providerRegistryCovered = JSON.stringify(providers) === JSON.stringify(expectedProviders);
+  const supportedProviderSurface = JSON.stringify(providers) === JSON.stringify(expectedProviders);
   const schemaObserved = capabilities.openVikingVersion === "0.4.13"
     && typeof capabilities.vlmSchemaSha256 === "string"
     && Object.keys(capabilities.settingFields).sort().join(",") === "api_base,api_version,model,provider";
-  const expectedLiteLLMRecognizedSources = [
-    "openrouter", "hosted_vllm", "ollama", "anthropic", "deepseek", "gemini",
-    "nvidia_nim", "openai", "moonshot", "zhipu", "dashscope", "minimax",
-  ];
-  const expectedLiteLLMKeywords = {
-    openrouter: ["openrouter"], hosted_vllm: ["hosted_vllm"], ollama: ["ollama"],
-    anthropic: ["claude", "anthropic"], deepseek: ["deepseek"], gemini: ["gemini", "google"],
-    nvidia_nim: ["nvidia_nim", "nemotron"], openai: ["gpt", "o1", "o3", "o4"],
-    moonshot: ["moonshot", "kimi"], zhipu: ["glm", "zhipu"],
-    dashscope: ["qwen", "dashscope"], minimax: ["minimax"],
-  };
-  const expectedLiteLLMCredentials = {
-    openrouter: "OPENROUTER_API_KEY", hosted_vllm: "HOSTED_VLLM_API_KEY", ollama: "OLLAMA_API_KEY",
-    anthropic: "ANTHROPIC_API_KEY", deepseek: "DEEPSEEK_API_KEY", gemini: "GEMINI_API_KEY",
-    nvidia_nim: "NVIDIA_NIM_API_KEY", openai: "OPENAI_API_KEY", moonshot: "MOONSHOT_API_KEY",
-    zhipu: "ZHIPUAI_API_KEY", dashscope: "DASHSCOPE_API_KEY", minimax: "MINIMAX_API_KEY",
-  };
-  const expectedLiteLLMExplicitPrefixes = [
-    "azure", "azure_ai", "azure_text", "bedrock", "sagemaker", "sagemaker_chat",
-    "sagemaker_nova", "vertex_ai", "github_copilot",
-  ];
-  const expectedLiteLLMNativePrefixes = ["bedrock", "sagemaker", "sagemaker_chat", "sagemaker_nova", "vertex_ai"];
-  const expectedLiteLLMSpecialModelPatterns = [{ source: "zhipu", modelPattern: "zai/<glm-model-id>" }];
-  const litellmRoutesObserved = capabilities.litellmRoutes.catalogUrl === "https://docs.litellm.ai/docs/providers"
-    && JSON.stringify(capabilities.litellmRoutes.recognized.map((item) => item.source)) === JSON.stringify(expectedLiteLLMRecognizedSources)
-    && JSON.stringify(Object.fromEntries(capabilities.litellmRoutes.recognized.map((item) => [item.source, item.keywords]))) === JSON.stringify(expectedLiteLLMKeywords)
-    && JSON.stringify(Object.fromEntries(capabilities.litellmRoutes.recognized.map((item) => [item.source, item.credentialEnvironment]))) === JSON.stringify(expectedLiteLLMCredentials)
-    && JSON.stringify(capabilities.litellmRoutes.specialModelPatterns) === JSON.stringify(expectedLiteLLMSpecialModelPatterns)
-    && JSON.stringify(capabilities.litellmRoutes.explicit.map((item) => item.prefix)) === JSON.stringify(expectedLiteLLMExplicitPrefixes)
-    && JSON.stringify(capabilities.litellmRoutes.explicit.filter((item) => item.nativeAuthentication).map((item) => item.prefix)) === JSON.stringify(expectedLiteLLMNativePrefixes)
-    && capabilities.litellmRoutes.customOpenAICompatible.modelPattern === "openai/<model-id>"
-    && capabilities.litellmRoutes.customOpenAICompatible.apiBaseRequired === true;
+  const bridgeSource = readFileSync(join(root, "scripts/openviking-config.py"), "utf8");
+  const upstreamProviderAdditionsTolerated = !bridgeSource.includes("get_all_provider_names")
+    && !bridgeSource.includes("PROVIDER_CONFIGS")
+    && !bridgeSource.includes("EXPLICIT_LITELLM_PREFIXES");
+  const litellmCatalogObserved = capabilities.litellmCatalogUrl === "https://docs.litellm.ai/docs/providers";
   const adapterProbe = spawnSync(
     process.platform === "win32" ? join(root, ".venv/Scripts/python.exe") : join(root, ".venv/bin/python"),
     [join(root, "scripts/validate-openviking-vlm-adapters.py")],
@@ -338,11 +311,10 @@ async function validateConfiguration() {
     && adapterRoutes.nativeRoutePreserved === true
     && adapterRoutes.customOpenAICompatible === true
     && adapterRoutes.ollamaDefaults === true
-    && JSON.stringify(adapterRoutes.recognizedSources) === JSON.stringify(expectedLiteLLMRecognizedSources)
-    && JSON.stringify(adapterRoutes.recognizedKeywords) === JSON.stringify(expectedLiteLLMKeywords)
-    && JSON.stringify(adapterRoutes.recognizedCredentials) === JSON.stringify(expectedLiteLLMCredentials)
-    && JSON.stringify(adapterRoutes.explicitPrefixes) === JSON.stringify(expectedLiteLLMExplicitPrefixes)
-    && JSON.stringify(adapterRoutes.nativePrefixes) === JSON.stringify(expectedLiteLLMNativePrefixes);
+    && adapterResult.codexRequest?.reasoningForwarded === false
+    && adapterResult.codexRequest?.temperatureForwarded === false
+    && adapterResult.codexRequest?.stream === true
+    && adapterResult.codexRequest?.store === false;
   const caseDir = join(artifactRoot, "configuration");
   const basePath = join(caseDir, "base.json");
   writeJson(basePath, baseConfig(await freePort(), join(caseDir, "data")));
@@ -355,6 +327,9 @@ async function validateConfiguration() {
   }
   const generatedConfigParsed = compiled.length === expectedProviders.length
     && compiled.every((item) => item.config.vlm.provider === item.provider && item.config.vlm.model === item.model);
+  const providerDefaultsNotOverridden = compiled.every((item) =>
+    !["thinking", "temperature", "max_retries", "stream"].some((field) => Object.hasOwn(item.config.vlm, field))
+  );
   const deterministicFingerprint = compiled[0].configFingerprint
     === (await compileOpenVikingConfig(root, { provider: "volcengine", model: "validation-model" }, env)).configFingerprint;
   const missingCredentialRejected = Boolean(await expectFailure(() => compileOpenVikingConfig(
@@ -398,15 +373,16 @@ async function validateConfiguration() {
     templateSource.indexOf("  // litellm:"),
     templateSource.indexOf("  // openai-codex:"),
   );
-  const litellmSourcesDocumented = litellmRoutesObserved
-    && capabilities.litellmRoutes.recognized.every((route) => litellmSection.includes(`${route.source}: ${route.modelPatterns.join(" 或 ")}；关键词 ${route.keywords.join(", ")}；凭据变量 ${route.credentialEnvironment}（按来源需要）`))
-    && capabilities.litellmRoutes.specialModelPatterns.every((route) => litellmSection.includes(`${route.source} 特殊模型格式：${route.modelPattern}`))
-    && capabilities.litellmRoutes.explicit.every((route) => litellmSection.includes(`${route.prefix}/<model-id>${route.nativeAuthentication ? "（使用云原生凭据）" : ""}`))
-    && litellmSection.includes("按下列顺序扫描整个模型字符串的关键词")
-    && litellmSection.includes("未列路由不属于当前模板保证范围")
-    && litellmSection.includes(capabilities.litellmRoutes.catalogUrl)
-    && litellmSection.includes(`自定义 OpenAI-compatible：model 为 ${capabilities.litellmRoutes.customOpenAICompatible.modelPattern}`)
-    && litellmSection.includes("未设置时由 LiteLLM 读取来源自己的环境变量或云原生凭据");
+  const litellmCatalogDocumented = litellmCatalogObserved
+    && litellmSection.includes("<litellm-provider>/<model-id>")
+    && litellmSection.includes(capabilities.litellmCatalogUrl)
+    && litellmSection.includes("bedrock/<model-id>")
+    && litellmSection.includes("sagemaker/<endpoint-name>")
+    && litellmSection.includes("vertex_ai/<model-id>")
+    && litellmSection.includes("openai/<model-id>")
+    && litellmSection.includes("api_base")
+    && !litellmSection.includes("关键词")
+    && !litellmSection.includes("内置识别");
   const templateSetting = await readMemoryModelSetting(root, templateEnv);
   const commentedTemplateCreated = templateSetting === undefined
     && (statSync(templatePath).mode & 0o777) === 0o600
@@ -488,17 +464,19 @@ async function validateConfiguration() {
   return {
     checks: {
       adapterProtocolsCovered,
-      providerRegistryCovered,
+      supportedProviderSurface,
+      upstreamProviderAdditionsTolerated,
       schemaObserved,
-      litellmRoutesObserved,
+      litellmCatalogObserved,
       generatedConfigParsed,
+      providerDefaultsNotOverridden,
       deterministicFingerprint,
       unknownFieldRejected,
       missingCredentialRejected,
       azureFieldRejected,
       userConfigPath,
       commentedTemplateCreated,
-      litellmSourcesDocumented,
+      litellmCatalogDocumented,
       jsoncConfigurationParsed,
       emptyConfigurationAccepted,
       invalidConfigDiagnosed,
@@ -905,8 +883,8 @@ const rawEvidence = {
   checks,
   limitations: [
     "The local scope uses a protocol-compatible OpenViking process double and makes no external Provider requests.",
-    "Working Memory protocol and automatic Pi context adoption have separate local evidence; real memory-model semantics still require Provider validation.",
-    "Paired task quality and complete API-cost evidence remain in the next longitudinal delivery.",
+    "Working Memory protocol and automatic Pi context adoption have separate local evidence; the paired quality runner records the selected real memory adapter semantics.",
+    "One fixed paired task-quality sample exists; general task quality and complete API-cost attribution remain outside this local runner.",
   ],
 };
 assertImplementationEvidenceUnchanged(root, "memory-model-runtime", implementation);

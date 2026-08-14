@@ -23,6 +23,8 @@ const DEFINITIONS = {
     ],
     files: [
       ".pi/extensions/pi-context-memory/index.ts",
+      ".pi/extensions/pi-context-memory/openviking-protocol.ts",
+      ".pi/extensions/pi-context-memory/pi-session-protocol.ts",
       ".pi/extensions/pi-context-memory/memory-model-configuration.ts",
       ".pi/extensions/pi-context-memory/long-term-memory.ts",
       ".pi/extensions/pi-context-memory/recall-and-provenance.ts",
@@ -54,8 +56,9 @@ const DEFINITIONS = {
       "immutableMismatchRejected",
       "insecureRemoteRejected",
       "localEmbeddingConfigured",
+      "malformedSearchRejected",
       "noContentWrite",
-      "noSemanticProcessing",
+      "resourceDiagnosticsOptional",
       "noSourcesShortCircuit",
       "oldSourceRejected",
       "pendingRequiredShared",
@@ -76,6 +79,8 @@ const DEFINITIONS = {
     ],
     files: [
       ".pi/extensions/pi-context-memory/index.ts",
+      ".pi/extensions/pi-context-memory/openviking-protocol.ts",
+      ".pi/extensions/pi-context-memory/pi-session-protocol.ts",
       ".pi/extensions/pi-context-memory/memory-model-configuration.ts",
       ".pi/extensions/pi-context-memory/long-term-memory.ts",
       ".pi/extensions/pi-context-memory/recall-and-provenance.ts",
@@ -102,6 +107,7 @@ const DEFINITIONS = {
       "compactionBoundary",
       "compactionLifecycle",
       "contextBounded",
+      "contextHookNonBlocking",
       "currentRouteIdentity",
       "currentTurnPreserved",
       "inFlightShutdownCleaned",
@@ -115,6 +121,7 @@ const DEFINITIONS = {
       "ownedSessionsCleaned",
       "pendingRoutesCollapsed",
       "piContextHookAdopted",
+      "piProtocolFailClosed",
       "providerPayloadCurrentTurn",
       "providerStateUnspoofable",
       "sessionReplacementLifecycle",
@@ -123,10 +130,12 @@ const DEFINITIONS = {
       "sourceIdsPreserved",
       "treeLifecycle",
       "workingMemoryAssembled",
-      "workingMemoryStructureValidated",
+      "workingContextResponseNormalized",
     ],
     files: [
       ".pi/extensions/pi-context-memory/index.ts",
+      ".pi/extensions/pi-context-memory/openviking-protocol.ts",
+      ".pi/extensions/pi-context-memory/pi-session-protocol.ts",
       ".pi/extensions/pi-context-memory/long-term-memory.ts",
       ".pi/extensions/pi-context-memory/memory-model-configuration.ts",
       ".pi/extensions/pi-context-memory/session-memory-coordination.ts",
@@ -145,6 +154,7 @@ const DEFINITIONS = {
     requiredChecks: [
       "enhancedContextAdopted",
       "enhancedQuality",
+      "memoryRequestSemanticsObserved",
       "nativeQuality",
       "pairedConditions",
       "realWorkingMemoryReady",
@@ -152,6 +162,8 @@ const DEFINITIONS = {
     ],
     files: [
       ".pi/extensions/pi-context-memory/index.ts",
+      ".pi/extensions/pi-context-memory/openviking-protocol.ts",
+      ".pi/extensions/pi-context-memory/pi-session-protocol.ts",
       ".pi/extensions/pi-context-memory/long-term-memory.ts",
       ".pi/extensions/pi-context-memory/memory-model-configuration.ts",
       ".pi/extensions/pi-context-memory/session-memory-coordination.ts",
@@ -199,8 +211,8 @@ const DEFINITIONS = {
       "invalidConfigDiagnosed",
       "jsoncConfigurationParsed",
       "launcherOwnershipProtected",
-      "litellmRoutesObserved",
-      "litellmSourcesDocumented",
+      "litellmCatalogDocumented",
+      "litellmCatalogObserved",
       "missingCredentialRejected",
       "missingLauncherReported",
       "nullConfigurationStateReported",
@@ -208,7 +220,8 @@ const DEFINITIONS = {
       "operationDeadlinePublished",
       "orderedRestart",
       "preflightPreservesInstance",
-      "providerRegistryCovered",
+      "providerDefaultsNotOverridden",
+      "supportedProviderSurface",
       "readinessTimeoutPublished",
       "schemaObserved",
       "sharedUserConfig",
@@ -219,12 +232,15 @@ const DEFINITIONS = {
       "taskModelUnchanged",
       "unrelatedReadyNotReconciled",
       "unknownFieldRejected",
+      "upstreamProviderAdditionsTolerated",
       "unknownPortPreserved",
       "userConfigPath",
       "wrongLaunchRejected",
     ],
     files: [
       ".pi/extensions/pi-context-memory/index.ts",
+      ".pi/extensions/pi-context-memory/openviking-protocol.ts",
+      ".pi/extensions/pi-context-memory/pi-session-protocol.ts",
       ".pi/extensions/pi-context-memory/session-memory-coordination.ts",
       ".pi/extensions/pi-context-memory/session-working-memory.ts",
       ".pi/extensions/pi-context-memory/working-context-optimization.ts",
@@ -392,6 +408,18 @@ export function stableEvidenceMismatches(root, key, evidence) {
     }
     if (typeof evidence?.models?.task !== "string" || typeof evidence?.models?.memory !== "string") {
       mismatches.push("quality model evidence is missing");
+    }
+    if (typeof evidence?.memoryModelCondition?.configFingerprint !== "string"
+      || !Array.isArray(evidence?.memoryModelCondition?.explicitRequestControls)
+      || evidence.memoryModelCondition.explicitRequestControls.length !== 0
+      || typeof evidence?.models?.memory !== "string"
+      || !evidence.models.memory.startsWith("openai-codex/")
+      || evidence.memoryModelCondition.adapterRequest?.adapter !== "Codex Responses"
+      || evidence.memoryModelCondition.adapterRequest?.reasoningForwarded !== false
+      || evidence.memoryModelCondition.adapterRequest?.temperatureForwarded !== false
+      || evidence.memoryModelCondition.adapterRequest?.stream !== true
+      || evidence.memoryModelCondition.reasoningSemantics !== "provider-default") {
+      mismatches.push("memory model request-control evidence is missing");
     }
     if (!qualityOutputValid(native) || !qualityOutputValid(enhanced)) {
       mismatches.push("quality arm output is invalid");

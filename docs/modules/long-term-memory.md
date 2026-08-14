@@ -31,20 +31,20 @@
 - 按 session 写入、读取和列出来源条目；
 - 流式复制完整工具输出并记录完整性哈希；
 - 读取与来源 entry 关联的完整结果；
-- 从项目安装的 OpenViking `0.4.13` 读取 Provider registry、`VLMConfig` schema 与 LiteLLM backend 路由元数据，并据此创建用户级注释模板；
+- 通过 [`../contracts/openviking-adapter.md`](../contracts/openviking-adapter.md) 维护扩展明确支持的最小记忆模型配置面，并用 OpenViking 聚合配置入口验证生成结果；
 - 解析 JSONC、规范化 `provider`、`model`、`api_base` 和 `api_version` 的受控投影，生成可重建运行配置与稳定指纹；
 - 把已核验 Pi 路线按原生 compaction 边界投影到隔离的 OpenViking Session，线性路线只追加增量，分叉路线使用独立 session；
 - 达到固定待归档 token 阈值后 commit，等待 Working Memory 任务终态，并取得固定预算的 session context assembly。
 
 来源读写要求 session ID 和 session file 身份一致；不存在跨 session 搜索入口。来源写入使用同目录临时文件与原子重命名，相同 entry 使用稳定位置。记忆模型配置属于用户而非 session 或项目；模块只独占创建缺失模板，已有 JSONC 始终只读，生成配置只保留凭据环境变量占位符。
 
-Session Working Memory 只接收 Session 记忆协调已经核验的完整路线身份和 entries；写入投影按 Pi `0.84.1` 的 compaction-aware entry 语义保留 `firstKeptEntryId` 范围，并兼容自包含的 `retainedTail`。派生 session 只在有效投影序列保持前缀关系时追加；compaction 使旧 active history 退出有效投影时建立新镜像，避免被压缩内容继续进入 context assembly。同一路线准备共享任务；正在执行的任务之后只保留该 Pi session 最新的未启动路线，缓存和派生 session 数量有固定上限。派生状态不决定当前 branch，也不能覆盖 Pi 来源。
+Session Working Memory 只接收 Session 记忆协调已经核验的完整路线身份和 Pi 集成规范化结果；`firstKeptEntryId`、`retainedTail`、消息 role 与内容 block 等 Pi 具体形态只由 `pi-session-protocol.ts` 解释。派生 session 只在有效投影序列保持前缀关系时追加；compaction 使旧 active history 退出有效投影时建立新镜像，避免被压缩内容继续进入 context assembly。同一路线准备共享任务；正在执行的任务之后只保留该 Pi session 最新的未启动路线，缓存和派生 session 数量有固定上限。派生状态不决定当前 branch，也不能覆盖 Pi 来源。
 
 ## 4. 错误与恢复
 
 来源文件创建、序列化、复制、校验或读取失败均显式抛给调用者。已成功写入的其它 entry 保持可用；下一次提交当前路线会按稳定 entry ID 重试。JSONC 语法、未知字段、无效 Provider、缺失连接字段、凭据或 schema 错误均形成带配置路径的诊断，不修改用户文件；是否保留实例或冷启动降级由项目启动器负责。
 
-损坏或身份不匹配的记录不返回为有效来源；后续当前路线提交按稳定 entry ID 重新保存来源，OpenViking资源由有效来源重建。OpenViking Session 创建、追加、commit、任务轮询或 context assembly 失败时不返回部分结果；非空 overview 缺少 OpenViking `0.4.13` 七段 Working Memory 结构时同样拒绝采用，从而排除模型调用失败后的通用计数回退。失败、淘汰和 session 关闭会丢弃运行期镜像并尽力删除扩展自建的派生 Session。清理失败不阻断 Pi 关闭，Pi 集成继续使用原生路径，后续路线可重新准备。
+损坏或身份不匹配的记录不返回为有效来源；后续当前路线提交按稳定 entry ID 重新保存来源，OpenViking resource 由有效来源重建。Session 创建、追加、commit、任务轮询或 context assembly 失败时不返回部分结果；上游响应由适配层归一化，标题语言和可选诊断不构成生产门槛，已知无任务信息的通用计数回退仍拒绝采用。失败、淘汰和 session 关闭会丢弃运行期镜像并尽力删除扩展自建的派生 Session。清理失败不阻断 Pi 关闭，后续路线可重新准备。
 
 ## 5. 验证与限制
 

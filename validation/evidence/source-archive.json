@@ -1,15 +1,15 @@
 {
   "schemaVersion": 1,
   "generatedBy": "scripts/validate-source-archive.mjs",
-  "runId": "source-archive-2026-08-14T14-39-53-208Z",
-  "recordedAt": "2026-08-14T14:39:53.938Z",
+  "runId": "source-archive-2026-08-14T16-50-05-236Z",
+  "recordedAt": "2026-08-14T16:50:05.969Z",
   "piVersion": "0.84.1",
   "implementation": {
-    "sourceManifestSha256": "8b6a7e8cc1c2a0b76eed48c25b37c00e8410de3b6834ae14fc1a482091b02c31",
+    "sourceManifestSha256": "ec4044f4983b964df50bc76c628c36c19d4a0879594b9a4bfd3b5ec240600ba4",
     "files": [
       {
         "path": ".pi/extensions/pi-context-memory/index.ts",
-        "sha256": "c9f3146005c207cbe5a3e9ff3c7266bac94c56189395c7297a3ad55ac9c3ed0c"
+        "sha256": "af4fbe321a6cf05d78d6ca2f9766b9750c6c3f6e679a12039a0988fd426d2636"
       },
       {
         "path": ".pi/extensions/pi-context-memory/long-term-memory.ts",
@@ -17,23 +17,31 @@
       },
       {
         "path": ".pi/extensions/pi-context-memory/memory-model-configuration.ts",
-        "sha256": "c70a333a0a3d8426353612f63190b0b7fdc545bb248d3e2438fb1c622f380192"
+        "sha256": "2608d22ad9cd53bb882fff1001a94dc9bc21f484f18574cd0fd011a36f2d2788"
+      },
+      {
+        "path": ".pi/extensions/pi-context-memory/openviking-protocol.ts",
+        "sha256": "d0806e2d26aceeb657dad183fe0a047211fadf3de02531d56a0d61c814d44c05"
+      },
+      {
+        "path": ".pi/extensions/pi-context-memory/pi-session-protocol.ts",
+        "sha256": "b9eccbcf704078778e5c7b7bb8f404b85a2e15180626b86deb82279b231a7a98"
       },
       {
         "path": ".pi/extensions/pi-context-memory/recall-and-provenance.ts",
-        "sha256": "f74a59a9edf4412c970944412dcbfad254ce3d3904f1a4ecd38687f77264a35f"
+        "sha256": "6303fe0902240b19ce6b1f082783c55583eb8a4733a16ad8702a39ccbf40e1af"
       },
       {
         "path": ".pi/extensions/pi-context-memory/session-memory-coordination.ts",
-        "sha256": "c464139d3d3fe7ce173f8d3469b7ff81523cfe200ca5e040e8f7abde877d708f"
+        "sha256": "9d02cdeb8168a7ab39501cc41d9fcb6e9b3add6c5e467dbe9cc47fe44332d2a4"
       },
       {
         "path": ".pi/extensions/pi-context-memory/session-working-memory.ts",
-        "sha256": "ae6eb91e9021aab383ac6cd745edc69e57c860715daf928893b287bfe10e9640"
+        "sha256": "388b3e1ff19984dca962c6fc6f65a49810610cf5843e6f84056a466db95135bf"
       },
       {
         "path": ".pi/extensions/pi-context-memory/working-context-optimization.ts",
-        "sha256": "acdb4afeb3c28b662a0ea26b644d32cca89ee68e2135119175dc12aa84244588"
+        "sha256": "13ee7afc300599ed460079d4999ad923ea2c955d19daf4b84e45e0f7973316e0"
       },
       {
         "path": "scripts/check-validation-evidence.mjs",
@@ -45,10 +53,10 @@
       },
       {
         "path": "scripts/validation-evidence.mjs",
-        "sha256": "625a344f1e6f41b94d1451b4a69f54ea1d35015dd4ab73b81fc7f69959cd4e22"
+        "sha256": "8dbf189f6178d558e6795114caec470f779a26e941c43b2b02dfdb58ae86a8d8"
       }
     ],
-    "gitCommit": "34fadc2e2870773f472f7e1abc6ac7e37460b415",
+    "gitCommit": "ee37dd7ec21fe619857902a8589a3853e2eb1a4f",
     "workingTreeDirty": true
   },
   "passed": true,

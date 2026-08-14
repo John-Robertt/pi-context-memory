@@ -48,6 +48,8 @@ docs/
 | [`modules/working-context-optimization.md`](modules/working-context-optimization.md) | 有界增强历史构造与当前 Pi turn 保留              |
 | [`modules/recall-and-provenance.md`](modules/recall-and-provenance.md)               | OpenViking候选排序、当前路线过滤与来源展开       |
 | [`modules/quality-and-cost-observation.md`](modules/quality-and-cost-observation.md) | 独立于扩展运行的开发期任务质量与 API 成本验证    |
+| [`contracts/README.md`](contracts/README.md)                                         | 共享契约索引                                     |
+| [`contracts/openviking-adapter.md`](contracts/openviking-adapter.md)                 | 扩展吸收 OpenViking 协议、配置与兼容变化的唯一契约 |
 | [`validation/README.md`](validation/README.md)                                       | 验证规格与证据入口索引                           |
 | [`validation/source-archive.md`](validation/source-archive.md)                       | 来源归档隔离、恢复、完整结果与存储边界验证       |
 | [`validation/source-recall.md`](validation/source-recall.md)                         | OpenViking索引、显式召回、权威展开与错误语义验证 |
@@ -57,7 +59,7 @@ docs/
 | [`operations/source-archive.md`](operations/source-archive.md)                       | 本地来源归档配置、诊断与清理                     |
 | [`operations/session-recall.md`](operations/session-recall.md)                       | OpenViking、记忆模型、来源召回与自动有界上下文运行 |
 
-当前没有需要独立演进的共享契约文档。
+当前共享契约由 [`contracts/openviking-adapter.md`](contracts/openviking-adapter.md) 承担，统一维护 OpenViking 适配、兼容和降级语义。
 
 ## 4. 按问题导航
 

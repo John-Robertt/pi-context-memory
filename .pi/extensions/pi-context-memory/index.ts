@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
-import { appendFileSync, mkdirSync } from "node:fs";
+import { appendFileSync, mkdirSync, realpathSync, watch, type FSWatcher } from "node:fs";
 import { open } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
@@ -29,11 +29,13 @@ import {
   validateMemoryModelConfiguration,
   validateMemoryModelSetting,
   readRuntimeState,
+  runtimePaths,
   requestOpenVikingRestart,
   type MemoryModelSetting,
   type ValidatedMemoryModelConfiguration,
   type OpenVikingRuntimeState,
 } from "./memory-model-configuration.ts";
+import { entriesBeforeCurrentPrompt } from "./pi-session-protocol.ts";
 
 const SCHEMA_VERSION = 1;
 const observationPath = process.env.PCR_OBSERVATION_LOG
@@ -128,22 +130,10 @@ export function sessionRouteSnapshot(ctx: ExtensionContext): SessionRouteSnapsho
 }
 
 function snapshotBeforeCurrentPrompt(snapshot: SessionRouteSnapshot): SessionRouteSnapshot {
-  let currentPromptIndex = -1;
-  for (let index = snapshot.entries.length - 1; index >= 0; index -= 1) {
-    const entry = snapshot.entries[index];
-    if (
-      entry.type === "message"
-      && entry.message
-      && typeof entry.message === "object"
-      && (entry.message as Record<string, unknown>).role === "user"
-    ) {
-      currentPromptIndex = index;
-      break;
-    }
-  }
-  if (currentPromptIndex < 0) return snapshot;
-  const entries = snapshot.entries.slice(0, currentPromptIndex);
-  return { ...snapshot, entries, leafId: entries.at(-1)?.id ?? null };
+  const entries = entriesBeforeCurrentPrompt(snapshot.entries);
+  return entries === snapshot.entries
+    ? snapshot
+    : { ...snapshot, entries, leafId: entries.at(-1)?.id ?? null };
 }
 
 function archiveRoot(ctx: ExtensionContext): string {
@@ -283,8 +273,6 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
   let workingContextOptimizer: WorkingContextOptimizer | undefined;
   let workingContextGeneration: string | undefined;
   let workingContextTransition: Promise<void> = Promise.resolve();
-  let workingContextProjectRoot: string | undefined;
-  let workingContextConfigContentFingerprint: string | undefined;
   let coordinator: SessionMemoryCoordinator | undefined;
   let coordinatorIdentity: string | undefined;
   let archiveUnavailable = false;
@@ -308,6 +296,89 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
   let forceNativeUntilAgentSettled = false;
   let shuttingDown = false;
   let archiveStopped = false;
+  let memoryModelWatchEpoch = 0;
+  let memoryModelRecheckRequested = false;
+  let watchedMemoryModelRoot: string | undefined;
+  let memoryModelWatchReady = false;
+  let memoryModelWatchSignature: string | undefined;
+  let latestMemoryModelContext: ExtensionContext | undefined;
+  const memoryModelWatchers: FSWatcher[] = [];
+
+  function closeMemoryModelWatchers(): void {
+    while (memoryModelWatchers.length > 0) memoryModelWatchers.pop()?.close();
+    watchedMemoryModelRoot = undefined;
+    memoryModelWatchReady = false;
+    memoryModelWatchSignature = undefined;
+  }
+
+  function invalidateMemoryModelGeneration(reason: string): void {
+    const hadGeneration = memoryEnhancementAvailable || Boolean(workingContextGeneration);
+    memoryModelWatchEpoch += 1;
+    memoryModelRecheckRequested = true;
+    memoryEnhancementAvailable = false;
+    if (hadGeneration) writeRecord("memory_model_generation_invalidated", { reason });
+    void transitionWorkingContext();
+  }
+
+  function ensureMemoryModelWatchers(root: string, ctx: ExtensionContext): boolean {
+    latestMemoryModelContext = ctx;
+    const paths = runtimePaths(root);
+    const watchedFiles = [paths.settings, paths.state];
+    try {
+      const resolvedSettings = realpathSync(paths.settings);
+      if (resolvedSettings !== paths.settings) watchedFiles.push(resolvedSettings);
+    } catch {
+      // A missing or dangling settings target is rejected by configuration validation.
+    }
+    const signature = JSON.stringify([...new Set(watchedFiles)].sort());
+    if (watchedMemoryModelRoot === root && memoryModelWatchReady && memoryModelWatchSignature === signature) return true;
+    closeMemoryModelWatchers();
+    const filesByDirectory = new Map<string, Set<string>>();
+    for (const path of watchedFiles) {
+      const directory = dirname(path);
+      const files = filesByDirectory.get(directory) ?? new Set<string>();
+      files.add(basename(path));
+      filesByDirectory.set(directory, files);
+    }
+    for (const [directory, files] of filesByDirectory) {
+      try {
+        const watcher = watch(directory, { persistent: false }, (_event, filename) => {
+          if (filename !== null && !files.has(filename.toString())) return;
+          invalidateMemoryModelGeneration(`changed:${filename?.toString() ?? "unknown"}`);
+          const activeContext = latestMemoryModelContext;
+          if (activeContext) scheduleMemoryModelConfigCheck(activeContext);
+        });
+        watcher.on("error", (error) => {
+          writeRecord("memory_model_watch_error", {
+            directory,
+            error: error instanceof Error ? error.message : String(error),
+          });
+          invalidateMemoryModelGeneration(`watch-error:${directory}`);
+          closeMemoryModelWatchers();
+          const activeContext = latestMemoryModelContext;
+          if (activeContext && !shuttingDown) scheduleMemoryModelConfigCheck(activeContext);
+        });
+        watcher.on("close", () => {
+          if (!memoryModelWatchers.includes(watcher)) return;
+          writeRecord("memory_model_watch_error", { directory, error: "watcher closed unexpectedly" });
+          invalidateMemoryModelGeneration(`watch-close:${directory}`);
+          closeMemoryModelWatchers();
+          const activeContext = latestMemoryModelContext;
+          if (activeContext && !shuttingDown) scheduleMemoryModelConfigCheck(activeContext);
+        });
+        memoryModelWatchers.push(watcher);
+      } catch (error) {
+        writeRecord("memory_model_watch_error", {
+          directory,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+    watchedMemoryModelRoot = root;
+    memoryModelWatchSignature = signature;
+    memoryModelWatchReady = memoryModelWatchers.length === filesByDirectory.size;
+    return memoryModelWatchReady;
+  }
   function transitionWorkingContext(nextGeneration?: string): Promise<boolean> {
     const transition = async (): Promise<boolean> => {
       if (nextGeneration && !shuttingDown && workingContextOptimizer && workingContextGeneration === nextGeneration) return true;
@@ -352,62 +423,59 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
       ? expected
       : undefined;
   }
-  async function workingContextGenerationIsCurrent(ctx: ExtensionContext): Promise<boolean> {
-    if (!workingContextGeneration || !workingContextProjectRoot || !workingContextConfigContentFingerprint) return false;
-    try {
-      const root = await locateProjectRoot(ctx.cwd);
-      if (root !== workingContextProjectRoot) return false;
-      const [state, contentFingerprint] = await Promise.all([
-        readRuntimeState(root),
-        memoryModelConfigContentFingerprint(root),
-      ]);
-      return runtimeWorkingContextGeneration(state) === workingContextGeneration
-        && contentFingerprint === workingContextConfigContentFingerprint;
-    } catch {
-      return false;
-    }
-  }
 
   function setContextPath(ctx: ExtensionContext, path: "Pi 原生" | "增强记忆"): void {
     lastContextPath = path;
     updateContextPathStatus(ctx, path);
   }
 
-  async function reportMemoryModelConfigError(ctx: ExtensionContext): Promise<void> {
+  async function reportMemoryModelConfigError(ctx: ExtensionContext, checkEpoch: number): Promise<void> {
     let root: string | undefined;
     let validated: ValidatedMemoryModelConfiguration | undefined;
     let state: OpenVikingRuntimeState | undefined;
     let contentFingerprint: string | undefined;
     try {
       root = await locateProjectRoot(ctx.cwd);
+      if (!ensureMemoryModelWatchers(root, ctx)) {
+        throw new Error("Memory model generation watching is unavailable");
+      }
       validated = await validateMemoryModelConfiguration(root);
       state = await readRuntimeState(root);
       contentFingerprint = await memoryModelConfigContentFingerprint(root);
       lastMemoryModelConfigDiagnosticKey = undefined;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      const contentFingerprint = root ? await memoryModelConfigContentFingerprint(root) : undefined;
-      const diagnosticKey = `${contentFingerprint ?? "unreadable"}:${hash(message)}`;
+      const currentContentFingerprint = root ? await memoryModelConfigContentFingerprint(root) : undefined;
+      const diagnosticKey = `${currentContentFingerprint ?? "unreadable"}:${hash(message)}`;
       if (diagnosticKey !== lastMemoryModelConfigDiagnosticKey) {
         lastMemoryModelConfigDiagnosticKey = diagnosticKey;
-        writeRecord("memory_model_config_error", { error: message, contentFingerprint });
+        writeRecord("memory_model_config_error", { error: message, contentFingerprint: currentContentFingerprint });
         if (ctx.hasUI) ctx.ui.notify(`${message}\nPi will continue with its native context.`, "warning");
       }
     }
-    if (shuttingDown) return;
+    if (shuttingDown || checkEpoch !== memoryModelWatchEpoch) return;
     const generation = activeWorkingContextGeneration(validated, state);
     const generationReady = await transitionWorkingContext(generation);
-    if (shuttingDown) return;
+    if (shuttingDown || checkEpoch !== memoryModelWatchEpoch) {
+      memoryEnhancementAvailable = false;
+      await transitionWorkingContext();
+      return;
+    }
     memoryEnhancementAvailable = Boolean(generation && generationReady && root && contentFingerprint);
-    workingContextProjectRoot = memoryEnhancementAvailable ? root : undefined;
-    workingContextConfigContentFingerprint = memoryEnhancementAvailable ? contentFingerprint : undefined;
     if (memoryEnhancementAvailable) scheduleWorkingContext(ctx, sessionRouteSnapshot(ctx), "runtime_ready");
   }
 
   function scheduleMemoryModelConfigCheck(ctx: ExtensionContext): void {
-    if (shuttingDown || memoryModelConfigCheck) return;
-    memoryModelConfigCheck = reportMemoryModelConfigError(ctx).catch(() => undefined).finally(() => {
+    latestMemoryModelContext = ctx;
+    if (shuttingDown || memoryModelConfigCheck || memoryEnhancementAvailable) return;
+    const checkEpoch = memoryModelWatchEpoch;
+    memoryModelRecheckRequested = false;
+    memoryModelConfigCheck = reportMemoryModelConfigError(ctx, checkEpoch).catch(() => undefined).finally(() => {
       memoryModelConfigCheck = undefined;
+      if (memoryModelRecheckRequested && latestMemoryModelContext && !shuttingDown) {
+        memoryModelRecheckRequested = false;
+        scheduleMemoryModelConfigCheck(latestMemoryModelContext);
+      }
     });
   }
 
@@ -605,14 +673,10 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
       try {
         root = await locateProjectRoot(ctx.cwd);
         memoryEnhancementAvailable = false;
-        workingContextProjectRoot = undefined;
-        workingContextConfigContentFingerprint = undefined;
         providerContextDecision = "pi-native";
         setContextPath(ctx, "Pi 原生");
         if (memoryModelConfigCheck) await memoryModelConfigCheck;
         memoryEnhancementAvailable = false;
-        workingContextProjectRoot = undefined;
-        workingContextConfigContentFingerprint = undefined;
         await transitionWorkingContext();
         if (ctx.hasUI) ctx.ui.setStatus("pi-context-memory", "Pi 原生 · OpenViking applying");
         const state = await requestOpenVikingRestart(root);
@@ -621,8 +685,6 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
         const contentFingerprint = await memoryModelConfigContentFingerprint(root);
         const generationReady = await transitionWorkingContext(generation);
         memoryEnhancementAvailable = Boolean(generation && generationReady && contentFingerprint);
-        workingContextProjectRoot = memoryEnhancementAvailable ? root : undefined;
-        workingContextConfigContentFingerprint = memoryEnhancementAvailable ? contentFingerprint : undefined;
         if (memoryEnhancementAvailable) scheduleWorkingContext(ctx, sessionRouteSnapshot(ctx), "restart");
         writeRecord("openviking_restart_complete", {
           provider: state.activeProvider,
@@ -633,8 +695,6 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         memoryEnhancementAvailable = false;
-        workingContextProjectRoot = undefined;
-        workingContextConfigContentFingerprint = undefined;
         await transitionWorkingContext();
         if (root && message.startsWith("Invalid memory model configuration at ")) {
           const contentFingerprint = await memoryModelConfigContentFingerprint(root);
@@ -759,7 +819,7 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
   pi.on("before_agent_start", (event, ctx) => {
     providerContextDecision = "pi-native";
     setContextPath(ctx, "Pi 原生");
-    if (!memoryEnhancementAvailable) scheduleMemoryModelConfigCheck(ctx);
+    scheduleMemoryModelConfigCheck(ctx);
     const workingSnapshot = sessionRouteSnapshot(ctx);
     scheduleWorkingContext(ctx, workingSnapshot ? snapshotBeforeCurrentPrompt(workingSnapshot) : undefined, "before_agent_start");
     writeRecord("before_agent_start", {
@@ -783,21 +843,12 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
     maybeFail("turn_start");
   });
 
-  pi.on("context", async (event, ctx) => {
-    if (memoryModelConfigCheck) await memoryModelConfigCheck;
+  pi.on("context", (event, ctx) => {
     let adoptedMessages = event.messages;
     let routeFingerprint: string | undefined;
     let preparedContextHash: string | undefined;
-    const generationCurrent = memoryEnhancementAvailable && workingContextOptimizer
-      ? await workingContextGenerationIsCurrent(ctx)
-      : false;
-    if (memoryEnhancementAvailable && !generationCurrent) {
-      memoryEnhancementAvailable = false;
-      workingContextProjectRoot = undefined;
-      workingContextConfigContentFingerprint = undefined;
-      void transitionWorkingContext();
-      scheduleMemoryModelConfigCheck(ctx);
-    }
+    const generationCurrent = memoryEnhancementAvailable
+      && Boolean(workingContextOptimizer && workingContextGeneration);
     if (!forceNativeUntilAgentSettled && generationCurrent && workingContextOptimizer) {
       const snapshot = sessionRouteSnapshot(ctx);
       const activeCoordinator = currentCoordinator(ctx);
@@ -1016,6 +1067,7 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
       if (timeout) clearTimeout(timeout);
       stopArchiveQueue();
       sourceIndexes.shutdown();
+      closeMemoryModelWatchers();
       memoryEnhancementAvailable = false;
       await transitionWorkingContext();
     }

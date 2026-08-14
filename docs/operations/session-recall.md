@@ -2,13 +2,13 @@
 
 ## 1. 安装与启动
 
-前置条件：Node.js `>=22.19.0` 和 Pi `0.84.1`。从仓库根目录执行：
+前置条件是 Node.js `>=22.19.0` 和一个能够加载本扩展当前公开 hook 的 Pi。当前 evidence 的宿主验证坐标为 Pi `0.84.1`；扩展不安装、降级或替换用户的 Pi，后续宿主兼容由项目维护者跟随验证。
 
 ```bash
 node scripts/install-dependencies.mjs
 ```
 
-安装脚本使用 `uv.lock`，把固定版本的 uv、Python 3.12、OpenViking `0.4.13` 和本地 embedding 依赖安装到项目内 `.tools/`、`.venv/` 与 `.cache/`，不修改系统 Python 或 shell PATH。基础服务配置位于 [`../../config/openviking.json`](../../config/openviking.json)；首次启动 Pi 或 OpenViking 时，系统在 `~/.pi/pi-context-memory.jsonc` 独占创建用户级注释模板。
+安装脚本使用 `uv.lock`，把当前可复现的 uv、Python 3.12、OpenViking `0.4.13` 和本地 embedding 依赖安装到项目内 `.tools/`、`.venv/` 与 `.cache/`，不修改系统 Python 或 shell PATH。OpenViking 版本是项目私有依赖锁定，不是对外部服务的永久版本要求。基础服务配置位于 [`../../config/openviking.json`](../../config/openviking.json)；首次启动 Pi 或 OpenViking 时，系统在 `~/.pi/pi-context-memory.jsonc` 独占创建用户级注释模板。
 
 启动 OpenViking：
 
@@ -56,6 +56,7 @@ pi
 }
 ```
 
+扩展只选择 Provider、模型和必要连接字段，不主动写入 `thinking`、reasoning、temperature 等跨 Provider 控制。实际语义由 OpenViking 目标适配器及其最终 Provider 请求共同决定；例如当前 Codex Responses evidence 未转发 reasoning 或 temperature，因此 reasoning 使用 Provider 默认。
 LiteLLM 直接写上游来源路由，例如：
 
 ```jsonc
@@ -67,7 +68,7 @@ LiteLLM 直接写上游来源路由，例如：
 }
 ```
 
-Bedrock、SageMaker 和 Vertex AI 等路由使用模板标出的云原生凭据；自定义 OpenAI-compatible 端点使用 `model: "openai/<model-id>"` 并填写 `api_base`。生成模板逐来源列出规范前缀、关键词和凭据环境变量；LiteLLM 官方目录仅作更多格式参考，未列路由不属于当前保证范围。
+模板给出 Bedrock、SageMaker、Vertex AI 的显式云路由示例；自定义 OpenAI-compatible 端点使用 `model: "openai/<model-id>"` 并填写 `api_base`。这些示例定义产品当前明确验证的路由形态，更多来源、认证和模型前缀以模板链接的 LiteLLM 官方目录为准。
 任务模型可以调用：
 
 ```text

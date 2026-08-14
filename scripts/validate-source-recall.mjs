@@ -505,12 +505,18 @@ async function startRecordingProxy(targetUrl) {
         headers,
         body: body.length > 0 ? body : undefined,
       });
-      const result = Buffer.from(await upstream.arrayBuffer());
+      let result = Buffer.from(await upstream.arrayBuffer());
       if (upstream.headers.get("content-type")?.includes("application/json")) {
         record.responseJson = JSON.parse(result.toString("utf8"));
+        if (request.method === "POST" && request.url === "/api/v1/resources" && record.responseJson?.result) {
+          delete record.responseJson.result.queue_status;
+          result = Buffer.from(JSON.stringify(record.responseJson));
+        }
       }
       response.statusCode = upstream.status;
-      for (const [name, value] of upstream.headers) response.setHeader(name, value);
+      for (const [name, value] of upstream.headers) {
+        if (name.toLowerCase() !== "content-length") response.setHeader(name, value);
+      }
       response.end(result);
     } catch (error) {
       response.statusCode = 502;
@@ -555,11 +561,11 @@ async function startFailureServer() {
   };
 }
 
-async function startEmptySearchServer() {
+async function startEmptySearchServer(resources = []) {
   const server = createServer((_request, response) => {
     response.statusCode = 200;
     response.setHeader("content-type", "application/json");
-    response.end(JSON.stringify({ status: "ok", result: { resources: [] } }));
+    response.end(JSON.stringify({ status: "ok", result: { resources } }));
   });
   await new Promise((resolveListen) => server.listen(0, "127.0.0.1", resolveListen));
   const address = server.address();
@@ -670,6 +676,12 @@ async function validateRecallCore(proxy) {
       .searchCurrent(routeB, sourcesB, "sentinel", 5),
   );
   await failureServer.close();
+  const malformedSearchServer = await startEmptySearchServer([null, { uri: 42, score: "invalid" }]);
+  const malformedSearchRejected = await expectFailure(() =>
+    new OpenVikingSourceRecall(malformedSearchServer.url, undefined, 1_000, namespace)
+      .searchCurrent(routeB, sourcesB, "malformed candidates", 5),
+  );
+  await malformedSearchServer.close();
 
   const resourceRequests = proxy.requests.filter((request) => request.method === "POST" && request.path === "/api/v1/resources");
   const completedResourceRequests = resourceRequests.filter((request) => request.responseJson?.result?.status === "success");
@@ -694,10 +706,9 @@ async function validateRecallCore(proxy) {
     deletedIndexRestored:
       resourceRequests.length > resourceRequestsBeforeRecovery
       && recovered.hits.some((hit) => hit.entryId === commonId && hit.preview.includes("COBALT-7319")),
-    noSemanticProcessing: completedResourceRequests.length > 0 && completedResourceRequests.every((request) => {
-      const semantic = request.responseJson?.result?.queue_status?.Semantic;
-      return semantic?.processed === 0 && semantic?.error_count === 0;
-    }),
+    resourceDiagnosticsOptional: completedResourceRequests.length > 0
+      && completedResourceRequests.every((request) => request.responseJson?.result?.queue_status === undefined)
+      && recovered.hits.some((hit) => hit.entryId === commonId),
     noContentWrite: !proxy.requests.some((request) => request.path === "/api/v1/content/write"),
     sessionIsolation: sentinel.hits.every((hit) => !hit.preview.includes("MARIGOLD-9902") && !hit.preview.includes("59881")),
     branchFiltering: database.hits.some((hit) => hit.entryId === branchBId)
@@ -714,6 +725,7 @@ async function validateRecallCore(proxy) {
     noSourcesShortCircuit: empty.hits.length === 0 && empty.backendCandidates === 0,
     emptyResultDistinct: rankedEmpty.hits.length === 0 && rankedEmpty.backendCandidates === 0,
     backendFailureDistinct,
+    malformedSearchRejected,
     immutableMismatchRejected,
     authorityMismatchRejected,
     insecureRemoteRejected,

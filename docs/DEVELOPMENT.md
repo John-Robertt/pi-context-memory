@@ -6,13 +6,13 @@
 
 ## 2. 当前可运行状态
 
-扩展在 Pi `0.84.1` 上观察持久化 session 的当前 branch，把权威路线条目归档到 session 隔离的本地来源存储，并把可检索任务文本异步同步到 OpenViking `0.4.13` 的本地向量索引。`recall_session(search|read_source)` 在当前路线内排序、预览和展开 Pi 权威 entry；带 `fullOutputPath` 的 toolResult 保存完整副本。
+当前 evidence 的宿主坐标是 Pi `0.84.1`，项目私有记忆依赖锁定为 OpenViking `0.4.13`。扩展通过独立 Pi 规范化边界观察持久化 session 当前 branch，把权威路线归档到 session 隔离的本地来源存储，并异步同步可检索任务文本。`recall_session(search|read_source)` 在当前路线内排序、预览和展开 Pi 权威 entry；带 `fullOutputPath` 的 toolResult 保存完整副本。上游版本变化由扩展适配，不要求用户降级 Pi。
 
 用户通过 `~/.pi/pi-context-memory.jsonc` 配置 OpenViking 记忆模型；`/memory-model` 检查配置和当前运行状态，`/restart-viking` 通过项目启动器安全应用。没有实际运行的记忆模型时，来源召回继续可用，模型上下文保持 Pi 原生。
 
-共享长任务 fixture 固定多轮目标更新、冲突 branch、工具证据、Pi compaction 和压缩后继续。记忆模型可用后，扩展在 Provider 请求之外异步把当前有效投影写入 OpenViking Session：普通线性后继复用镜像，分叉或 compaction 改变有效投影前缀时使用隔离镜像；达到阈值后 commit、等待 Working Memory 任务终态并取得固定 token budget 的 context assembly。非空 overview 必须具备 OpenViking `0.4.13` 的完整七段 Working Memory 结构，模型失败产生的通用计数回退不可采用。
+共享长任务 fixture 固定目标更新、冲突 branch、工具证据、Pi compaction 和压缩后继续。记忆模型可用后，扩展在 Provider 请求之外异步把当前有效投影写入 OpenViking Session：线性后继复用镜像，分叉或 compaction 改变有效前缀时隔离镜像；达到阈值后 commit、等待任务终态并取得有界 context assembly。共同 OpenViking 适配层统一 HTTP、响应与错误语义；overview 标题和可选诊断不是生产协议，缺失来源、未知内容、空 active tail、通用回退与其它 malformed 响应不可采用。
 
-Pi `context` hook 每次重新核对当前 prompt 之前的 session、session file、leaf、有序 entry 和完整路线指纹。只有用户配置、运行中 active/target setting 与 config 指纹、就绪缓存同代且路线一致时，本次模型消息才采用有界增强历史加当前 Pi turn。tree、compaction、session replacement 与 reload 先回到 Pi 原生，操作后的实例从 Pi 当前 leaf 重建；状态由实际 `context` 决定并在 Provider payload 再核对，普通用户文本不能伪造“增强记忆”。
+Pi `context` hook 只读取内存中的已验证配置代际和就绪路线，不等待配置文件、Python bridge 或 OpenViking；配置或 runtime state 变化由文件观察器先使旧代际失效，再后台检查并重建，期间请求立即保持 Pi 原生。采用时重新核对当前 prompt 之前的 session、session file、leaf、有序 entry 和完整路线指纹。tree、compaction、session replacement 与 reload 先回到 Pi 原生，操作后的实例从 Pi 当前 leaf 重建；状态由实际 `context` 决定并在 Provider payload 再核对。
 
 当前证据：
 
@@ -20,7 +20,7 @@ Pi `context` hook 每次重新核对当前 prompt 之前的 session、session fi
 - [`validation/evidence/source-recall.json`](../validation/evidence/source-recall.json)：受控 OpenViking、向量索引、队列边界、当前路线召回和权威展开；
 - [`validation/evidence/memory-model-runtime.json`](../validation/evidence/memory-model-runtime.json)：用户配置、配置编译、安全重启、生命周期所有权和冷启动降级；
 - [`validation/evidence/context-enhancement.json`](../validation/evidence/context-enhancement.json)：共享 fixture、路线与代际身份、有效 compaction 投影、tree 往返、fork/clone/resume/reload、三类 compaction、Provider/UI 状态一致性、故障降级和清理；
-- [`validation/evidence/context-quality.json`](../validation/evidence/context-quality.json)：真实 OpenViking Working Memory 下原生 Pi / 增强 arm 使用同一任务模型，均保持当前决定 `bounded-current-route`、来源 `b000000c` 并排除废弃路线。
+- [`validation/evidence/context-quality.json`](../validation/evidence/context-quality.json)：真实 OpenViking Working Memory 下两个 arm 使用同一任务模型并保持当前决定 `bounded-current-route` 与来源 `b000000c`；最终 Codex Responses 适配请求未转发 reasoning 或 temperature，reasoning 语义为 Provider 默认。
 
 四个日常 runner 使用本地资源；真实质量 runner 独立执行。`node scripts/check-validation-evidence.mjs` 免费只读核对五份 evidence 与当前实现，不会重新发起 Provider 请求。
 

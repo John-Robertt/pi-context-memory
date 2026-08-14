@@ -19,7 +19,7 @@ Session 记忆协调对每个快照验证 session ID、session file、leaf、ent
 - 有序 entry ID 集合；
 - 完整路线指纹。
 
-`context` hook 每次采用前重新计算路线身份，并轻量核对运行中 active/target setting、config 指纹及当前配置文件内容。只有运行配置代际与四项路线身份完全一致的就绪结果可以替换历史消息；仅 leaf 相同、后台任务完成或 OpenViking session 可读都不构成采用条件。
+后台配置检查发布已经验证的运行代际；配置文件或 runtime state 变化由文件观察器先使该内存代际和旧缓存失效，再异步重建。`context` hook 本身不读取文件或访问 OpenViking，只重新计算路线身份并核对已验证代际。只有代际与四项路线身份完全一致的就绪结果可以替换历史消息。
 
 当前 prompt 及其后续 assistant tool call、tool result 始终保留为 Pi 原生消息。增强内容只替换当前 prompt 之前的历史，避免破坏 Provider 对工具调用序列的要求。
 
@@ -48,9 +48,9 @@ context
 
 ## 5. 内容投影与预算
 
-长时记忆模块把当前路线中的用户、assistant、工具结果、bash、自定义上下文、branch summary 和 compaction summary 投影为 OpenViking 文本消息，并通过 `source_message_ids` 保留 Pi entry ID。Pi compaction 投影遵循有效 compaction entry、`firstKeptEntryId` 保留范围和压缩后条目，并兼容自包含 `retainedTail`；模型切换、thinking level、label 和扩展内部状态不进入投影。
+Pi 集成先把当前路线中的用户、assistant、工具结果、bash、自定义上下文、branch summary 和 compaction 规范化；长时记忆只把规范化结果投影为 OpenViking 文本消息，并通过 `source_message_ids` 保留 Pi entry ID。`firstKeptEntryId`、`retainedTail`、消息 role 与内容 block 的版本差异只在 Pi 集成边界解释。
 
-OpenViking 返回最新 Working Memory overview 与预算后的活跃消息。非空 overview 必须具备 OpenViking `0.4.13` 的七段 Working Memory 结构；通用计数回退或残缺 overview 不可采用。扩展把有效内容格式化为一个隐藏的 Pi custom message，并再次执行字符上限保护；不把 OpenViking 消息 ID、摘要或状态写回 Pi session。显式 `recall_session` 继续承担来源级核对，增强摘要不能替代 Pi 权威 entry。
+OpenViking 返回 Working Memory overview 与预算后的活跃消息，具体字段和兼容差异由 [`../contracts/openviking-adapter.md`](../contracts/openviking-adapter.md) 统一归一化。overview 的语言和标题不是生产协议；已知无任务信息的通用失败回退与无法归一化的响应不可采用。扩展把有效内容格式化为一个隐藏的 Pi custom message，并再次执行字符上限保护；不把 OpenViking 消息 ID、摘要或状态写回 Pi session。显式 `recall_session` 继续承担来源级核对，增强摘要不能替代 Pi 权威 entry。
 
 ## 6. 失败、分支与恢复
 

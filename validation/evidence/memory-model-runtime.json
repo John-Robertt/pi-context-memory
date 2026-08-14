@@ -1,32 +1,40 @@
 {
   "schemaVersion": 1,
   "generatedBy": "scripts/validate-memory-model-runtime.mjs",
-  "runId": "memory-model-runtime-2026-08-14T14-40-24-746Z",
-  "recordedAt": "2026-08-14T14:41:18.155Z",
+  "runId": "memory-model-runtime-2026-08-14T16-50-30-521Z",
+  "recordedAt": "2026-08-14T16:51:29.471Z",
   "piVersion": "0.84.1",
   "openVikingVersion": "0.4.13",
   "implementation": {
-    "sourceManifestSha256": "9166240a2ecff3a169222965cca9ace2c5ef1f7a46c86e0e6fe7e2a50834bdb1",
+    "sourceManifestSha256": "8acd870088c61aa00e16ef0695f111eb539688433800679e9c6d8431f20284a1",
     "files": [
       {
         "path": ".pi/extensions/pi-context-memory/index.ts",
-        "sha256": "c9f3146005c207cbe5a3e9ff3c7266bac94c56189395c7297a3ad55ac9c3ed0c"
+        "sha256": "af4fbe321a6cf05d78d6ca2f9766b9750c6c3f6e679a12039a0988fd426d2636"
       },
       {
         "path": ".pi/extensions/pi-context-memory/memory-model-configuration.ts",
-        "sha256": "c70a333a0a3d8426353612f63190b0b7fdc545bb248d3e2438fb1c622f380192"
+        "sha256": "2608d22ad9cd53bb882fff1001a94dc9bc21f484f18574cd0fd011a36f2d2788"
+      },
+      {
+        "path": ".pi/extensions/pi-context-memory/openviking-protocol.ts",
+        "sha256": "d0806e2d26aceeb657dad183fe0a047211fadf3de02531d56a0d61c814d44c05"
+      },
+      {
+        "path": ".pi/extensions/pi-context-memory/pi-session-protocol.ts",
+        "sha256": "b9eccbcf704078778e5c7b7bb8f404b85a2e15180626b86deb82279b231a7a98"
       },
       {
         "path": ".pi/extensions/pi-context-memory/session-memory-coordination.ts",
-        "sha256": "c464139d3d3fe7ce173f8d3469b7ff81523cfe200ca5e040e8f7abde877d708f"
+        "sha256": "9d02cdeb8168a7ab39501cc41d9fcb6e9b3add6c5e467dbe9cc47fe44332d2a4"
       },
       {
         "path": ".pi/extensions/pi-context-memory/session-working-memory.ts",
-        "sha256": "ae6eb91e9021aab383ac6cd745edc69e57c860715daf928893b287bfe10e9640"
+        "sha256": "388b3e1ff19984dca962c6fc6f65a49810610cf5843e6f84056a466db95135bf"
       },
       {
         "path": ".pi/extensions/pi-context-memory/working-context-optimization.ts",
-        "sha256": "acdb4afeb3c28b662a0ea26b644d32cca89ee68e2135119175dc12aa84244588"
+        "sha256": "13ee7afc300599ed460079d4999ad923ea2c955d19daf4b84e45e0f7973316e0"
       },
       {
         "path": "config/openviking.json",
@@ -42,7 +50,7 @@
       },
       {
         "path": "scripts/openviking-config.py",
-        "sha256": "5c84bae7c9a5d9903074d5d46694c10f70be4ebed99e133bb69a14bdb04bf8d8"
+        "sha256": "a29bca7f070ca8b38200c9f29404941f8ec78b14c5fb191f5c4088535e9531d8"
       },
       {
         "path": "scripts/start-openviking.mjs",
@@ -50,38 +58,40 @@
       },
       {
         "path": "scripts/validate-memory-model-runtime.mjs",
-        "sha256": "cb29808a2e5f04ee0a7cc7c94448052b0bc3ee0ab77cae08e1ce1de4bed4e07b"
+        "sha256": "b7e43f23b397c057070a6e31c7da8a1a2e9763b1eade326a3e32cedfdc6214dc"
       },
       {
         "path": "scripts/validate-openviking-vlm-adapters.py",
-        "sha256": "9a9e057e2aa703276a92683c0158530cf61c652fa8e9c8bb8b3c25c050ee4984"
+        "sha256": "386b6745727c71a0270c6346f2217bccdd127f182f9eed3877e63c63baf88988"
       },
       {
         "path": "scripts/validation-evidence.mjs",
-        "sha256": "625a344f1e6f41b94d1451b4a69f54ea1d35015dd4ab73b81fc7f69959cd4e22"
+        "sha256": "8dbf189f6178d558e6795114caec470f779a26e941c43b2b02dfdb58ae86a8d8"
       },
       {
         "path": "uv.lock",
         "sha256": "910184bff539fd56b4b7f8fc2ee46439f3113c7394c1538d60ef3a5e3c78f094"
       }
     ],
-    "gitCommit": "34fadc2e2870773f472f7e1abc6ac7e37460b415",
+    "gitCommit": "ee37dd7ec21fe619857902a8589a3853e2eb1a4f",
     "workingTreeDirty": true
   },
   "passed": true,
   "checks": {
     "adapterProtocolsCovered": true,
-    "providerRegistryCovered": true,
+    "supportedProviderSurface": true,
+    "upstreamProviderAdditionsTolerated": true,
     "schemaObserved": true,
-    "litellmRoutesObserved": true,
+    "litellmCatalogObserved": true,
     "generatedConfigParsed": true,
+    "providerDefaultsNotOverridden": true,
     "deterministicFingerprint": true,
     "unknownFieldRejected": true,
     "missingCredentialRejected": true,
     "azureFieldRejected": true,
     "userConfigPath": true,
     "commentedTemplateCreated": true,
-    "litellmSourcesDocumented": true,
+    "litellmCatalogDocumented": true,
     "jsoncConfigurationParsed": true,
     "emptyConfigurationAccepted": true,
     "invalidConfigDiagnosed": true,
@@ -122,7 +132,7 @@
   },
   "limitations": [
     "The local scope uses a protocol-compatible OpenViking process double and makes no external Provider requests.",
-    "Working Memory protocol and automatic Pi context adoption have separate local evidence; real memory-model semantics still require Provider validation.",
-    "Paired task quality and complete API-cost evidence remain in the next longitudinal delivery."
+    "Working Memory protocol and automatic Pi context adoption have separate local evidence; the paired quality runner records the selected real memory adapter semantics.",
+    "One fixed paired task-quality sample exists; general task quality and complete API-cost attribution remain outside this local runner."
   ]
 }

@@ -24,12 +24,12 @@ runner 自行启动 OpenViking `0.4.13`，使用动态回环端口、隔离 HOME
 
 受控 OpenViking 场景覆盖：
 
-- 稳定 session/entry URI 与幂等资源写入；
+- 稳定 session/entry URI、幂等资源写入，以及资源响应不含 `queue_status` 等诊断时仍以预期 URI 内容读回确认成功；
 - 外部资源删除后的同实例重建；
 - session 隔离与当前 branch 候选过滤；
 - 旧 branch 来源和跨 session 来源排除；
 - 长来源预览边界与 Pi 权威 entry 展开；
-- 空来源、正常空结果和后端错误的独立语义；
+- 空来源、正常空结果、malformed 成功 envelope 和后端错误的独立语义；
 - 本地地址与远程明文地址的安全边界；
 - OpenViking 候选进入结果前的当前路线复核。
 
