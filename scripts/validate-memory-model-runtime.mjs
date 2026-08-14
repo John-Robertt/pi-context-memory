@@ -905,8 +905,8 @@ const rawEvidence = {
   checks,
   limitations: [
     "The local scope uses a protocol-compatible OpenViking process double and makes no external Provider requests.",
-    "Concrete memory-model Working Memory capability remains a separately authorized Provider validation.",
-    "Automatic enhanced-context adoption and paired API-cost evidence belong to the context-enhancement delivery.",
+    "Working Memory protocol and automatic Pi context adoption have separate local evidence; real memory-model semantics still require Provider validation.",
+    "Paired task quality and complete API-cost evidence remain in the next longitudinal delivery.",
   ],
 };
 assertImplementationEvidenceUnchanged(root, "memory-model-runtime", implementation);

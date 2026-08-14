@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
   "generatedBy": "scripts/validate-source-recall.mjs",
-  "runId": "source-recall-2026-08-14T08-12-53-998Z",
-  "recordedAt": "2026-08-14T08:13:21.669Z",
+  "runId": "source-recall-2026-08-14T10-36-29-019Z",
+  "recordedAt": "2026-08-14T10:36:53.278Z",
   "piVersion": "0.84.1",
   "openVikingVersion": "0.4.13",
   "openVikingConfig": {
@@ -11,7 +11,7 @@
     "effective": {
       "defaultAccount": "source-recall-validation",
       "defaultUser": "pi-context-memory",
-      "storageWorkspace": ".artifacts/source-recall/source-recall-2026-08-14T08-12-53-998Z/openviking-data",
+      "storageWorkspace": ".artifacts/source-recall/source-recall-2026-08-14T10-36-29-019Z/openviking-data",
       "embedding": {
         "dense": {
           "cache_dir": "./.cache/openviking/models",
@@ -38,22 +38,22 @@
       "watchSchedulerEnabled": false,
       "server": {
         "host": "127.0.0.1",
-        "port": 36395,
+        "port": 35637,
         "agent_evolution": {
           "enabled": false
         }
       }
     },
-    "effectiveSha256": "44d81c3493df6d355f8646e5124472999ba74766e5000bf36924204a4a413ad8",
+    "effectiveSha256": "f66f5ceefaab0d5145ea42d913440494819ace040837867c5828f2844d24d81e",
     "controlledByRunner": true,
     "denseEmbeddingProvider": "local"
   },
   "implementation": {
-    "sourceManifestSha256": "186c3420aa7a865dedb9b4eb2fda608c9e209b862bb234bc879fb1e7df42c7c2",
+    "sourceManifestSha256": "e9e356abb240237571277731566059dd8e2c807a7ab0fad9b16f37f04f23dd85",
     "files": [
       {
         "path": ".pi/extensions/pi-context-memory/index.ts",
-        "sha256": "712d8f1321919c641997e126ae4198391f133c4c52d57f595f62055cd8a1ac0c"
+        "sha256": "f1fff20f3cccc7794d6fb1383e537bf037866c5cd383732f1968c3a133ae556e"
       },
       {
         "path": ".pi/extensions/pi-context-memory/long-term-memory.ts",
@@ -61,7 +61,7 @@
       },
       {
         "path": ".pi/extensions/pi-context-memory/memory-model-configuration.ts",
-        "sha256": "dc9279747eb33aa9f83e20edeb743b55a7bc775a13734d58e2b03b54e6c6dc1f"
+        "sha256": "c70a333a0a3d8426353612f63190b0b7fdc545bb248d3e2438fb1c622f380192"
       },
       {
         "path": ".pi/extensions/pi-context-memory/recall-and-provenance.ts",
@@ -69,7 +69,15 @@
       },
       {
         "path": ".pi/extensions/pi-context-memory/session-memory-coordination.ts",
-        "sha256": "c0788b658e3a601f7bd10c331ea6a91708dfc745c14ae7a29b93d2e121217408"
+        "sha256": "c464139d3d3fe7ce173f8d3469b7ff81523cfe200ca5e040e8f7abde877d708f"
+      },
+      {
+        "path": ".pi/extensions/pi-context-memory/session-working-memory.ts",
+        "sha256": "c6232229a14f0890c564c90053959b9cc6b43aea3f6390ee4468b2d7604157bc"
+      },
+      {
+        "path": ".pi/extensions/pi-context-memory/working-context-optimization.ts",
+        "sha256": "acdb4afeb3c28b662a0ea26b644d32cca89ee68e2135119175dc12aa84244588"
       },
       {
         "path": "pyproject.toml",
@@ -85,11 +93,11 @@
       },
       {
         "path": "scripts/validate-source-recall.mjs",
-        "sha256": "10e5efe815f051ea19dac13975378f3dae1215b6ad16ea8c2a66b55519305e0b"
+        "sha256": "528095da583f544b6345fa03073cfe324c9f4bc64122a2dcabc15334d7036b7d"
       },
       {
         "path": "scripts/validation-evidence.mjs",
-        "sha256": "65d53dc566b3420486c478f2b3ee58eeb838709c43d3e40753b4b097116ffa71"
+        "sha256": "7aa55ebeed261d375625af14954b27571419fdc7d61e11b1f4b05ab547ec75ca"
       },
       {
         "path": "uv.lock",
@@ -100,7 +108,7 @@
         "sha256": "3192252aa9b87a6cdd481b273142c7e3a3692e3bd253800c1bbb9d200ab591d0"
       }
     ],
-    "gitCommit": "2d03d3e871467ca947c3d1a18e307d245dad2203",
+    "gitCommit": "a277a729cee986cc9035eaee8b5b3b1968d2b6fe",
     "workingTreeDirty": true
   },
   "passed": true,
@@ -148,12 +156,12 @@
     "branchCurrentRouteCandidates": 3
   },
   "sourceHashes": {
-    "common": "02e8cbb3e8bdf86e43fd78ae8735ac0996df0e08ac3652dbaa9ea8bb9b34fdbe",
-    "branchB": "8d1ddcf12fb5fa04c158a5423c5dbd0b5f5b206b8d6bb0345eea62300b173efa"
+    "common": "bcf4da15a3484a5c7c2d565022a692be5fba536379d614d525ab3e66f8c2d856",
+    "branchB": "738f56ae334b21e1ebd29cd16e8e6e27fdc6ee1b768456434005044f0e4fbbb4"
   },
   "limitations": [
     "The local scope covers source coordination and OpenViking retrieval with local dense embeddings.",
-    "Provider task quality, automatic memory, Working Memory, context construction, and complete API cost require a future paired task experiment after the product implements automatic context optimization.",
+    "Automatic Working Memory and context adoption have separate local evidence; real Provider task quality and complete API cost remain in the paired experiment.",
     "OpenViking LLM, VLM, memory extraction, and Working Memory remain disabled in this runner."
   ]
 }

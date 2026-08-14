@@ -1,20 +1,32 @@
 {
   "schemaVersion": 1,
   "generatedBy": "scripts/validate-memory-model-runtime.mjs",
-  "runId": "memory-model-runtime-2026-08-14T08-10-13-969Z",
-  "recordedAt": "2026-08-14T08:12:38.126Z",
+  "runId": "memory-model-runtime-2026-08-14T10-36-58-043Z",
+  "recordedAt": "2026-08-14T10:39:03.274Z",
   "piVersion": "0.84.1",
   "openVikingVersion": "0.4.13",
   "implementation": {
-    "sourceManifestSha256": "c08bae72e41a8d1a2d86c3d9820bf45a64ab6ca486824c8508a3c630c4dfd509",
+    "sourceManifestSha256": "ec51b08c7e607d4dee158fe5561672484762c835842a61c281a74e10376434ce",
     "files": [
       {
         "path": ".pi/extensions/pi-context-memory/index.ts",
-        "sha256": "712d8f1321919c641997e126ae4198391f133c4c52d57f595f62055cd8a1ac0c"
+        "sha256": "f1fff20f3cccc7794d6fb1383e537bf037866c5cd383732f1968c3a133ae556e"
       },
       {
         "path": ".pi/extensions/pi-context-memory/memory-model-configuration.ts",
-        "sha256": "dc9279747eb33aa9f83e20edeb743b55a7bc775a13734d58e2b03b54e6c6dc1f"
+        "sha256": "c70a333a0a3d8426353612f63190b0b7fdc545bb248d3e2438fb1c622f380192"
+      },
+      {
+        "path": ".pi/extensions/pi-context-memory/session-memory-coordination.ts",
+        "sha256": "c464139d3d3fe7ce173f8d3469b7ff81523cfe200ca5e040e8f7abde877d708f"
+      },
+      {
+        "path": ".pi/extensions/pi-context-memory/session-working-memory.ts",
+        "sha256": "c6232229a14f0890c564c90053959b9cc6b43aea3f6390ee4468b2d7604157bc"
+      },
+      {
+        "path": ".pi/extensions/pi-context-memory/working-context-optimization.ts",
+        "sha256": "acdb4afeb3c28b662a0ea26b644d32cca89ee68e2135119175dc12aa84244588"
       },
       {
         "path": "config/openviking.json",
@@ -38,7 +50,7 @@
       },
       {
         "path": "scripts/validate-memory-model-runtime.mjs",
-        "sha256": "eb12d8205542828d3fa647e5007c86e55c5ea8f3b24d26db4a832ee19e8fe513"
+        "sha256": "cb29808a2e5f04ee0a7cc7c94448052b0bc3ee0ab77cae08e1ce1de4bed4e07b"
       },
       {
         "path": "scripts/validate-openviking-vlm-adapters.py",
@@ -46,14 +58,14 @@
       },
       {
         "path": "scripts/validation-evidence.mjs",
-        "sha256": "65d53dc566b3420486c478f2b3ee58eeb838709c43d3e40753b4b097116ffa71"
+        "sha256": "7aa55ebeed261d375625af14954b27571419fdc7d61e11b1f4b05ab547ec75ca"
       },
       {
         "path": "uv.lock",
         "sha256": "910184bff539fd56b4b7f8fc2ee46439f3113c7394c1538d60ef3a5e3c78f094"
       }
     ],
-    "gitCommit": "2d03d3e871467ca947c3d1a18e307d245dad2203",
+    "gitCommit": "a277a729cee986cc9035eaee8b5b3b1968d2b6fe",
     "workingTreeDirty": true
   },
   "passed": true,
@@ -110,7 +122,7 @@
   },
   "limitations": [
     "The local scope uses a protocol-compatible OpenViking process double and makes no external Provider requests.",
-    "Concrete memory-model Working Memory capability remains a separately authorized Provider validation.",
-    "Automatic enhanced-context adoption and paired API-cost evidence belong to the context-enhancement delivery."
+    "Working Memory protocol and automatic Pi context adoption have separate local evidence; real memory-model semantics still require Provider validation.",
+    "Paired task quality and complete API-cost evidence remain in the next longitudinal delivery."
   ]
 }

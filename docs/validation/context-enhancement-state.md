@@ -2,53 +2,54 @@
 
 ## 1. 验证责任
 
-本文定义如何证明 [`../features/context-enhancement-state.md`](../features/context-enhancement-state.md) 中的 Pi 对话回退兼容、原生压缩降级和状态标识成立。验证以 Pi 权威路线、最终 Provider 请求和用户界面状态三方一致为通过依据。
+本文定义如何证明 [`../features/context-enhancement-state.md`](../features/context-enhancement-state.md) 中当前已实现的有界上下文采用、路线隔离和 Pi 原生降级，并规定后续 tree、compaction 与持久状态纵向验证继续使用的共同 fixture。稳定本地结果保存于 [`../../validation/evidence/context-enhancement.json`](../../validation/evidence/context-enhancement.json)。
 
-## 2. 基线与观测
+## 2. 共享 fixture 与观测
 
-验证使用同一 Pi 版本、模型、工具边界和固定 session fixture 比较：
+[`../../validation/fixtures/context-enhancement-long-task.json`](../../validation/fixtures/context-enhancement-long-task.json) 固定：
 
-- **Pi 原生 arm**：模型输入由 Pi 原生记忆与压缩构造；
-- **增强 arm**：模型输入采用当前路线确认有效的增强上下文；
-- **降级 arm**：扩展保持运行，模型输入由 Pi 原生路径接续。
+- 多轮目标与硬约束更新；
+- 共同前缀后的冲突路线 A、当前路线 B 与 abandoned branch summary；
+- assistant tool call、当前路线工具证据和来源 entry ID；
+- Pi compaction summary 与压缩后继续的用户 prompt；
+- 当前决定、禁止采用的旧决定和最终 checker 输入。
 
-每次模型请求至少记录当前 session ID、leaf ID、branch entry ID 集合、实际发送消息的哈希、上下文采用路径和界面状态。后台任务记录其输入路线与完成路线，用于识别迟到结果。日志只保存验证所需的摘要与哈希。
+每次模型请求至少观察当前 session ID、leaf ID、路线指纹、输入消息哈希、实际采用路径和增强内容哈希。日志不保存完整 Provider payload；runner 的隔离原始产物只保存在 Git 忽略的 `.artifacts/`。
 
-## 3. 回退与分支场景
+## 3. 当前本地纵向验证
 
-固定场景必须覆盖：
+```bash
+node scripts/validate-context-enhancement.mjs
+node scripts/check-validation-evidence.mjs
+```
 
-- 同一 session 的 A → B、A → B → A 路线切换；
-- 回退到根节点、用户消息、工具结果和压缩前后的节点；
-- `/tree` 分别选择生成 branch summary 和保持目标路线原样；
-- `/fork`、`/clone` 与 `/resume` 的 session 隔离；
-- 路线变化时，旧路线工作记忆生成、索引或召回仍在执行；
-- 再次进入已处理 leaf 时，已有派生结果重新接受当前路线核验。
+runner 使用协议兼容的 OpenViking 与本地任务 Provider 替身，不访问外部 Provider。它验证：
 
-通过条件是 Pi 操作结果与原生语义一致，路线变化后的 Provider 请求只包含当前路线消息及其确认有效的增强内容。
+- session、session file、leaf、有序 entry 和完整内容形成唯一采用身份；
+- 线性路线复用同一 OpenViking Session，冲突 branch 使用隔离 session；
+- 旧路线任务完成时不能被当前路线取得；
+- 正在执行的路线之后只保留最新未启动路线，旧排队路线被明确替代；
+- Pi entry ID 通过 `source_message_ids` 进入 Working Memory；
+- OpenViking Session create、batch append、commit、task polling 和 context assembly 协议完整执行；
+- Pi compaction 投影保留 `firstKeptEntryId` 范围、压缩后条目，并兼容自包含 `retainedTail`；
+- overview 与 active history 受固定预算和字符上限约束；
+- 当前 prompt 及其后的 assistant/tool 消息保持原对象和顺序；
+- Pi `context` hook 的有效代际真实本地 Provider payload 采用增强历史；启动时与已 ready 后的 setting/config 指纹失配、首轮和故障路径均保持 Pi 原生；
+- 用户文本包含增强标题时仍不能伪造 Provider 采用状态；
+- 后端失败不留下可采用的部分结果，扩展自建 Session 在正常关闭和创建响应仍在途时均得到清理。
 
-## 4. 压缩、故障与恢复场景
+通过条件是所有稳定 checks 为 `true`，且 evidence 的实现文件哈希与当前仓库一致。
 
-必须分别覆盖手动、阈值和上下文溢出触发的 Pi 原生压缩，并在以下时间点注入 OpenViking 不可达、超时、无效响应和路线不一致结果：
+## 4. 当前证据边界
 
-- 新路线增强结果建立前；
-- 增强上下文采用前；
-- 已进入增强状态后的下一轮；
-- 路线切换与后台结果完成并发发生时。
+本地 runner 证明控制流、协议、路线隔离、有界消息构造、实际 Provider payload 采用和故障降级，不证明真实记忆模型摘要的语义质量与成本。
 
-通过条件是故障或准备状态下 Pi 持续运行，Provider 采用 Pi 原生上下文与压缩；恢复结果完成当前路线核验并实际进入 Provider 请求后，状态切换为增强。
+后续纵向交付继续用同一 fixture 覆盖：
 
-## 5. 状态一致性
+- `/tree` 的 A→B、A→B→A 与 branch summary 两种选择；
+- `/fork`、`/clone`、`/resume` 的运行期重建和 session 隔离；
+- 手动、阈值与 overflow Pi 原生 compaction；
+- 准备、超时、恢复期间 UI 状态与每次实际 Provider 请求一致；
+- 原生 Pi / 增强路径的任务质量 checker 和完整 API 成本。
 
-状态验证以实际 Provider 请求为依据：
-
-- 请求采用当前路线增强上下文时显示“增强记忆”；
-- 请求采用 Pi 原生记忆与压缩时显示“Pi 原生”；
-- session 启动、路线切换、降级和恢复期间，状态随实际采用结果转换；
-- 状态展示与会话消息、Provider payload 和 Pi 操作结果保持分离。
-
-全套场景以状态、权威路线和实际请求路径一致为通过条件。
-
-## 6. 证据责任
-
-来源归档与来源召回 runner 证明当前 branch 的来源边界和显式召回。自动上下文纵向 runner 与稳定 evidence 负责证明上下文采用、Pi 原生压缩降级和 UI 状态一致性，并与该能力的可运行实现共同交付。
+任一当前路线污染、工具序列破坏、错误状态展示或质量退化都会推翻对应设计，并要求回到最早缺少证据的采用边界。

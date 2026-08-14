@@ -1,15 +1,15 @@
 {
   "schemaVersion": 1,
   "generatedBy": "scripts/validate-source-archive.mjs",
-  "runId": "source-archive-2026-08-14T08-12-49-129Z",
-  "recordedAt": "2026-08-14T08:12:50.955Z",
+  "runId": "source-archive-2026-08-14T10-36-26-148Z",
+  "recordedAt": "2026-08-14T10:36:27.993Z",
   "piVersion": "0.84.1",
   "implementation": {
-    "sourceManifestSha256": "3d1aff5a30ff7a794b0093e9fbca87590f4d4270ba3916af0856c98ee59b543c",
+    "sourceManifestSha256": "d51976d01d31446aa6bad5a8df2253c7c57e340f327829849398a9e81ed00109",
     "files": [
       {
         "path": ".pi/extensions/pi-context-memory/index.ts",
-        "sha256": "712d8f1321919c641997e126ae4198391f133c4c52d57f595f62055cd8a1ac0c"
+        "sha256": "f1fff20f3cccc7794d6fb1383e537bf037866c5cd383732f1968c3a133ae556e"
       },
       {
         "path": ".pi/extensions/pi-context-memory/long-term-memory.ts",
@@ -17,7 +17,7 @@
       },
       {
         "path": ".pi/extensions/pi-context-memory/memory-model-configuration.ts",
-        "sha256": "dc9279747eb33aa9f83e20edeb743b55a7bc775a13734d58e2b03b54e6c6dc1f"
+        "sha256": "c70a333a0a3d8426353612f63190b0b7fdc545bb248d3e2438fb1c622f380192"
       },
       {
         "path": ".pi/extensions/pi-context-memory/recall-and-provenance.ts",
@@ -25,7 +25,15 @@
       },
       {
         "path": ".pi/extensions/pi-context-memory/session-memory-coordination.ts",
-        "sha256": "c0788b658e3a601f7bd10c331ea6a91708dfc745c14ae7a29b93d2e121217408"
+        "sha256": "c464139d3d3fe7ce173f8d3469b7ff81523cfe200ca5e040e8f7abde877d708f"
+      },
+      {
+        "path": ".pi/extensions/pi-context-memory/session-working-memory.ts",
+        "sha256": "c6232229a14f0890c564c90053959b9cc6b43aea3f6390ee4468b2d7604157bc"
+      },
+      {
+        "path": ".pi/extensions/pi-context-memory/working-context-optimization.ts",
+        "sha256": "acdb4afeb3c28b662a0ea26b644d32cca89ee68e2135119175dc12aa84244588"
       },
       {
         "path": "scripts/check-validation-evidence.mjs",
@@ -37,10 +45,10 @@
       },
       {
         "path": "scripts/validation-evidence.mjs",
-        "sha256": "65d53dc566b3420486c478f2b3ee58eeb838709c43d3e40753b4b097116ffa71"
+        "sha256": "7aa55ebeed261d375625af14954b27571419fdc7d61e11b1f4b05ab547ec75ca"
       }
     ],
-    "gitCommit": "2d03d3e871467ca947c3d1a18e307d245dad2203",
+    "gitCommit": "a277a729cee986cc9035eaee8b5b3b1968d2b6fe",
     "workingTreeDirty": true
   },
   "passed": true,

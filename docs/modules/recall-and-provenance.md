@@ -49,4 +49,4 @@ entry 子树彼此独立；文件固定为 `source.md`。上传必须使用 `pro
 
 ## 6. 当前范围与后续责任
 
-当前索引覆盖 Pi 路线中的有界任务文本。完整大型工具输出、用户级派生 memory、Working Memory、服务端 rewrite 和 context 控制由后续长任务纵向交付承担。旧 branch 资源作为可重建来源保留，当前查询目标仅包含当前 branch URI。
+当前索引覆盖 Pi 路线中的有界任务文本，旧 branch 资源作为可重建来源保留，查询目标只包含当前 branch URI。Session Working Memory 与模型上下文由长时记忆、工作上下文优化和 Pi 集成模块承担；本模块不参与自动上下文队列或采用状态。

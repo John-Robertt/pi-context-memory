@@ -1,0 +1,163 @@
+{
+  "schemaVersion": 1,
+  "name": "bounded-context-route-continuity",
+  "task": {
+    "initialGoal": "实现一个可验证的长任务上下文增强链路",
+    "currentGoal": "只采用当前路线的有界上下文，并保留 Pi 原生降级",
+    "hardConstraints": [
+      "不同 session 和冲突 branch 不得互相采用",
+      "关键工具证据必须保留来源入口",
+      "压缩后继续时当前目标仍然有效"
+    ],
+    "checker": {
+      "requiredDecision": "bounded-current-route",
+      "forbiddenDecision": "full-history-route-a",
+      "requiredEvidenceEntryId": "b000000c"
+    }
+  },
+  "entries": {
+    "a0000001": {
+      "type": "message",
+      "id": "a0000001",
+      "parentId": null,
+      "timestamp": "2026-08-14T09:00:00.000Z",
+      "message": { "role": "user", "content": "目标：实现一个可验证的长任务上下文增强链路。", "timestamp": 1776157200000 }
+    },
+    "a0000002": {
+      "type": "message",
+      "id": "a0000002",
+      "parentId": "a0000001",
+      "timestamp": "2026-08-14T09:00:01.000Z",
+      "message": { "role": "assistant", "content": [{ "type": "text", "text": "先建立路线和验证基线。" }], "timestamp": 1776157201000 }
+    },
+    "a0000003": {
+      "type": "message",
+      "id": "a0000003",
+      "parentId": "a0000002",
+      "timestamp": "2026-08-14T09:00:02.000Z",
+      "message": { "role": "user", "content": "约束：保留 Pi 原生降级，不得跨 branch 采用。", "timestamp": 1776157202000 }
+    },
+    "a0000004": {
+      "type": "message",
+      "id": "a0000004",
+      "parentId": "a0000003",
+      "timestamp": "2026-08-14T09:00:03.000Z",
+      "message": { "role": "assistant", "content": [{ "type": "text", "text": "采用 session、leaf、完整路线指纹作为边界。" }], "timestamp": 1776157203000 }
+    },
+    "a0000005": {
+      "type": "message",
+      "id": "a0000005",
+      "parentId": "a0000004",
+      "timestamp": "2026-08-14T09:00:04.000Z",
+      "message": {
+        "role": "assistant",
+        "content": [{ "type": "toolCall", "id": "tool-baseline", "name": "read", "arguments": { "path": "docs/DEVELOPMENT.md" } }],
+        "timestamp": 1776157204000
+      }
+    },
+    "a0000006": {
+      "type": "message",
+      "id": "a0000006",
+      "parentId": "a0000005",
+      "timestamp": "2026-08-14T09:00:05.000Z",
+      "message": {
+        "role": "toolResult",
+        "toolCallId": "tool-baseline",
+        "toolName": "read",
+        "content": [{ "type": "text", "text": "现有归档、召回和记忆模型运行时 evidence 均为 current。" }],
+        "isError": false,
+        "timestamp": 1776157205000
+      }
+    },
+    "a0000007": {
+      "type": "message",
+      "id": "a0000007",
+      "parentId": "a0000006",
+      "timestamp": "2026-08-14T09:00:06.000Z",
+      "message": { "role": "assistant", "content": [{ "type": "text", "text": "基线成立，开始比较上下文策略。" }], "timestamp": 1776157206000 }
+    },
+    "a0000008": {
+      "type": "message",
+      "id": "a0000008",
+      "parentId": "a0000007",
+      "timestamp": "2026-08-14T09:00:07.000Z",
+      "message": { "role": "user", "content": "路线 A：每轮发送完整历史。", "timestamp": 1776157207000 }
+    },
+    "a0000009": {
+      "type": "message",
+      "id": "a0000009",
+      "parentId": "a0000008",
+      "timestamp": "2026-08-14T09:00:08.000Z",
+      "message": { "role": "assistant", "content": [{ "type": "text", "text": "决定 full-history-route-a。" }], "timestamp": 1776157208000 }
+    },
+    "b0000008": {
+      "type": "branch_summary",
+      "id": "b0000008",
+      "parentId": "a0000007",
+      "timestamp": "2026-08-14T09:01:00.000Z",
+      "fromId": "a0000009",
+      "summary": "已放弃路线 A；路线 A 曾决定 full-history-route-a。"
+    },
+    "b0000009": {
+      "type": "message",
+      "id": "b0000009",
+      "parentId": "b0000008",
+      "timestamp": "2026-08-14T09:01:01.000Z",
+      "message": { "role": "user", "content": "更新目标：路线 B 只采用当前路线的有界上下文。", "timestamp": 1776157261000 }
+    },
+    "b000000a": {
+      "type": "message",
+      "id": "b000000a",
+      "parentId": "b0000009",
+      "timestamp": "2026-08-14T09:01:02.000Z",
+      "message": {
+        "role": "assistant",
+        "content": [{ "type": "toolCall", "id": "tool-current", "name": "bash", "arguments": { "command": "node scripts/check-validation-evidence.mjs" } }],
+        "timestamp": 1776157262000
+      }
+    },
+    "b000000c": {
+      "type": "message",
+      "id": "b000000c",
+      "parentId": "b000000a",
+      "timestamp": "2026-08-14T09:01:03.000Z",
+      "message": {
+        "role": "toolResult",
+        "toolCallId": "tool-current",
+        "toolName": "bash",
+        "content": [{ "type": "text", "text": "当前路线 evidence 检查通过。" }],
+        "isError": false,
+        "timestamp": 1776157263000
+      }
+    },
+    "b000000d": {
+      "type": "message",
+      "id": "b000000d",
+      "parentId": "b000000c",
+      "timestamp": "2026-08-14T09:01:04.000Z",
+      "message": { "role": "assistant", "content": [{ "type": "text", "text": "当前决定 bounded-current-route，证据入口 b000000c。" }], "timestamp": 1776157264000 }
+    },
+    "c0000001": {
+      "type": "compaction",
+      "id": "c0000001",
+      "parentId": "b000000d",
+      "timestamp": "2026-08-14T09:02:00.000Z",
+      "summary": "当前目标是 bounded-current-route；必须保留 Pi 原生降级；关键证据入口 b000000c。",
+      "firstKeptEntryId": "b0000009",
+      "tokensBefore": 50000
+    },
+    "c0000002": {
+      "type": "message",
+      "id": "c0000002",
+      "parentId": "c0000001",
+      "timestamp": "2026-08-14T09:02:01.000Z",
+      "message": { "role": "user", "content": "压缩后继续：报告当前决定和证据入口。", "timestamp": 1776157321000 }
+    }
+  },
+  "routes": {
+    "common": ["a0000001", "a0000002", "a0000003", "a0000004", "a0000005", "a0000006", "a0000007"],
+    "branchA": ["a0000001", "a0000002", "a0000003", "a0000004", "a0000005", "a0000006", "a0000007", "a0000008", "a0000009"],
+    "branchB": ["a0000001", "a0000002", "a0000003", "a0000004", "a0000005", "a0000006", "a0000007", "b0000008", "b0000009", "b000000a", "b000000c", "b000000d"],
+    "afterCompaction": ["a0000001", "a0000002", "a0000003", "a0000004", "a0000005", "a0000006", "a0000007", "b0000008", "b0000009", "b000000a", "b000000c", "b000000d", "c0000001", "c0000002"]
+  }
+}

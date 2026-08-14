@@ -4,7 +4,7 @@
 
 本模块接收 Pi 集成提供的会话事实，在任何内容进入长时记忆或从中读取前，统一执行 session 身份、当前 branch 路线和来源确认。它协调本地来源归档与派生索引生命周期，并为召回模块提供当前路线来源和权威展开；不生成派生记忆、不执行 OpenViking IO，也不决定相关性排序。
 
-跨模块流程见 [`../system/source-archiving.md`](../system/source-archiving.md) 与 [`../system/source-recall.md`](../system/source-recall.md)。
+跨模块流程见 [`../system/source-archiving.md`](../system/source-archiving.md)、[`../system/source-recall.md`](../system/source-recall.md) 与 [`../system/context-enhancement.md`](../system/context-enhancement.md)。
 
 ## 2. 输入、状态与不变量
 
@@ -26,6 +26,7 @@
 当前提供：
 
 - 验证并归档当前路线；
+- 以 session ID、session file、leaf、有序 entry ID 和完整 entry 内容生成不可混用的路线身份；
 - 把已确认来源的完整工具结果交给长时记忆；
 - 按当前路线顺序列出来源副本；
 - 将一个归档 entry 展开为当前 Pi 权威条目；
@@ -42,4 +43,4 @@
 
 ## 5. 验证与限制
 
-验证覆盖跨 session 输入拒绝、非当前 branch 查询拒绝、损坏父链拒绝、来源展开、存储错误传播，以及调用后索引轮次的共享、后续 generation、后台路线折叠、显式轮次优先、超时取消和 shutdown。OpenViking候选过滤与结果边界由来源召回验证负责；本模块当前没有 Working Memory、迟到模型结果或上下文采用状态。
+验证覆盖跨 session 输入、损坏父链和非当前路线拒绝，来源展开与存储错误传播，索引轮次协调，以及相同 leaf 或 entry ID 不能跨 session/内容复用路线身份。Working Memory 生成属于长时记忆模块；有界消息构造与实际采用分别由工作上下文优化和 Pi 集成验证。

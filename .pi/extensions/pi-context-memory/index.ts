@@ -14,17 +14,24 @@ import {
 import {
   SessionMemoryCoordinator,
   SessionSourceIndexCoordinator,
+  type SessionRouteIdentity,
   type SessionRouteSnapshot,
 } from "./session-memory-coordination.ts";
+import {
+  applyPreparedWorkingContext,
+  WorkingContextOptimizer,
+} from "./working-context-optimization.ts";
 import {
   memoryModelConfigPath,
   locateProjectRoot,
   memoryModelSettingsFingerprint,
   memoryModelConfigContentFingerprint,
+  validateMemoryModelConfiguration,
   validateMemoryModelSetting,
   readRuntimeState,
   requestOpenVikingRestart,
   type MemoryModelSetting,
+  type ValidatedMemoryModelConfiguration,
   type OpenVikingRuntimeState,
 } from "./memory-model-configuration.ts";
 
@@ -223,15 +230,24 @@ function payloadSummary(payload: unknown): Record<string, unknown> {
     toolsHash: hash(tools ?? []),
   };
 }
+function payloadUsesEnhancedContext(value: unknown, seen = new WeakSet<object>()): boolean {
+  if (typeof value === "string") return value.includes("# Enhanced session context");
+  if (!value || typeof value !== "object") return false;
+  if (seen.has(value)) return false;
+  seen.add(value);
+  if (Array.isArray(value)) return value.some((item) => payloadUsesEnhancedContext(item, seen));
+  return Object.values(value as Record<string, unknown>).some((item) => payloadUsesEnhancedContext(item, seen));
+}
 
-function updateContextPathStatus(ctx: ExtensionContext): void {
-  if (ctx.hasUI) ctx.ui.setStatus("pi-context-memory", "Pi 原生");
+function updateContextPathStatus(ctx: ExtensionContext, path: "Pi 原生" | "增强记忆" = "Pi 原生"): void {
+  if (ctx.hasUI) ctx.ui.setStatus("pi-context-memory", path);
 }
 
 function formatMemoryModelState(
   configPath: string,
   setting: MemoryModelSetting | undefined,
   state: OpenVikingRuntimeState | undefined,
+  contextPath: "Pi 原生" | "增强记忆",
 ): string {
   const configured = setting ? `${setting.provider}/${setting.model}` : "not configured";
   const running = state?.activeProvider && state.activeModel ? `${state.activeProvider}/${state.activeModel}` : "no VLM loaded";
@@ -252,7 +268,7 @@ function formatMemoryModelState(
     `Service readiness: ${state?.ready ? "ready" : state?.phase ?? "launcher unavailable"}`,
     `Configuration: ${configurationStatus}`,
     state?.configurationError ? `Last cold-start configuration error: ${state.configurationError}` : undefined,
-    "Context path: Pi 原生",
+    `Context path: ${contextPath}`,
   ].filter((line): line is string => Boolean(line)).join("\n");
 }
 
@@ -264,6 +280,11 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
   } catch (error) {
     writeRecord("source_index_config_error", { error: error instanceof Error ? error.message : String(error) });
   }
+  let workingContextOptimizer: WorkingContextOptimizer | undefined;
+  let workingContextGeneration: string | undefined;
+  let workingContextTransition: Promise<void> = Promise.resolve();
+  let workingContextProjectRoot: string | undefined;
+  let workingContextConfigContentFingerprint: string | undefined;
   let coordinator: SessionMemoryCoordinator | undefined;
   let coordinatorIdentity: string | undefined;
   let archiveUnavailable = false;
@@ -281,22 +302,101 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
   const queuedArchives = new Set<string>();
   let lastMemoryModelConfigDiagnosticKey: string | undefined;
   let memoryModelConfigCheck: Promise<void> | undefined;
+  let memoryEnhancementAvailable = false;
+  let lastContextPath: "Pi 原生" | "增强记忆" = "Pi 原生";
+  let providerContextDecision: "pi-native" | "enhanced" = "pi-native";
+  function transitionWorkingContext(nextGeneration?: string): Promise<boolean> {
+    const transition = async (): Promise<boolean> => {
+      if (nextGeneration && workingContextOptimizer && workingContextGeneration === nextGeneration) return true;
+      const previous = workingContextOptimizer;
+      workingContextOptimizer = undefined;
+      workingContextGeneration = undefined;
+      if (previous) await previous.shutdown(new Error("Working context runtime generation changed"));
+      if (!nextGeneration) return false;
+      try {
+        workingContextOptimizer = new WorkingContextOptimizer(openVikingUrl, openVikingApiKey, openVikingTimeoutMs);
+        workingContextGeneration = nextGeneration;
+        return true;
+      } catch (error) {
+        writeRecord("working_context_config_error", { error: error instanceof Error ? error.message : String(error) });
+        return false;
+      }
+    };
+    const operation = workingContextTransition.then(transition, transition);
+    workingContextTransition = operation.then(() => undefined, () => undefined);
+    return operation;
+  }
+
+  function runtimeWorkingContextGeneration(state: OpenVikingRuntimeState | undefined): string | undefined {
+    if (!state?.ready || state.configurationError) return undefined;
+    if (!state.activeProvider || state.activeProvider !== state.targetProvider) return undefined;
+    if (!state.activeModel || state.activeModel !== state.targetModel) return undefined;
+    if (!state.activeSettingsFingerprint || state.activeSettingsFingerprint !== state.targetSettingsFingerprint) return undefined;
+    if (!state.activeConfigFingerprint || state.activeConfigFingerprint !== state.targetConfigFingerprint) return undefined;
+    return `${state.activeSettingsFingerprint}\0${state.activeConfigFingerprint}`;
+  }
+
+  function activeWorkingContextGeneration(
+    validated: ValidatedMemoryModelConfiguration | undefined,
+    state: OpenVikingRuntimeState | undefined,
+  ): string | undefined {
+    if (!validated) return undefined;
+    const { setting, compiled } = validated;
+    const expected = `${memoryModelSettingsFingerprint(setting)}\0${compiled.configFingerprint}`;
+    return state?.activeProvider === setting.provider
+      && state.activeModel === setting.model
+      && runtimeWorkingContextGeneration(state) === expected
+      ? expected
+      : undefined;
+  }
+  async function workingContextGenerationIsCurrent(ctx: ExtensionContext): Promise<boolean> {
+    if (!workingContextGeneration || !workingContextProjectRoot || !workingContextConfigContentFingerprint) return false;
+    try {
+      const root = await locateProjectRoot(ctx.cwd);
+      if (root !== workingContextProjectRoot) return false;
+      const [state, contentFingerprint] = await Promise.all([
+        readRuntimeState(root),
+        memoryModelConfigContentFingerprint(root),
+      ]);
+      return runtimeWorkingContextGeneration(state) === workingContextGeneration
+        && contentFingerprint === workingContextConfigContentFingerprint;
+    } catch {
+      return false;
+    }
+  }
+
+  function setContextPath(ctx: ExtensionContext, path: "Pi 原生" | "增强记忆"): void {
+    lastContextPath = path;
+    updateContextPathStatus(ctx, path);
+  }
 
   async function reportMemoryModelConfigError(ctx: ExtensionContext): Promise<void> {
     let root: string | undefined;
+    let validated: ValidatedMemoryModelConfiguration | undefined;
+    let state: OpenVikingRuntimeState | undefined;
+    let contentFingerprint: string | undefined;
     try {
       root = await locateProjectRoot(ctx.cwd);
-      await validateMemoryModelSetting(root);
+      validated = await validateMemoryModelConfiguration(root);
+      state = await readRuntimeState(root);
+      contentFingerprint = await memoryModelConfigContentFingerprint(root);
       lastMemoryModelConfigDiagnosticKey = undefined;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       const contentFingerprint = root ? await memoryModelConfigContentFingerprint(root) : undefined;
       const diagnosticKey = `${contentFingerprint ?? "unreadable"}:${hash(message)}`;
-      if (diagnosticKey === lastMemoryModelConfigDiagnosticKey) return;
-      lastMemoryModelConfigDiagnosticKey = diagnosticKey;
-      writeRecord("memory_model_config_error", { error: message, contentFingerprint });
-      if (ctx.hasUI) ctx.ui.notify(`${message}\nPi will continue with its native context.`, "warning");
+      if (diagnosticKey !== lastMemoryModelConfigDiagnosticKey) {
+        lastMemoryModelConfigDiagnosticKey = diagnosticKey;
+        writeRecord("memory_model_config_error", { error: message, contentFingerprint });
+        if (ctx.hasUI) ctx.ui.notify(`${message}\nPi will continue with its native context.`, "warning");
+      }
     }
+    const generation = activeWorkingContextGeneration(validated, state);
+    const generationReady = await transitionWorkingContext(generation);
+    memoryEnhancementAvailable = Boolean(generation && generationReady && root && contentFingerprint);
+    workingContextProjectRoot = memoryEnhancementAvailable ? root : undefined;
+    workingContextConfigContentFingerprint = memoryEnhancementAvailable ? contentFingerprint : undefined;
+    if (memoryEnhancementAvailable) scheduleWorkingContext(ctx, sessionRouteSnapshot(ctx), "runtime_ready");
   }
 
   function scheduleMemoryModelConfigCheck(ctx: ExtensionContext): void {
@@ -315,6 +415,44 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
       coordinatorIdentity = key;
     }
     return coordinator;
+  }
+  function scheduleWorkingContext(
+    ctx: ExtensionContext,
+    snapshot: SessionRouteSnapshot | undefined,
+    trigger: string,
+  ): void {
+    if (!memoryEnhancementAvailable || !workingContextOptimizer || !snapshot || snapshot.entries.length === 0) return;
+    const activeCoordinator = currentCoordinator(ctx);
+    if (!activeCoordinator) return;
+    let route: SessionRouteIdentity;
+    try {
+      route = activeCoordinator.identifyCurrentRoute(snapshot);
+    } catch (error) {
+      writeRecord("working_context_rejected", {
+        trigger,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return;
+    }
+    void workingContextOptimizer.prepare(route, snapshot.entries).then(
+      (prepared) => writeRecord("working_context_ready", {
+        trigger,
+        sessionId: route.sessionId,
+        leafId: route.leafId,
+        routeFingerprint: route.fingerprint,
+        openVikingSessionId: prepared.openVikingSessionId,
+        estimatedTokens: prepared.estimatedTokens,
+        hasWorkingMemory: prepared.hasWorkingMemory,
+        contentHash: hash(prepared.content),
+      }),
+      (error) => writeRecord("working_context_error", {
+        trigger,
+        sessionId: route.sessionId,
+        leafId: route.leafId,
+        routeFingerprint: route.fingerprint,
+        error: error instanceof Error ? error.message : String(error),
+      }),
+    );
   }
 
   async function runSourceIndex(
@@ -432,8 +570,8 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
         const setting = await validateMemoryModelSetting(root);
         const state = await readRuntimeState(root);
         lastMemoryModelConfigDiagnosticKey = undefined;
-        ctx.ui.notify(formatMemoryModelState(configPath, setting, state), "info");
-        updateContextPathStatus(ctx);
+        ctx.ui.notify(formatMemoryModelState(configPath, setting, state, lastContextPath), "info");
+        updateContextPathStatus(ctx, lastContextPath);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         if (root && message.startsWith("Invalid memory model configuration at ")) {
@@ -451,8 +589,26 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
       let root: string | undefined;
       try {
         root = await locateProjectRoot(ctx.cwd);
+        memoryEnhancementAvailable = false;
+        workingContextProjectRoot = undefined;
+        workingContextConfigContentFingerprint = undefined;
+        providerContextDecision = "pi-native";
+        setContextPath(ctx, "Pi 原生");
+        if (memoryModelConfigCheck) await memoryModelConfigCheck;
+        memoryEnhancementAvailable = false;
+        workingContextProjectRoot = undefined;
+        workingContextConfigContentFingerprint = undefined;
+        await transitionWorkingContext();
         if (ctx.hasUI) ctx.ui.setStatus("pi-context-memory", "Pi 原生 · OpenViking applying");
         const state = await requestOpenVikingRestart(root);
+        const validated = await validateMemoryModelConfiguration(root);
+        const generation = activeWorkingContextGeneration(validated, state);
+        const contentFingerprint = await memoryModelConfigContentFingerprint(root);
+        const generationReady = await transitionWorkingContext(generation);
+        memoryEnhancementAvailable = Boolean(generation && generationReady && contentFingerprint);
+        workingContextProjectRoot = memoryEnhancementAvailable ? root : undefined;
+        workingContextConfigContentFingerprint = memoryEnhancementAvailable ? contentFingerprint : undefined;
+        if (memoryEnhancementAvailable) scheduleWorkingContext(ctx, sessionRouteSnapshot(ctx), "restart");
         writeRecord("openviking_restart_complete", {
           provider: state.activeProvider,
           model: state.activeModel,
@@ -461,6 +617,10 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
         ctx.ui.notify(`OpenViking ready: ${state.activeProvider ?? "no VLM"}/${state.activeModel ?? "source recall only"}`, "info");
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
+        memoryEnhancementAvailable = false;
+        workingContextProjectRoot = undefined;
+        workingContextConfigContentFingerprint = undefined;
+        await transitionWorkingContext();
         if (root && message.startsWith("Invalid memory model configuration at ")) {
           const contentFingerprint = await memoryModelConfigContentFingerprint(root);
           lastMemoryModelConfigDiagnosticKey = `${contentFingerprint ?? "unreadable"}:${hash(message)}`;
@@ -468,13 +628,15 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
         writeRecord("openviking_restart_error", { error: message });
         ctx.ui.notify(message, "error");
       } finally {
-        updateContextPathStatus(ctx);
+        providerContextDecision = "pi-native";
+        setContextPath(ctx, "Pi 原生");
       }
     },
   });
 
   pi.on("session_start", (_event, ctx) => {
-    updateContextPathStatus(ctx);
+    providerContextDecision = "pi-native";
+    setContextPath(ctx, "Pi 原生");
     scheduleMemoryModelConfigCheck(ctx);
   });
 
@@ -580,8 +742,11 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
   });
 
   pi.on("before_agent_start", (event, ctx) => {
-    updateContextPathStatus(ctx);
-    scheduleMemoryModelConfigCheck(ctx);
+    providerContextDecision = "pi-native";
+    setContextPath(ctx, "Pi 原生");
+    if (!memoryEnhancementAvailable) scheduleMemoryModelConfigCheck(ctx);
+    const workingSnapshot = sessionRouteSnapshot(ctx);
+    scheduleWorkingContext(ctx, workingSnapshot ? snapshotBeforeCurrentPrompt(workingSnapshot) : undefined, "before_agent_start");
     writeRecord("before_agent_start", {
       promptBytes: Buffer.byteLength(event.prompt, "utf8"),
       systemPromptBytes: Buffer.byteLength(event.systemPrompt, "utf8"),
@@ -603,14 +768,64 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
     maybeFail("turn_start");
   });
 
-  pi.on("context", (event, ctx) => {
+  pi.on("context", async (event, ctx) => {
+    if (memoryModelConfigCheck) await memoryModelConfigCheck;
+    let adoptedMessages = event.messages;
+    let routeFingerprint: string | undefined;
+    let preparedContextHash: string | undefined;
+    const generationCurrent = memoryEnhancementAvailable && workingContextOptimizer
+      ? await workingContextGenerationIsCurrent(ctx)
+      : false;
+    if (memoryEnhancementAvailable && !generationCurrent) {
+      memoryEnhancementAvailable = false;
+      workingContextProjectRoot = undefined;
+      workingContextConfigContentFingerprint = undefined;
+      void transitionWorkingContext();
+      scheduleMemoryModelConfigCheck(ctx);
+    }
+    if (generationCurrent && workingContextOptimizer) {
+      const snapshot = sessionRouteSnapshot(ctx);
+      const activeCoordinator = currentCoordinator(ctx);
+      if (snapshot && activeCoordinator) {
+        try {
+          const historicalSnapshot = snapshotBeforeCurrentPrompt(snapshot);
+          const route = activeCoordinator.identifyCurrentRoute(historicalSnapshot);
+          routeFingerprint = route.fingerprint;
+          const prepared = workingContextOptimizer.getReady(route);
+          if (prepared) {
+            adoptedMessages = applyPreparedWorkingContext(event.messages, prepared);
+            preparedContextHash = hash(prepared.content);
+          }
+        } catch (error) {
+          writeRecord("working_context_rejected", {
+            trigger: "context",
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
+    }
+    const firstAdoptedMessage = adoptedMessages[0] as unknown;
+    const adopted = Boolean(
+      firstAdoptedMessage
+      && typeof firstAdoptedMessage === "object"
+      && (firstAdoptedMessage as Record<string, unknown>).role === "custom"
+      && (firstAdoptedMessage as Record<string, unknown>).customType === "pi-context-memory",
+    );
+    providerContextDecision = adopted ? "enhanced" : "pi-native";
+    setContextPath(ctx, adopted ? "增强记忆" : "Pi 原生");
     writeRecord("context", {
       messages: event.messages.map((message) => messageSummary(message)),
       messagesHash: hash(event.messages),
       messagesBytes: bytes(event.messages),
+      adoptedMessagesHash: adopted ? hash(adoptedMessages) : undefined,
+      adoptedMessagesBytes: adopted ? bytes(adoptedMessages) : undefined,
+      contextPath: adopted ? "enhanced" : "pi-native",
+      routeFingerprint,
+      preparedContextHash,
       ...branchSnapshot(ctx),
     });
     maybeFail("context");
+    return adopted ? { messages: adoptedMessages } : undefined;
   });
 
   pi.on("before_provider_headers", (event, ctx) => {
@@ -620,10 +835,17 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
 
   pi.on("before_provider_request", (event, ctx) => {
     providerRequestIndex += 1;
+    const payloadHasEnhancedContext = payloadUsesEnhancedContext(event.payload);
+    const enhanced = providerContextDecision === "enhanced" && payloadHasEnhancedContext;
+    setContextPath(ctx, enhanced ? "增强记忆" : "Pi 原生");
     writeRecord("before_provider_request", {
       requestIndex: providerRequestIndex,
       provider: ctx.model?.provider,
       model: ctx.model?.id,
+      contextPath: enhanced ? "enhanced" : "pi-native",
+      contextDecision: providerContextDecision,
+      payloadHasEnhancedContext,
+      contextDecisionMismatch: payloadHasEnhancedContext !== (providerContextDecision === "enhanced"),
       ...payloadSummary(event.payload),
       ...branchSnapshot(ctx),
     });
@@ -679,6 +901,7 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
     });
     maybeFail("turn_end");
     scheduleArchive(ctx, "turn_end");
+    scheduleWorkingContext(ctx, sessionRouteSnapshot(ctx), "turn_end");
   });
 
   pi.on("agent_end", (event, ctx) => {
@@ -701,6 +924,7 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
     });
     maybeFail("session_tree");
     scheduleArchive(ctx, "session_tree");
+    scheduleWorkingContext(ctx, sessionRouteSnapshot(ctx), "session_tree");
   });
 
   pi.on("model_select", (event, ctx) => {
@@ -729,6 +953,8 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
     } finally {
       if (timeout) clearTimeout(timeout);
       sourceIndexes.shutdown();
+      memoryEnhancementAvailable = false;
+      await transitionWorkingContext();
     }
   });
 }

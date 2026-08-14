@@ -51,6 +51,10 @@ export interface CompiledOpenVikingConfig {
   settingsFingerprint: string;
   configFingerprint: string;
 }
+export interface ValidatedMemoryModelConfiguration {
+  setting: MemoryModelSetting;
+  compiled: CompiledOpenVikingConfig;
+}
 
 export interface OpenVikingLauncherInfo {
   schemaVersion: 1;
@@ -506,21 +510,27 @@ export async function readMemoryModelSetting(
   }
 }
 
-export async function validateMemoryModelSetting(
+export async function validateMemoryModelConfiguration(
   root: string,
   env: NodeJS.ProcessEnv = process.env,
-): Promise<MemoryModelSetting | undefined> {
+): Promise<ValidatedMemoryModelConfiguration | undefined> {
   const setting = await readMemoryModelSetting(root, env);
   if (!setting) return undefined;
   try {
-    await compileOpenVikingConfig(root, setting, env);
-    return setting;
+    return { setting, compiled: await compileOpenVikingConfig(root, setting, env) };
   } catch (error) {
     throw new MemoryModelConfigurationError(
       memoryModelConfigPath(root, env),
       `memoryModel: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
+}
+
+export async function validateMemoryModelSetting(
+  root: string,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<MemoryModelSetting | undefined> {
+  return (await validateMemoryModelConfiguration(root, env))?.setting;
 }
 
 export async function memoryModelConfigContentFingerprint(

@@ -8,7 +8,7 @@
 
 当前设计复用 OpenViking `0.4.13` 的本地 embedding、向量索引和相关性排序。Pi session、当前 branch 和原始 entry 决定召回生效范围并承担事实权威；OpenViking资源承担可重建索引责任。
 
-当前交付使用来源向量索引和显式召回。用户级派生 memory、VLM 语义摘要、Working Memory、服务端 context assembly、自动注入和 context 控制由代表性长任务证据决定。
+本流程只拥有来源向量索引和显式召回。Session Working Memory、context assembly 与自动采用已经进入 [`context-enhancement.md`](context-enhancement.md) 的独立流程；两者共享 Pi 路线权威，但不共享队列、排序或失败状态。
 
 ## 3. 写入流程
 
@@ -56,4 +56,4 @@ OpenViking只在当前 branch 的精确来源 URI 列表内排序，旧 branch �
 
 [`../validation/source-recall.md`](../validation/source-recall.md) 已在 runner 控制的 OpenViking 配置与进程中验证稳定 URI、`vectors_only` 资源、外部资源删除后的同实例重建、调用后完整重同步、session 隔离、branch 过滤、来源预览与 Pi 权威 entry 展开、结果边界、慢索引协调，以及索引和查询错误语义。
 
-代表性长任务、任务模型召回行为、Working Memory、自动召回和完整成本优势由当前开发入口中的纵向交付验证。
+Working Memory 与自动上下文采用的控制流证据由 [`../validation/context-enhancement-state.md`](../validation/context-enhancement-state.md) 承担；真实任务模型语义质量和完整成本仍由当前开发入口的纵向实验验证。

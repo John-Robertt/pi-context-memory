@@ -1,0 +1,115 @@
+{
+  "schemaVersion": 1,
+  "generatedBy": "scripts/validate-context-enhancement.mjs",
+  "scope": "local",
+  "runId": "context-enhancement-2026-08-14T10-35-07-340Z",
+  "startedAt": "2026-08-14T10:35:07.354Z",
+  "completedAt": "2026-08-14T10:35:27.373Z",
+  "piVersion": "0.84.1",
+  "openVikingVersion": "0.4.13-protocol",
+  "fixture": {
+    "path": "validation/fixtures/context-enhancement-long-task.json",
+    "name": "bounded-context-route-continuity"
+  },
+  "implementation": {
+    "sourceManifestSha256": "64b58cee48fc7fa0d0ada35f19f62e84fad90bd7a0c0e4c8a9955d2c248f35a8",
+    "files": [
+      {
+        "path": ".pi/extensions/pi-context-memory/index.ts",
+        "sha256": "f1fff20f3cccc7794d6fb1383e537bf037866c5cd383732f1968c3a133ae556e"
+      },
+      {
+        "path": ".pi/extensions/pi-context-memory/long-term-memory.ts",
+        "sha256": "2ccf1fa89d0eff97dc021a13d78ecf1cd22ce1257d6c45fcf96af99ba511dabe"
+      },
+      {
+        "path": ".pi/extensions/pi-context-memory/memory-model-configuration.ts",
+        "sha256": "c70a333a0a3d8426353612f63190b0b7fdc545bb248d3e2438fb1c622f380192"
+      },
+      {
+        "path": ".pi/extensions/pi-context-memory/session-memory-coordination.ts",
+        "sha256": "c464139d3d3fe7ce173f8d3469b7ff81523cfe200ca5e040e8f7abde877d708f"
+      },
+      {
+        "path": ".pi/extensions/pi-context-memory/session-working-memory.ts",
+        "sha256": "c6232229a14f0890c564c90053959b9cc6b43aea3f6390ee4468b2d7604157bc"
+      },
+      {
+        "path": ".pi/extensions/pi-context-memory/working-context-optimization.ts",
+        "sha256": "acdb4afeb3c28b662a0ea26b644d32cca89ee68e2135119175dc12aa84244588"
+      },
+      {
+        "path": "scripts/check-validation-evidence.mjs",
+        "sha256": "1b64785fecbf855d28a79e7d642c9c4339d610ef5761d53b073f68e7c06743c5"
+      },
+      {
+        "path": "scripts/validate-context-enhancement.mjs",
+        "sha256": "5ed18fd75121a687ac90c34b5f158dce74afb434e2b239f66e3d9aa42b9b9b5c"
+      },
+      {
+        "path": "scripts/validation-evidence.mjs",
+        "sha256": "7aa55ebeed261d375625af14954b27571419fdc7d61e11b1f4b05ab547ec75ca"
+      },
+      {
+        "path": "validation/fixtures/context-enhancement-long-task.json",
+        "sha256": "0a56da6005f392df818fcfce3de227bdbef4b86ab6d7bde48c6b0da33b45a22f"
+      }
+    ],
+    "gitCommit": "a277a729cee986cc9035eaee8b5b3b1968d2b6fe",
+    "workingTreeDirty": true
+  },
+  "passed": true,
+  "checks": {
+    "sharedFixtureLoaded": true,
+    "currentRouteIdentity": true,
+    "invalidRouteRejected": true,
+    "sessionIsolation": true,
+    "lateRouteResultRejected": true,
+    "linearRouteReused": true,
+    "branchIsolation": true,
+    "workingMemoryAssembled": true,
+    "contextBounded": true,
+    "sourceIdsPreserved": true,
+    "compactionBoundary": true,
+    "currentTurnPreserved": true,
+    "backendFailureFallsBack": true,
+    "pendingRoutesCollapsed": true,
+    "inFlightShutdownCleaned": true,
+    "openVikingProtocolCovered": true,
+    "piContextHookAdopted": true,
+    "providerStateUnspoofable": true,
+    "mismatchedRuntimeRejected": true,
+    "providerPayloadCurrentTurn": true,
+    "localProviderOnly": true,
+    "ownedSessionsCleaned": true
+  },
+  "details": {
+    "routes": {
+      "common": "5d9d03dd560b4a8a8dd5d7e3f30e6a127397d5d290660244ea50311febeb923e",
+      "branchA": "3a2bdfd31422ff3499e97f4a78794aab858027b01a7c4c702e492d94a2cebd87",
+      "branchB": "5bcfdd73916251fcc153340591e0a4df397480d48706ff6cf1c0331a929905a9",
+      "afterCompaction": "275df609e9a6937092fa305bfe5a1d211fa7cfe4b6e2f2e10c8f40024c43b7e3"
+    },
+    "openViking": {
+      "sessionsCreated": 7,
+      "sessionsDeleted": 7,
+      "tasks": 7,
+      "requests": 100
+    },
+    "context": {
+      "branchAChars": 773,
+      "branchBChars": 1246,
+      "compactedChars": 909,
+      "branchBEstimatedTokens": 420
+    },
+    "pi": {
+      "providerRequests": 5,
+      "enhancedContextEvents": 1
+    }
+  },
+  "limitations": [
+    "The local runner uses protocol-compatible OpenViking and task-Provider doubles and makes no external Provider requests.",
+    "It proves route identity, runtime-generation gating, Working Memory/context assembly control flow, bounded adoption, compaction projection, failure fallback, and derived-Session cleanup.",
+    "Real memory-model semantic quality, complete Pi tree/compaction lifecycle, UI persistence, and paired API cost remain in the next longitudinal delivery."
+  ]
+}

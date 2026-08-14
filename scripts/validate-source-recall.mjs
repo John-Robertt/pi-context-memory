@@ -793,7 +793,7 @@ const summary = {
   core,
   limitations: [
     "The local scope covers source coordination and OpenViking retrieval with local dense embeddings.",
-    "Provider task quality, automatic memory, Working Memory, context construction, and complete API cost require a future paired task experiment after the product implements automatic context optimization.",
+    "Automatic Working Memory and context adoption have separate local evidence; real Provider task quality and complete API cost remain in the paired experiment.",
     "OpenViking LLM, VLM, memory extraction, and Working Memory remain disabled in this runner.",
   ],
 };

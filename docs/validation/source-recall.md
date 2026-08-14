@@ -44,4 +44,4 @@ runner 使用本地资源，并在输入哈希保持一致且全部 checks 通�
 
 ## 6. 结果边界
 
-本验证证明来源协调、派生索引和显式召回的本地正确性。任务模型主动召回、自动上下文优化、Working Memory 和完整 API 成本由代表性长任务纵向交付验证。完整成本实验遵循 [`README.md`](README.md) 的同任务成对设计。
+本验证证明来源协调、派生索引和显式召回的本地正确性。Working Memory 与自动上下文采用由 [`context-enhancement-state.md`](context-enhancement-state.md) 的本地 evidence 证明；真实任务质量和完整 API 成本继续遵循 [`README.md`](README.md) 的同任务成对设计。

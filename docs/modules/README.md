@@ -10,8 +10,8 @@
 | --- | --- | --- | --- |
 | Pi 集成 | [`ARCHITECTURE.md` §6.1](../../ARCHITECTURE.md#61-pi-集成模块) | [`pi-integration.md`](pi-integration.md) | 归档、显式召回、记忆模型命令与 Pi 原生状态已验证 |
 | Session 记忆协调 | [`ARCHITECTURE.md` §6.2](../../ARCHITECTURE.md#62-session-记忆协调模块) | [`session-memory-coordination.md`](session-memory-coordination.md) | 当前 session/branch 与来源确认已验证 |
-| 长时记忆 | [`ARCHITECTURE.md` §6.3](../../ARCHITECTURE.md#63-长时记忆模块) | [`long-term-memory.md`](long-term-memory.md) | 本地来源、完整结果、用户 JSONC 与 VLM 配置编译已验证 |
-| 工作上下文优化 | [`ARCHITECTURE.md` §6.4](../../ARCHITECTURE.md#64-工作上下文优化模块) | `working-context-optimization.md` | 未进入当前实现 |
+| 长时记忆 | [`ARCHITECTURE.md` §6.3](../../ARCHITECTURE.md#63-长时记忆模块) | [`long-term-memory.md`](long-term-memory.md) | 本地来源、完整结果、用户配置与 Session Working Memory 已验证 |
+| 工作上下文优化 | [`ARCHITECTURE.md` §6.4](../../ARCHITECTURE.md#64-工作上下文优化模块) | [`working-context-optimization.md`](working-context-optimization.md) | 有界历史构造与当前 turn 保留已验证 |
 | 召回与来源追溯 | [`ARCHITECTURE.md` §6.5](../../ARCHITECTURE.md#65-召回与来源追溯模块) | [`recall-and-provenance.md`](recall-and-provenance.md) | OpenViking候选排序与权威展开已验证 |
 | 质量与成本观测 | [`ARCHITECTURE.md` §6.6](../../ARCHITECTURE.md#66-质量与成本观测模块) | [`quality-and-cost-observation.md`](quality-and-cost-observation.md) | 开发验证边界已建立，不进入扩展运行 |
 

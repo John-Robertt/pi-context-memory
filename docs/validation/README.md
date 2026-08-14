@@ -10,14 +10,15 @@
 | --- | --- | --- |
 | [`source-archive.md`](source-archive.md) | 日常验证来源归档的 session 隔离、branch 约束、来源恢复和完整结果 | [`../../validation/evidence/source-archive.json`](../../validation/evidence/source-archive.json) |
 | [`source-recall.md`](source-recall.md) | 日常验证 OpenViking 来源索引、显式召回边界和权威展开 | [`../../validation/evidence/source-recall.json`](../../validation/evidence/source-recall.json) |
-| [`context-enhancement-state.md`](context-enhancement-state.md) | 验证自动上下文增强与 Pi 回退、原生压缩和状态标识的一致性 | 自动上下文纵向 runner 与稳定 evidence |
+| [`context-enhancement-state.md`](context-enhancement-state.md) | 验证有界上下文采用、路线隔离、当前 turn 保留和 Pi 原生降级 | [`../../validation/evidence/context-enhancement.json`](../../validation/evidence/context-enhancement.json) |
 | [`memory-model-runtime.md`](memory-model-runtime.md) | 验证用户 JSONC、配置编译、命令语义、OpenViking 所有权与重启降级 | [`../../validation/evidence/memory-model-runtime.json`](../../validation/evidence/memory-model-runtime.json) |
 
-来源归档、来源召回和记忆模型运行时 runner 均使用本地资源。`scripts/validation-evidence.mjs` 集中维护实现输入与必需 check 集；runner 在执行前后核对输入哈希，并在完整通过后更新稳定 evidence。自动上下文的证据责任见对应验证规格。
+四个日常 runner 均使用本地资源；上下文增强 runner 使用本地协议替身并实际观察 Pi Provider payload。`scripts/validation-evidence.mjs` 集中维护实现输入与必需 check 集；runner 在执行前后核对输入哈希，并在完整通过后更新稳定 evidence。
 
 ```bash
 node scripts/validate-source-archive.mjs
 node scripts/validate-source-recall.mjs
+node scripts/validate-context-enhancement.mjs
 node scripts/validate-memory-model-runtime.mjs
 node scripts/check-validation-evidence.mjs
 ```

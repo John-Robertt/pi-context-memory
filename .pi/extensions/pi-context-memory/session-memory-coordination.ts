@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import {
   FileLongTermMemory,
   type SessionIdentity,
@@ -10,6 +12,11 @@ export interface SessionRouteSnapshot extends SessionIdentity {
   entries: readonly SourceEntry[];
 }
 
+export interface SessionRouteIdentity extends SessionIdentity {
+  leafId: string | null;
+  entryIds: readonly string[];
+  fingerprint: string;
+}
 
 type SourceIndexRunner = (
   coordinator: SessionMemoryCoordinator,
@@ -306,6 +313,18 @@ export class SessionMemoryCoordinator {
     if (snapshot.entries.at(-1)?.id !== snapshot.leafId) {
       throw new Error(`Current route does not end at leaf ${snapshot.leafId ?? "null"}`);
     }
+  }
+  identifyCurrentRoute(snapshot: SessionRouteSnapshot): SessionRouteIdentity {
+    this.assertCurrentRoute(snapshot);
+    return {
+      sessionId: snapshot.sessionId,
+      sessionFile: snapshot.sessionFile,
+      leafId: snapshot.leafId,
+      entryIds: snapshot.entries.map((entry) => entry.id),
+      fingerprint: createHash("sha256")
+        .update(JSON.stringify({ sessionId: snapshot.sessionId, sessionFile: snapshot.sessionFile, entries: snapshot.entries }))
+        .digest("hex"),
+    };
   }
 
   private knownSourceIds(): Promise<Set<string>> {

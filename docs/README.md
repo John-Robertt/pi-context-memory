@@ -40,20 +40,22 @@ docs/
 | [`system/source-archiving.md`](system/source-archiving.md)                           | Pi 权威路线进入本地来源归档的流程                |
 | [`system/source-recall.md`](system/source-recall.md)                                 | 本地来源进入 OpenViking派生索引并受控召回的流程  |
 | [`system/memory-model-runtime.md`](system/memory-model-runtime.md)                   | 用户 JSONC、配置编译与托管 OpenViking 重启流程   |
+| [`system/context-enhancement.md`](system/context-enhancement.md)                    | 当前路线进入 Working Memory 与有界模型上下文的流程 |
 | [`modules/README.md`](modules/README.md)                                             | 架构模块与内部设计映射                           |
 | [`modules/pi-integration.md`](modules/pi-integration.md)                             | Pi 生命周期、归档、索引与工具集成边界            |
 | [`modules/session-memory-coordination.md`](modules/session-memory-coordination.md)   | session、当前 branch 与来源有效性协调            |
-| [`modules/long-term-memory.md`](modules/long-term-memory.md)                         | session 来源副本、完整结果与用户记忆模型配置      |
+| [`modules/long-term-memory.md`](modules/long-term-memory.md)                         | 来源副本、完整结果、记忆模型配置与 Session Working Memory |
+| [`modules/working-context-optimization.md`](modules/working-context-optimization.md) | 有界增强历史构造与当前 Pi turn 保留              |
 | [`modules/recall-and-provenance.md`](modules/recall-and-provenance.md)               | OpenViking候选排序、当前路线过滤与来源展开       |
 | [`modules/quality-and-cost-observation.md`](modules/quality-and-cost-observation.md) | 独立于扩展运行的开发期任务质量与 API 成本验证    |
 | [`validation/README.md`](validation/README.md)                                       | 验证规格与证据入口索引                           |
 | [`validation/source-archive.md`](validation/source-archive.md)                       | 来源归档隔离、恢复、完整结果与存储边界验证       |
 | [`validation/source-recall.md`](validation/source-recall.md)                         | OpenViking索引、显式召回、权威展开与错误语义验证 |
-| [`validation/context-enhancement-state.md`](validation/context-enhancement-state.md) | 上下文增强回退、原生压缩与状态一致性验证         |
+| [`validation/context-enhancement-state.md`](validation/context-enhancement-state.md) | 有界采用、路线隔离、当前 turn 与 Pi 降级验证     |
 | [`validation/memory-model-runtime.md`](validation/memory-model-runtime.md)           | 记忆模型配置、OpenViking重启与降级验证           |
 | [`operations/README.md`](operations/README.md)                                       | 当前可用行为的运行与维护索引                     |
 | [`operations/source-archive.md`](operations/source-archive.md)                       | 本地来源归档配置、诊断与清理                     |
-| [`operations/session-recall.md`](operations/session-recall.md)                       | OpenViking 托管启停、记忆模型配置、召回运行、恢复与降级             |
+| [`operations/session-recall.md`](operations/session-recall.md)                       | OpenViking、记忆模型、来源召回与自动有界上下文运行 |
 
 当前没有需要独立演进的共享契约文档。
 
