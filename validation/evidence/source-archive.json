@@ -1,15 +1,15 @@
 {
   "schemaVersion": 1,
   "generatedBy": "scripts/validate-source-archive.mjs",
-  "runId": "source-archive-2026-08-14T10-36-26-148Z",
-  "recordedAt": "2026-08-14T10:36:27.993Z",
+  "runId": "source-archive-2026-08-14T14-39-53-208Z",
+  "recordedAt": "2026-08-14T14:39:53.938Z",
   "piVersion": "0.84.1",
   "implementation": {
-    "sourceManifestSha256": "d51976d01d31446aa6bad5a8df2253c7c57e340f327829849398a9e81ed00109",
+    "sourceManifestSha256": "8b6a7e8cc1c2a0b76eed48c25b37c00e8410de3b6834ae14fc1a482091b02c31",
     "files": [
       {
         "path": ".pi/extensions/pi-context-memory/index.ts",
-        "sha256": "f1fff20f3cccc7794d6fb1383e537bf037866c5cd383732f1968c3a133ae556e"
+        "sha256": "c9f3146005c207cbe5a3e9ff3c7266bac94c56189395c7297a3ad55ac9c3ed0c"
       },
       {
         "path": ".pi/extensions/pi-context-memory/long-term-memory.ts",
@@ -29,7 +29,7 @@
       },
       {
         "path": ".pi/extensions/pi-context-memory/session-working-memory.ts",
-        "sha256": "c6232229a14f0890c564c90053959b9cc6b43aea3f6390ee4468b2d7604157bc"
+        "sha256": "ae6eb91e9021aab383ac6cd745edc69e57c860715daf928893b287bfe10e9640"
       },
       {
         "path": ".pi/extensions/pi-context-memory/working-context-optimization.ts",
@@ -45,10 +45,10 @@
       },
       {
         "path": "scripts/validation-evidence.mjs",
-        "sha256": "7aa55ebeed261d375625af14954b27571419fdc7d61e11b1f4b05ab547ec75ca"
+        "sha256": "625a344f1e6f41b94d1451b4a69f54ea1d35015dd4ab73b81fc7f69959cd4e22"
       }
     ],
-    "gitCommit": "a277a729cee986cc9035eaee8b5b3b1968d2b6fe",
+    "gitCommit": "34fadc2e2870773f472f7e1abc6ac7e37460b415",
     "workingTreeDirty": true
   },
   "passed": true,

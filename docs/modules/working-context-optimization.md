@@ -16,7 +16,8 @@
 2. overview 与活跃消息合并为一个固定字符上限的隐藏 Pi custom message；
 3. 当前 prompt 及其后的 assistant tool call、tool result 保持 Pi 原生对象和顺序；
 4. 没有当前 prompt、assembled context 为空或路线结果未就绪时不替换消息；
-5. 输出只提供派生上下文和来源 entry ID 线索，关键事实仍通过 `recall_session` 回到 Pi 权威 entry。
+5. 输出只提供派生上下文和来源 entry ID 线索，关键事实仍通过 `recall_session` 回到 Pi 权威 entry；
+6. 非空 Working Memory overview 必须具备 OpenViking `0.4.13` 的完整七段结构，通用回退摘要不能进入增强上下文。
 
 ## 3. 构造与采用边界
 
@@ -32,4 +33,4 @@ Pi 集成在 `context` hook 中重新取得当前 prompt 之前的路线身份�
 
 ## 4. 失败与限制
 
-格式化或输入校验失败时不返回增强消息，Pi 集成保持原始消息。当前实现已验证固定预算、当前 turn 保留和 Provider payload 实际采用；真实记忆模型生成内容的任务质量、完整 Pi tree/compaction 生命周期、持久采用状态和成对 API 成本由下一纵向交付验证。
+格式化或输入校验失败时不返回增强消息，Pi 集成保持原始消息。当前实现已验证固定预算、当前 turn 保留、完整 Pi tree/session/compaction 生命周期和 Provider payload 实际采用；真实记忆模型成对质量实验已证明当前决定与证据入口保持一致。完整 API 成本归集属于质量与成本观测的下一交付。

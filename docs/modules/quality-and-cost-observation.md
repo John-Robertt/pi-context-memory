@@ -25,9 +25,9 @@
 
 ## 3. 当前交付状态
 
-当前扩展提供来源归档、派生索引和显式召回，任务模型上下文仍由 Pi 管理。自动上下文优化是建立成对成本实验的前置产品能力。相关纵向交付需要同时完成工作上下文策略、代表性任务、两个 arm 的运行器、完整账单核对和稳定 evidence。
+当前已有两个验证层次：日常本地 runner 证明完整 Pi 生命周期与采用控制流；`validate-context-quality.mjs` 使用同一长任务 fixture、真实 OpenViking Working Memory 和同一任务模型运行原生/增强 arm，确定性 checker 要求从当前路线事实判定方案、返回来源 entry 且排除废弃路线。最新稳定 evidence 中两个 arm 均通过，增强 arm 确认实际采用增强 Provider 请求；该结果只是一项固定顺序、单次运行的路线连续性样本，不代表一般质量等价。
 
-日常入口见 [`../validation/README.md`](../validation/README.md)。当前开发方向见 [`../DEVELOPMENT.md`](../DEVELOPMENT.md)。
+当前未闭合的是完整成本归属：Pi session 统计只覆盖任务侧账单，OpenViking 记忆生成、重试和降级请求还没有与 Provider 最终账单建立逐 generation 对应。完成该归集前，现有 token 与任务侧 cost 只能解释机制，不能证明产品成本优势。日常入口见 [`../validation/README.md`](../validation/README.md)，当前开发方向见 [`../DEVELOPMENT.md`](../DEVELOPMENT.md)。
 
 ## 4. 证伪条件
 

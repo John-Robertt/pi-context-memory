@@ -97,12 +97,15 @@ const DEFINITIONS = {
     generatedBy: "scripts/validate-context-enhancement.mjs",
     requiredChecks: [
       "backendFailureFallsBack",
+      "backendFailureRecovery",
       "branchIsolation",
       "compactionBoundary",
+      "compactionLifecycle",
       "contextBounded",
       "currentRouteIdentity",
       "currentTurnPreserved",
       "inFlightShutdownCleaned",
+      "lifecycleProviderStateConsistent",
       "invalidRouteRejected",
       "lateRouteResultRejected",
       "linearRouteReused",
@@ -114,10 +117,13 @@ const DEFINITIONS = {
       "piContextHookAdopted",
       "providerPayloadCurrentTurn",
       "providerStateUnspoofable",
+      "sessionReplacementLifecycle",
       "sessionIsolation",
       "sharedFixtureLoaded",
       "sourceIdsPreserved",
+      "treeLifecycle",
       "workingMemoryAssembled",
+      "workingMemoryStructureValidated",
     ],
     files: [
       ".pi/extensions/pi-context-memory/index.ts",
@@ -129,6 +135,36 @@ const DEFINITIONS = {
       "scripts/check-validation-evidence.mjs",
       "scripts/validate-context-enhancement.mjs",
       "scripts/validation-evidence.mjs",
+      "validation/fixtures/context-enhancement-long-task.json",
+    ],
+  },
+  "context-quality": {
+    current: true,
+    evidencePath: "validation/evidence/context-quality.json",
+    generatedBy: "scripts/validate-context-quality.mjs",
+    requiredChecks: [
+      "enhancedContextAdopted",
+      "enhancedQuality",
+      "nativeQuality",
+      "pairedConditions",
+      "realWorkingMemoryReady",
+      "sameTaskModel",
+    ],
+    files: [
+      ".pi/extensions/pi-context-memory/index.ts",
+      ".pi/extensions/pi-context-memory/long-term-memory.ts",
+      ".pi/extensions/pi-context-memory/memory-model-configuration.ts",
+      ".pi/extensions/pi-context-memory/session-memory-coordination.ts",
+      ".pi/extensions/pi-context-memory/session-working-memory.ts",
+      ".pi/extensions/pi-context-memory/working-context-optimization.ts",
+      "config/openviking.json",
+      "pyproject.toml",
+      "scripts/openviking-config.py",
+      "scripts/start-openviking.mjs",
+      "scripts/check-validation-evidence.mjs",
+      "scripts/validate-context-quality.mjs",
+      "scripts/validation-evidence.mjs",
+      "uv.lock",
       "validation/fixtures/context-enhancement-long-task.json",
     ],
   },
@@ -306,6 +342,75 @@ export function stableEvidenceMismatches(root, key, evidence) {
   }
   for (const check of definition.requiredChecks) {
     if (checks?.[check] !== true) mismatches.push(`stable evidence check ${check} is not passing`);
+  }
+  if (key === "context-enhancement") {
+    const lifecycle = evidence?.details?.pi?.lifecycle;
+    const requiredLifecycle = [
+      "treeRoundTrip",
+      "treeSummaryChoices",
+      "treeCancellationState",
+      "rootNavigation",
+      "treeProviderAdoption",
+      "replacements",
+      "replacementProviderAdoption",
+      "reload",
+      "compactionReasons",
+      "overflowRetryFallsBack",
+      "compactionCancellationState",
+      "compactionProviderAdoption",
+      "backendRecovery",
+      "providerStateConsistent",
+    ];
+    if (!lifecycle || requiredLifecycle.some((name) => lifecycle[name] !== true)) {
+      mismatches.push("context lifecycle evidence is incomplete");
+    }
+    if (!(lifecycle?.eventCounts?.tree >= 6)
+      || !(lifecycle?.eventCounts?.compaction >= 3)
+      || !(lifecycle?.eventCounts?.starts >= 5)
+      || !(lifecycle?.eventCounts?.providerRequests >= 1)) {
+      mismatches.push("context lifecycle event counts are incomplete");
+    }
+  }
+  if (key === "context-quality") {
+    const native = evidence?.arms?.native;
+    const enhanced = evidence?.arms?.enhanced;
+    const fixture = JSON.parse(readFileSync(resolve(root, "validation/fixtures/context-enhancement-long-task.json"), "utf8"));
+    const qualityOutputValid = (arm) => {
+      if (!arm || typeof arm.text !== "string" || sha256(arm.text) !== arm.textSha256) return false;
+      try {
+        const parsed = JSON.parse(arm.text);
+        return parsed?.decision === fixture.task.checker.requiredDecision
+          && parsed?.evidence_entry_id === fixture.task.checker.requiredEvidenceEntryId
+          && parsed?.decision !== fixture.task.checker.forbiddenDecision;
+      } catch {
+        return false;
+      }
+    };
+    if (evidence?.execution?.repetitions !== 1
+      || JSON.stringify(evidence?.execution?.order) !== JSON.stringify(["native", "enhanced"])) {
+      mismatches.push("quality execution conditions are missing");
+    }
+    if (typeof evidence?.models?.task !== "string" || typeof evidence?.models?.memory !== "string") {
+      mismatches.push("quality model evidence is missing");
+    }
+    if (!qualityOutputValid(native) || !qualityOutputValid(enhanced)) {
+      mismatches.push("quality arm output is invalid");
+    }
+    if (native?.model !== evidence?.models?.task
+      || enhanced?.model !== evidence?.models?.task
+      || !native?.condition
+      || native.condition.model !== evidence?.models?.task
+      || native.condition.thinking !== "off"
+      || JSON.stringify(native.condition.activeTools) !== "[]"
+      || typeof native.condition.modelHash !== "string"
+      || typeof native.condition.systemPromptHash !== "string"
+      || JSON.stringify(native.condition) !== JSON.stringify(enhanced?.condition)) {
+      mismatches.push("quality arm conditions differ");
+    }
+    if (!(enhanced?.observations?.workingContextReady > 0)
+      || !(enhanced?.observations?.enhancedProviderRequests > 0)) {
+      mismatches.push("enhanced quality adoption evidence is missing");
+    }
   }
   if (key === "source-recall") {
     const config = evidence?.openVikingConfig;

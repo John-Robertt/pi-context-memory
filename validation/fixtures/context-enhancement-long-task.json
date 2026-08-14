@@ -125,7 +125,7 @@
         "role": "toolResult",
         "toolCallId": "tool-current",
         "toolName": "bash",
-        "content": [{ "type": "text", "text": "当前路线 evidence 检查通过。" }],
+        "content": [{ "type": "text", "text": "证据入口 b000000c：当前路线 evidence 检查通过。" }],
         "isError": false,
         "timestamp": 1776157263000
       }
@@ -135,14 +135,14 @@
       "id": "b000000d",
       "parentId": "b000000c",
       "timestamp": "2026-08-14T09:01:04.000Z",
-      "message": { "role": "assistant", "content": [{ "type": "text", "text": "当前决定 bounded-current-route，证据入口 b000000c。" }], "timestamp": 1776157264000 }
+      "message": { "role": "assistant", "content": [{ "type": "text", "text": "路线 B 的有界方案已确认，关键依据是上一条工具结果。" }], "timestamp": 1776157264000 }
     },
     "c0000001": {
       "type": "compaction",
       "id": "c0000001",
       "parentId": "b000000d",
       "timestamp": "2026-08-14T09:02:00.000Z",
-      "summary": "当前目标是 bounded-current-route；必须保留 Pi 原生降级；关键证据入口 b000000c。",
+      "summary": "当前有效路线 B 要求只采用当前路线的有界上下文；路线 A 的完整历史方案已放弃；必须保留 Pi 原生降级；证据入口 b000000c 的检查通过。",
       "firstKeptEntryId": "b0000009",
       "tokensBefore": 50000
     },

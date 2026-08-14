@@ -14,6 +14,23 @@ const DEFAULT_KEEP_RECENT_MESSAGES = 8;
 const DEFAULT_MAX_MIRRORS = 8;
 const DEFAULT_TASK_TIMEOUT_MS = 60_000;
 const DEFAULT_TASK_POLL_MS = 100;
+const WORKING_MEMORY_SECTIONS = [
+  "Session Title",
+  "Current State",
+  "Task & Goals",
+  "Key Facts & Decisions",
+  "Files & Context",
+  "Errors & Corrections",
+  "Open Issues",
+] as const;
+
+export function isStructuredWorkingMemoryOverview(value: string): boolean {
+  const headings = value.split(/\r?\n/)
+    .map((line) => /^## ([^#].*)$/.exec(line)?.[1]?.trim())
+    .filter((heading): heading is string => heading !== undefined);
+  return headings.length === WORKING_MEMORY_SECTIONS.length
+    && headings.every((heading, index) => heading === WORKING_MEMORY_SECTIONS[index]);
+}
 
 export interface SessionWorkingMemoryOptions {
   contextTokenBudget?: number;
@@ -47,7 +64,7 @@ export interface PreparedSessionMemory {
 
 interface RouteMirror {
   openVikingSessionId: string;
-  entries: readonly SourceEntry[];
+  projections: readonly OpenVikingProjection[];
   touched: number;
 }
 interface PrepareJob {
@@ -199,12 +216,12 @@ export function projectRouteEntries(entries: readonly SourceEntry[]): OpenViking
   return projections;
 }
 
-function sameEntry(left: SourceEntry, right: SourceEntry): boolean {
+function sameProjection(left: OpenVikingProjection, right: OpenVikingProjection): boolean {
   return JSON.stringify(left) === JSON.stringify(right);
 }
 
-function isRoutePrefix(prefix: readonly SourceEntry[], route: readonly SourceEntry[]): boolean {
-  return prefix.length <= route.length && prefix.every((entry, index) => sameEntry(entry, route[index]));
+function isProjectionPrefix(prefix: readonly OpenVikingProjection[], route: readonly OpenVikingProjection[]): boolean {
+  return prefix.length <= route.length && prefix.every((projection, index) => sameProjection(projection, route[index]));
 }
 
 function assertRouteInput(route: SessionRouteIdentity, entries: readonly SourceEntry[]): void {
@@ -346,13 +363,14 @@ export class OpenVikingSessionMemory {
       : this.shutdownController.signal;
     operationSignal.throwIfAborted();
 
+    const routeProjections = projectRouteEntries(entries);
     let mirror = this.mirrors
-      .filter((candidate) => isRoutePrefix(candidate.entries, entries))
-      .sort((left, right) => right.entries.length - left.entries.length)[0];
+      .filter((candidate) => isProjectionPrefix(candidate.projections, routeProjections))
+      .sort((left, right) => right.projections.length - left.projections.length)[0];
     if (!mirror) {
       mirror = {
         openVikingSessionId: `pcm-${sha256(`${route.sessionId}\0${route.fingerprint}`).slice(0, 16)}-${randomUUID()}`,
-        entries: [],
+        projections: [],
         touched: ++this.touchSequence,
       };
       this.mirrors.push(mirror);
@@ -366,16 +384,13 @@ export class OpenVikingSessionMemory {
       }, operationSignal);
     }
 
-    const appendedIds = new Set(entries.slice(mirror.entries.length).map((entry) => entry.id));
-    const projections = projectRouteEntries(entries).filter((projection) =>
-      projection.source_message_ids.some((entryId) => appendedIds.has(entryId))
-    );
+    const appendedProjections = routeProjections.slice(mirror.projections.length);
     let pendingTokens = 0;
-    for (let index = 0; index < projections.length; index += 100) {
+    for (let index = 0; index < appendedProjections.length; index += 100) {
       const result = await this.request(
         "POST",
         `/api/v1/sessions/${encodeURIComponent(mirror.openVikingSessionId)}/messages/batch`,
-        { messages: projections.slice(index, index + 100) },
+        { messages: appendedProjections.slice(index, index + 100) },
         operationSignal,
       );
       if (!result || typeof result !== "object") throw new Error("OpenViking batch response is invalid");
@@ -385,7 +400,7 @@ export class OpenVikingSessionMemory {
       }
       pendingTokens = value.pending_tokens;
     }
-    mirror.entries = entries.map((entry) => structuredClone(entry));
+    mirror.projections = routeProjections.map((projection) => structuredClone(projection));
     mirror.touched = ++this.touchSequence;
 
     if (pendingTokens >= this.commitPendingTokens) {
@@ -417,6 +432,10 @@ export class OpenVikingSessionMemory {
     const context = value as Record<string, unknown>;
     if (typeof context.latest_archive_overview !== "string" || !Array.isArray(context.messages)) {
       throw new Error("OpenViking context response has invalid fields");
+    }
+    const overview = context.latest_archive_overview.trim();
+    if (overview && !isStructuredWorkingMemoryOverview(overview)) {
+      throw new Error("OpenViking returned an incomplete Working Memory overview");
     }
     if (typeof context.estimatedTokens !== "number" || !Number.isFinite(context.estimatedTokens)) {
       throw new Error("OpenViking context response has no token estimate");
@@ -460,8 +479,9 @@ export class OpenVikingSessionMemory {
   }
 
   private discardMirrorsForRoute(entries: readonly SourceEntry[]): void {
+    const routeProjections = projectRouteEntries(entries);
     for (let index = this.mirrors.length - 1; index >= 0; index -= 1) {
-      if (!isRoutePrefix(this.mirrors[index].entries, entries)) continue;
+      if (!isProjectionPrefix(this.mirrors[index].projections, routeProjections)) continue;
       const [removed] = this.mirrors.splice(index, 1);
       this.scheduleSessionDeletion(removed.openVikingSessionId);
     }

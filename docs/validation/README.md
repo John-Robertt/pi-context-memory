@@ -10,10 +10,10 @@
 | --- | --- | --- |
 | [`source-archive.md`](source-archive.md) | 日常验证来源归档的 session 隔离、branch 约束、来源恢复和完整结果 | [`../../validation/evidence/source-archive.json`](../../validation/evidence/source-archive.json) |
 | [`source-recall.md`](source-recall.md) | 日常验证 OpenViking 来源索引、显式召回边界和权威展开 | [`../../validation/evidence/source-recall.json`](../../validation/evidence/source-recall.json) |
-| [`context-enhancement-state.md`](context-enhancement-state.md) | 验证有界上下文采用、路线隔离、当前 turn 保留和 Pi 原生降级 | [`../../validation/evidence/context-enhancement.json`](../../validation/evidence/context-enhancement.json) |
+| [`context-enhancement-state.md`](context-enhancement-state.md) | 验证有界采用、完整 Pi 生命周期、降级和真实记忆模型成对质量 | [`../../validation/evidence/context-enhancement.json`](../../validation/evidence/context-enhancement.json)、[`../../validation/evidence/context-quality.json`](../../validation/evidence/context-quality.json) |
 | [`memory-model-runtime.md`](memory-model-runtime.md) | 验证用户 JSONC、配置编译、命令语义、OpenViking 所有权与重启降级 | [`../../validation/evidence/memory-model-runtime.json`](../../validation/evidence/memory-model-runtime.json) |
 
-四个日常 runner 均使用本地资源；上下文增强 runner 使用本地协议替身并实际观察 Pi Provider payload。`scripts/validation-evidence.mjs` 集中维护实现输入与必需 check 集；runner 在执行前后核对输入哈希，并在完整通过后更新稳定 evidence。
+四个日常 runner 均使用本地资源；上下文增强 runner 使用本地协议替身并实际观察 Pi Provider payload。`scripts/validation-evidence.mjs` 集中维护五份当前 evidence 的实现输入与必需 check 集；免费 checker 只读核对全部 evidence，新鲜度检查不会发起 Provider 请求。
 
 ```bash
 node scripts/validate-source-archive.mjs
@@ -21,6 +21,12 @@ node scripts/validate-source-recall.mjs
 node scripts/validate-context-enhancement.mjs
 node scripts/validate-memory-model-runtime.mjs
 node scripts/check-validation-evidence.mjs
+```
+
+真实 Provider 质量实验不属于日常免费检查；在 OpenViking 记忆模型认证可用时执行：
+
+```bash
+node scripts/validate-context-quality.mjs
 ```
 
 checker 核对 evidence schema、精确 check 集、通过状态、文件集合和当前实现哈希。

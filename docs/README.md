@@ -34,7 +34,7 @@ docs/
 | [`DEVELOPMENT.md`](DEVELOPMENT.md)                                                   | 当前可运行状态、证据、主导约束和唯一下一入口     |
 | [`features/README.md`](features/README.md)                                           | 功能规格索引                                     |
 | [`features/session-recall.md`](features/session-recall.md)                           | 当前 session/branch 内的显式来源召回行为         |
-| [`features/context-enhancement-state.md`](features/context-enhancement-state.md)     | 自动上下文增强与 Pi 回退、原生压缩和状态标识     |
+| [`features/context-enhancement-state.md`](features/context-enhancement-state.md)     | 自动上下文增强、完整 Pi 生命周期、原生回退与状态标识 |
 | [`features/memory-model-configuration.md`](features/memory-model-configuration.md)   | 用户级记忆模型 JSONC 与 OpenViking 快速重启       |
 | [`system/README.md`](system/README.md)                                               | 跨模块系统设计索引                               |
 | [`system/source-archiving.md`](system/source-archiving.md)                           | Pi 权威路线进入本地来源归档的流程                |
@@ -51,7 +51,7 @@ docs/
 | [`validation/README.md`](validation/README.md)                                       | 验证规格与证据入口索引                           |
 | [`validation/source-archive.md`](validation/source-archive.md)                       | 来源归档隔离、恢复、完整结果与存储边界验证       |
 | [`validation/source-recall.md`](validation/source-recall.md)                         | OpenViking索引、显式召回、权威展开与错误语义验证 |
-| [`validation/context-enhancement-state.md`](validation/context-enhancement-state.md) | 有界采用、路线隔离、当前 turn 与 Pi 降级验证     |
+| [`validation/context-enhancement-state.md`](validation/context-enhancement-state.md) | 完整生命周期、有界采用、真实质量与 Pi 降级验证 |
 | [`validation/memory-model-runtime.md`](validation/memory-model-runtime.md)           | 记忆模型配置、OpenViking重启与降级验证           |
 | [`operations/README.md`](operations/README.md)                                       | 当前可用行为的运行与维护索引                     |
 | [`operations/source-archive.md`](operations/source-archive.md)                       | 本地来源归档配置、诊断与清理                     |

@@ -305,14 +305,17 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
   let memoryEnhancementAvailable = false;
   let lastContextPath: "Pi 原生" | "增强记忆" = "Pi 原生";
   let providerContextDecision: "pi-native" | "enhanced" = "pi-native";
+  let forceNativeUntilAgentSettled = false;
+  let shuttingDown = false;
+  let archiveStopped = false;
   function transitionWorkingContext(nextGeneration?: string): Promise<boolean> {
     const transition = async (): Promise<boolean> => {
-      if (nextGeneration && workingContextOptimizer && workingContextGeneration === nextGeneration) return true;
+      if (nextGeneration && !shuttingDown && workingContextOptimizer && workingContextGeneration === nextGeneration) return true;
       const previous = workingContextOptimizer;
       workingContextOptimizer = undefined;
       workingContextGeneration = undefined;
       if (previous) await previous.shutdown(new Error("Working context runtime generation changed"));
-      if (!nextGeneration) return false;
+      if (!nextGeneration || shuttingDown) return false;
       try {
         workingContextOptimizer = new WorkingContextOptimizer(openVikingUrl, openVikingApiKey, openVikingTimeoutMs);
         workingContextGeneration = nextGeneration;
@@ -391,8 +394,10 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
         if (ctx.hasUI) ctx.ui.notify(`${message}\nPi will continue with its native context.`, "warning");
       }
     }
+    if (shuttingDown) return;
     const generation = activeWorkingContextGeneration(validated, state);
     const generationReady = await transitionWorkingContext(generation);
+    if (shuttingDown) return;
     memoryEnhancementAvailable = Boolean(generation && generationReady && root && contentFingerprint);
     workingContextProjectRoot = memoryEnhancementAvailable ? root : undefined;
     workingContextConfigContentFingerprint = memoryEnhancementAvailable ? contentFingerprint : undefined;
@@ -400,7 +405,7 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
   }
 
   function scheduleMemoryModelConfigCheck(ctx: ExtensionContext): void {
-    if (memoryModelConfigCheck) return;
+    if (shuttingDown || memoryModelConfigCheck) return;
     memoryModelConfigCheck = reportMemoryModelConfigError(ctx).catch(() => undefined).finally(() => {
       memoryModelConfigCheck = undefined;
     });
@@ -421,7 +426,7 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
     snapshot: SessionRouteSnapshot | undefined,
     trigger: string,
   ): void {
-    if (!memoryEnhancementAvailable || !workingContextOptimizer || !snapshot || snapshot.entries.length === 0) return;
+    if (shuttingDown || !memoryEnhancementAvailable || !workingContextOptimizer || !snapshot || snapshot.entries.length === 0) return;
     const activeCoordinator = currentCoordinator(ctx);
     if (!activeCoordinator) return;
     let route: SessionRouteIdentity;
@@ -438,6 +443,7 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
       (prepared) => writeRecord("working_context_ready", {
         trigger,
         sessionId: route.sessionId,
+        sessionFile: route.sessionFile,
         leafId: route.leafId,
         routeFingerprint: route.fingerprint,
         openVikingSessionId: prepared.openVikingSessionId,
@@ -448,6 +454,7 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
       (error) => writeRecord("working_context_error", {
         trigger,
         sessionId: route.sessionId,
+        sessionFile: route.sessionFile,
         leafId: route.leafId,
         routeFingerprint: route.fingerprint,
         error: error instanceof Error ? error.message : String(error),
@@ -508,7 +515,7 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
         sourceCount: snapshot.entries.length,
         largeResults: result.archivedToolCallIds.length,
       });
-      sourceIndexes.scheduleBackground(activeCoordinator, snapshot, trigger);
+      if (!shuttingDown) sourceIndexes.scheduleBackground(activeCoordinator, snapshot, trigger);
     } catch (error) {
       archiveUnavailable = true;
       const message = error instanceof Error ? error.message : String(error);
@@ -517,7 +524,7 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
   }
 
   function pumpArchiveQueue(): void {
-    if (archiveRunning) return;
+    if (archiveRunning || archiveStopped) return;
     const job = archiveQueue.shift();
     if (!job) {
       for (const resolveIdle of archiveIdleWaiters) resolveIdle();
@@ -537,7 +544,15 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
     return new Promise((resolveIdle) => archiveIdleWaiters.add(resolveIdle));
   }
 
+  function stopArchiveQueue(): void {
+    archiveStopped = true;
+    for (const job of archiveQueue.splice(0)) queuedArchives.delete(job.key);
+    for (const resolveIdle of archiveIdleWaiters) resolveIdle();
+    archiveIdleWaiters.clear();
+  }
+
   function scheduleArchive(ctx: ExtensionContext, trigger: string): void {
+    if (shuttingDown || archiveStopped) return;
     if (archiveUnavailable && !failureNotified && ctx.hasUI) {
       ctx.ui.notify("Source archiving is unavailable; Pi will continue normally.", "warning");
       failureNotified = true;
@@ -783,7 +798,7 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
       void transitionWorkingContext();
       scheduleMemoryModelConfigCheck(ctx);
     }
-    if (generationCurrent && workingContextOptimizer) {
+    if (!forceNativeUntilAgentSettled && generationCurrent && workingContextOptimizer) {
       const snapshot = sessionRouteSnapshot(ctx);
       const activeCoordinator = currentCoordinator(ctx);
       if (snapshot && activeCoordinator) {
@@ -910,11 +925,55 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
   });
 
   pi.on("agent_settled", (_event, ctx) => {
+    forceNativeUntilAgentSettled = false;
     writeRecord("agent_settled", branchSnapshot(ctx));
     maybeFail("agent_settled");
   });
 
+  pi.on("session_before_compact", (event, ctx) => {
+    if (event.reason === "overflow" && event.willRetry) forceNativeUntilAgentSettled = true;
+    writeRecord("session_before_compact", {
+      reason: event.reason,
+      willRetry: event.willRetry,
+      firstKeptEntryId: event.preparation.firstKeptEntryId,
+      tokensBefore: event.preparation.tokensBefore,
+      branchEntryIds: event.branchEntries.map((entry) => entry.id),
+      ...branchSnapshot(ctx),
+    });
+    maybeFail("session_before_compact");
+  });
+
+  pi.on("session_compact", (event, ctx) => {
+    providerContextDecision = "pi-native";
+    setContextPath(ctx, "Pi 原生");
+    writeRecord("session_compact", {
+      reason: event.reason,
+      willRetry: event.willRetry,
+      compactionEntryId: event.compactionEntry.id,
+      firstKeptEntryId: event.compactionEntry.firstKeptEntryId,
+      fromExtension: event.fromExtension,
+      ...branchSnapshot(ctx),
+    });
+    maybeFail("session_compact");
+    scheduleArchive(ctx, "session_compact");
+    scheduleWorkingContext(ctx, sessionRouteSnapshot(ctx), "session_compact");
+  });
+
+  pi.on("session_before_tree", (event, ctx) => {
+    writeRecord("session_before_tree", {
+      targetId: event.preparation.targetId,
+      oldLeafId: event.preparation.oldLeafId,
+      commonAncestorId: event.preparation.commonAncestorId,
+      userWantsSummary: event.preparation.userWantsSummary,
+      summarizedEntryIds: event.preparation.entriesToSummarize.map((entry) => entry.id),
+      ...branchSnapshot(ctx),
+    });
+    maybeFail("session_before_tree");
+  });
+
   pi.on("session_tree", (event, ctx) => {
+    providerContextDecision = "pi-native";
+    setContextPath(ctx, "Pi 原生");
     writeRecord("session_tree", {
       newLeafId: event.newLeafId,
       oldLeafId: event.oldLeafId,
@@ -938,9 +997,12 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
   });
 
   pi.on("session_shutdown", async (event, ctx) => {
+    providerContextDecision = "pi-native";
+    setContextPath(ctx, "Pi 原生");
     writeRecord("session_shutdown", { reason: event.reason, targetSessionFile: event.targetSessionFile, ...branchSnapshot(ctx) });
     maybeFail("session_shutdown");
     scheduleArchive(ctx, "session_shutdown");
+    shuttingDown = true;
     let timeout: NodeJS.Timeout | undefined;
     try {
       await Promise.race([
@@ -952,6 +1014,7 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
       ]);
     } finally {
       if (timeout) clearTimeout(timeout);
+      stopArchiveQueue();
       sourceIndexes.shutdown();
       memoryEnhancementAvailable = false;
       await transitionWorkingContext();

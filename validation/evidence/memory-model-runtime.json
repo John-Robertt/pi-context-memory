@@ -1,16 +1,16 @@
 {
   "schemaVersion": 1,
   "generatedBy": "scripts/validate-memory-model-runtime.mjs",
-  "runId": "memory-model-runtime-2026-08-14T10-36-58-043Z",
-  "recordedAt": "2026-08-14T10:39:03.274Z",
+  "runId": "memory-model-runtime-2026-08-14T14-40-24-746Z",
+  "recordedAt": "2026-08-14T14:41:18.155Z",
   "piVersion": "0.84.1",
   "openVikingVersion": "0.4.13",
   "implementation": {
-    "sourceManifestSha256": "ec51b08c7e607d4dee158fe5561672484762c835842a61c281a74e10376434ce",
+    "sourceManifestSha256": "9166240a2ecff3a169222965cca9ace2c5ef1f7a46c86e0e6fe7e2a50834bdb1",
     "files": [
       {
         "path": ".pi/extensions/pi-context-memory/index.ts",
-        "sha256": "f1fff20f3cccc7794d6fb1383e537bf037866c5cd383732f1968c3a133ae556e"
+        "sha256": "c9f3146005c207cbe5a3e9ff3c7266bac94c56189395c7297a3ad55ac9c3ed0c"
       },
       {
         "path": ".pi/extensions/pi-context-memory/memory-model-configuration.ts",
@@ -22,7 +22,7 @@
       },
       {
         "path": ".pi/extensions/pi-context-memory/session-working-memory.ts",
-        "sha256": "c6232229a14f0890c564c90053959b9cc6b43aea3f6390ee4468b2d7604157bc"
+        "sha256": "ae6eb91e9021aab383ac6cd745edc69e57c860715daf928893b287bfe10e9640"
       },
       {
         "path": ".pi/extensions/pi-context-memory/working-context-optimization.ts",
@@ -58,14 +58,14 @@
       },
       {
         "path": "scripts/validation-evidence.mjs",
-        "sha256": "7aa55ebeed261d375625af14954b27571419fdc7d61e11b1f4b05ab547ec75ca"
+        "sha256": "625a344f1e6f41b94d1451b4a69f54ea1d35015dd4ab73b81fc7f69959cd4e22"
       },
       {
         "path": "uv.lock",
         "sha256": "910184bff539fd56b4b7f8fc2ee46439f3113c7394c1538d60ef3a5e3c78f094"
       }
     ],
-    "gitCommit": "a277a729cee986cc9035eaee8b5b3b1968d2b6fe",
+    "gitCommit": "34fadc2e2870773f472f7e1abc6ac7e37460b415",
     "workingTreeDirty": true
   },
   "passed": true,

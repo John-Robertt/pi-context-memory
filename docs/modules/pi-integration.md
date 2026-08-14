@@ -11,9 +11,9 @@
 ## 2. 当前目标与责任分工
 
 - 观察 session、当前 branch、消息、工具、压缩和 Provider 生命周期；
-- 在 `session_start`、`turn_end`、`session_tree` 和 `session_shutdown` 排队当前路线归档；
+- 在 `session_start`、`turn_end`、`session_tree`、`session_compact` 和 `session_shutdown` 排队当前路线归档；
 - 归档成功后独立排队来源索引，普通 Provider turn 不等待索引；
-- 在 `session_start`、`turn_end`、`session_tree` 和 `before_agent_start` 异步准备当前路线 Working Memory；
+- 在 `session_start`、`turn_end`、`session_tree`、`session_compact` 和 `before_agent_start` 异步准备当前路线 Working Memory；
 - 在每次 `context` 事件重新计算当前 prompt 之前的路线身份，只采用精确匹配的就绪结果；
 - 保留当前 user prompt 及其后的 assistant tool call、tool result 原对象和顺序；
 - 注册有界的 `recall_session(search|read_source)` 工具，并在每次执行时提供当前权威路线；
@@ -55,8 +55,10 @@ context
   → 未命中或错误：原样返回 Pi 消息
 turn_end
   → 归档并索引完整路线；异步准备下一 prompt 可采用的路线
-session_tree
-  → 新 leaf 立即成为唯一范围；归档、索引并准备新路线
+session_before_tree / session_before_compact
+  → 记录操作边界；取消操作保持最近任务采用状态，overflow 自动重试另行锁定原生路径
+session_tree / session_compact
+  → 成功后切回 Pi 原生；操作后的 leaf 成为唯一范围，归档、索引并准备新路线
 recall_session
   → 当前路线来源同步、候选排序或 Pi 权威 entry 展开
 session_shutdown
@@ -71,6 +73,6 @@ session_shutdown
 
 ## 6. 验证与限制
 
-来源归档、来源召回和自动上下文采用分别由对应 validation 文档证明。当前本地纵向 evidence 已观察真实 Pi `context` hook 和本地 Provider payload，覆盖有界采用、当前 turn 保留、路线隔离和故障降级。
+来源归档、来源召回和自动上下文采用分别由对应 validation 文档证明。本地纵向 evidence 实际驱动 Pi `0.84.1` 的 tree 往返、fork/clone/resume/reload、手动/阈值/overflow compaction，并逐次核对 `context`、本地 Provider payload 和状态路径。真实记忆模型成对实验进一步证明增强请求保持当前决定与证据入口。
 
-当前支持 Pi `0.84.1` 与 OpenViking `0.4.13`。完整 `/tree`、`/fork`、`/clone`、`/resume`、三类原生 compaction、持久采用状态、真实记忆模型任务质量和完整成本仍由下一纵向交付验证。
+当前支持 Pi `0.84.1` 与 OpenViking `0.4.13`。完整 API 成本归集仍由质量与成本观测的下一交付验证。

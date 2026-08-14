@@ -38,14 +38,14 @@
 
 来源读写要求 session ID 和 session file 身份一致；不存在跨 session 搜索入口。来源写入使用同目录临时文件与原子重命名，相同 entry 使用稳定位置。记忆模型配置属于用户而非 session 或项目；模块只独占创建缺失模板，已有 JSONC 始终只读，生成配置只保留凭据环境变量占位符。
 
-Session Working Memory 只接收 Session 记忆协调已经核验的完整路线身份和 entries；写入投影按 Pi `0.84.1` 的 compaction-aware entry 语义保留 `firstKeptEntryId` 范围，并兼容自包含的 `retainedTail`。每个派生 session 只能沿一条连续路线追加，同一路线准备共享任务；正在执行的任务之后只保留该 Pi session 最新的未启动路线，缓存和派生 session 数量有固定上限。派生状态不决定当前 branch，也不能覆盖 Pi 来源。
+Session Working Memory 只接收 Session 记忆协调已经核验的完整路线身份和 entries；写入投影按 Pi `0.84.1` 的 compaction-aware entry 语义保留 `firstKeptEntryId` 范围，并兼容自包含的 `retainedTail`。派生 session 只在有效投影序列保持前缀关系时追加；compaction 使旧 active history 退出有效投影时建立新镜像，避免被压缩内容继续进入 context assembly。同一路线准备共享任务；正在执行的任务之后只保留该 Pi session 最新的未启动路线，缓存和派生 session 数量有固定上限。派生状态不决定当前 branch，也不能覆盖 Pi 来源。
 
 ## 4. 错误与恢复
 
 来源文件创建、序列化、复制、校验或读取失败均显式抛给调用者。已成功写入的其它 entry 保持可用；下一次提交当前路线会按稳定 entry ID 重试。JSONC 语法、未知字段、无效 Provider、缺失连接字段、凭据或 schema 错误均形成带配置路径的诊断，不修改用户文件；是否保留实例或冷启动降级由项目启动器负责。
 
-损坏或身份不匹配的记录不返回为有效来源；后续当前路线提交按稳定 entry ID 重新保存来源，OpenViking资源由有效来源重建。OpenViking Session 创建、追加、commit、任务轮询或 context assembly 失败时不返回部分结果，并丢弃对应运行期镜像；失败、淘汰和 session 关闭会尽力删除扩展自建的派生 Session。清理失败不阻断 Pi 关闭，Pi 集成继续使用原生路径，后续路线可重新准备。
+损坏或身份不匹配的记录不返回为有效来源；后续当前路线提交按稳定 entry ID 重新保存来源，OpenViking资源由有效来源重建。OpenViking Session 创建、追加、commit、任务轮询或 context assembly 失败时不返回部分结果；非空 overview 缺少 OpenViking `0.4.13` 七段 Working Memory 结构时同样拒绝采用，从而排除模型调用失败后的通用计数回退。失败、淘汰和 session 关闭会丢弃运行期镜像并尽力删除扩展自建的派生 Session。清理失败不阻断 Pi 关闭，Pi 集成继续使用原生路径，后续路线可重新准备。
 
 ## 5. 验证与限制
 
-来源归档、记忆模型运行时和上下文增强 runner 分别覆盖文件边界、配置编译，以及 OpenViking Session 增量、分支隔离、Working Memory 任务和 context assembly 协议。当前 Session 派生映射保存在扩展运行内存中，重载后从 Pi 路线重建；真实记忆模型语义质量、跨机器同步、备份和保留策略仍由后续纵向验证承担。
+来源归档、记忆模型运行时和上下文增强 runner 分别覆盖文件边界、配置编译，以及 OpenViking Session 增量、有效 compaction 投影、分支隔离、Working Memory 结构和 context assembly 协议。Session 派生映射保存在扩展运行内存中，重载后从 Pi 路线重建；真实记忆模型成对实验已覆盖当前决定与证据入口。跨机器同步、备份和保留策略不属于当前本地纵向交付。

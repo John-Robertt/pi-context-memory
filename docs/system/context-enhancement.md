@@ -26,7 +26,7 @@ Session 记忆协调对每个快照验证 session ID、session file、leaf、ent
 ## 4. 准备与采用流程
 
 ```text
-session_start / turn_end / session_tree / before_agent_start
+session_start / turn_end / session_tree / session_compact / before_agent_start
   → Pi 集成取得当前权威路线
   → Session 记忆协调验证路线并生成采用身份
   → 长时记忆模块按路线准备 OpenViking Session
@@ -50,7 +50,7 @@ context
 
 长时记忆模块把当前路线中的用户、assistant、工具结果、bash、自定义上下文、branch summary 和 compaction summary 投影为 OpenViking 文本消息，并通过 `source_message_ids` 保留 Pi entry ID。Pi compaction 投影遵循有效 compaction entry、`firstKeptEntryId` 保留范围和压缩后条目，并兼容自包含 `retainedTail`；模型切换、thinking level、label 和扩展内部状态不进入投影。
 
-OpenViking 返回最新 Working Memory overview 与预算后的活跃消息。扩展把二者格式化为一个隐藏的 Pi custom message，并再次执行字符上限保护；不把 OpenViking 消息 ID、摘要或状态写回 Pi session。显式 `recall_session` 继续承担来源级核对，增强摘要不能替代 Pi 权威 entry。
+OpenViking 返回最新 Working Memory overview 与预算后的活跃消息。非空 overview 必须具备 OpenViking `0.4.13` 的七段 Working Memory 结构；通用计数回退或残缺 overview 不可采用。扩展把有效内容格式化为一个隐藏的 Pi custom message，并再次执行字符上限保护；不把 OpenViking 消息 ID、摘要或状态写回 Pi session。显式 `recall_session` 继续承担来源级核对，增强摘要不能替代 Pi 权威 entry。
 
 ## 6. 失败、分支与恢复
 
@@ -58,8 +58,8 @@ OpenViking 返回最新 Working Memory overview 与预算后的活跃消息。�
 - OpenViking 创建、追加、commit、任务轮询或 context assembly 任一步失败，本轮保持 Pi 原生消息；失败、淘汰与关闭会尽力删除扩展自建的派生 Session，清理失败不阻断 Pi。
 - 没有已配置且实际运行的记忆模型时不准备自动增强上下文，模型调用保持 Pi 原生；显式来源召回继续可用。
 - 配置校验失败、active/target 指纹不一致或重启开始时立即禁用增强并销毁旧代缓存；新代配置与运行状态一致后才重建。
-- 进程重载或 session 替换后的持久采用状态、Pi 原生 compaction 生命周期和完整 UI 状态接入由当前开发入口的下一纵向交付完成；当前实现从 Pi 权威路线重建派生 session，并在准备期间降级。
+- tree、compaction、session replacement 与 reload 先把采用状态切回 Pi 原生；新实例或新路线只从 Pi 当前 leaf 重建，准备完成且实际进入 Provider 请求后再显示增强。
 
 ## 7. 验证与校准
 
-共享长任务 fixture 固定目标更新、冲突路线、工具证据、compaction 和压缩后继续。纵向 runner 必须证明路线精确采用、迟到结果隔离、预算上限、当前 turn 保留和后端故障降级。真实 Provider 下的 Working Memory 语义质量、完整 Pi tree/compaction 生命周期和成对 API 成本继续由后续纵向实验证明。
+共享长任务 fixture 固定目标更新、冲突路线、工具证据、compaction 和压缩后继续。本地 runner 证明完整 tree 往返、fork/clone/resume/reload、三类 compaction、路线精确采用、迟到结果隔离、预算上限、当前 turn 保留和后端故障降级。真实 Provider 成对质量 runner 证明同一任务模型下原生与增强 arm 均保持当前决定和证据入口；完整 API 成本继续由成本实验归集。
