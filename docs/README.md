@@ -35,15 +35,15 @@ docs/
 | [`features/README.md`](features/README.md)                                           | 功能规格索引                                     |
 | [`features/session-recall.md`](features/session-recall.md)                           | 当前 session/branch 内的显式来源召回行为         |
 | [`features/context-enhancement-state.md`](features/context-enhancement-state.md)     | 自动上下文增强与 Pi 回退、原生压缩和状态标识     |
-| [`features/memory-model-configuration.md`](features/memory-model-configuration.md)   | 项目级记忆模型最小配置与 OpenViking快速重启      |
+| [`features/memory-model-configuration.md`](features/memory-model-configuration.md)   | 用户级记忆模型 JSONC 与 OpenViking 快速重启       |
 | [`system/README.md`](system/README.md)                                               | 跨模块系统设计索引                               |
 | [`system/source-archiving.md`](system/source-archiving.md)                           | Pi 权威路线进入本地来源归档的流程                |
 | [`system/source-recall.md`](system/source-recall.md)                                 | 本地来源进入 OpenViking派生索引并受控召回的流程  |
-| [`system/memory-model-runtime.md`](system/memory-model-runtime.md)                   | 记忆模型配置编译与托管 OpenViking重启流程        |
+| [`system/memory-model-runtime.md`](system/memory-model-runtime.md)                   | 用户 JSONC、配置编译与托管 OpenViking 重启流程   |
 | [`modules/README.md`](modules/README.md)                                             | 架构模块与内部设计映射                           |
 | [`modules/pi-integration.md`](modules/pi-integration.md)                             | Pi 生命周期、归档、索引与工具集成边界            |
 | [`modules/session-memory-coordination.md`](modules/session-memory-coordination.md)   | session、当前 branch 与来源有效性协调            |
-| [`modules/long-term-memory.md`](modules/long-term-memory.md)                         | session 来源副本与完整结果文件承载               |
+| [`modules/long-term-memory.md`](modules/long-term-memory.md)                         | session 来源副本、完整结果与用户记忆模型配置      |
 | [`modules/recall-and-provenance.md`](modules/recall-and-provenance.md)               | OpenViking候选排序、当前路线过滤与来源展开       |
 | [`modules/quality-and-cost-observation.md`](modules/quality-and-cost-observation.md) | 独立于扩展运行的开发期任务质量与 API 成本验证    |
 | [`validation/README.md`](validation/README.md)                                       | 验证规格与证据入口索引                           |
@@ -53,7 +53,7 @@ docs/
 | [`validation/memory-model-runtime.md`](validation/memory-model-runtime.md)           | 记忆模型配置、OpenViking重启与降级验证           |
 | [`operations/README.md`](operations/README.md)                                       | 当前可用行为的运行与维护索引                     |
 | [`operations/source-archive.md`](operations/source-archive.md)                       | 本地来源归档配置、诊断与清理                     |
-| [`operations/session-recall.md`](operations/session-recall.md)                       | OpenViking依赖、召回工具、索引恢复与降级         |
+| [`operations/session-recall.md`](operations/session-recall.md)                       | OpenViking 托管启停、记忆模型配置、召回运行、恢复与降级             |
 
 当前没有需要独立演进的共享契约文档。
 

@@ -125,7 +125,7 @@ Pi
 - 向任务模型提供统一召回能力；
 - 增强准备、故障和恢复期间由 Pi 原生执行、记忆与压缩路径接续；
 - 依据每次模型输入实际采用的路径，向用户展示增强或 Pi 原生状态；
-- 提供项目级 OpenViking VLM 配置与托管实例重启入口，使 Pi 任务模型选择、OpenViking 记忆模型设置和记忆模型调用保持独立。
+- 提供用户级 OpenViking VLM 配置检查与项目托管实例重启入口，使 Pi 任务模型选择、OpenViking 记忆模型配置和记忆模型调用保持独立。
 
 **责任分工**
 
@@ -182,7 +182,7 @@ Pi
 - 保持所有数据和查询严格属于目标 session；
 - 保留派生信息与原始来源之间的联系；
 - 向协调与投影模块提供来源归档和 OpenViking Working Memory，向召回模块提供可索引历史内容和来源；
-- 依据项目锁定 OpenViking 的 Provider registry 与 VLM schema，把用户提供的核心模型信息转换为 OpenViking 运行配置，并通过环境或 Provider/OpenViking 认证机制解析凭据。
+- 依据项目锁定 OpenViking 的 Provider registry、VLM schema 与 LiteLLM backend 路由能力生成用户级配置模板，并把其中有效的核心模型信息转换为 OpenViking 运行配置；凭据仅通过环境或 Provider/OpenViking 认证机制解析。
 
 **责任分工**
 

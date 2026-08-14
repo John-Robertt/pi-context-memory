@@ -2,7 +2,7 @@
 
 ## 1. 当前责任
 
-本模块是系统与 Pi 的唯一集成边界。它观察 Pi 生命周期，把 `SessionManager` 当前路线转换为来源快照，将归档和派生索引请求提交给 Session 记忆协调，并向任务模型注册统一的 `recall_session` 工具。来源数据由长期记忆模块拥有，索引与排序由召回模块拥有，branch 有效性由 Session 记忆协调模块拥有。
+本模块是系统与 Pi 的唯一集成边界。它观察 Pi 生命周期，把 `SessionManager` 当前路线转换为来源快照，注册 `recall_session`、`/memory-model` 和 `/restart-viking`，并持续显示当前模型输入仍采用“Pi 原生”。来源数据与记忆模型配置编译由长时记忆模块拥有，索引与排序由召回模块拥有，branch 有效性由 Session 记忆协调模块拥有，OpenViking 进程由项目启动器拥有。
 
 实现入口位于 [`.pi/extensions/pi-context-memory/index.ts`](../../.pi/extensions/pi-context-memory/index.ts)。来源归档与召回流程分别见 [`../system/source-archiving.md`](../system/source-archiving.md) 和 [`../system/source-recall.md`](../system/source-recall.md)。
 
@@ -12,12 +12,14 @@
 - 在 `session_start`、`turn_end`、`session_tree` 和 `session_shutdown` 排队当前路线归档；
 - 归档成功后向 Session 记忆协调提交后台索引请求，普通 Provider turn 不等待索引；
 - 注册有界的 `recall_session(search|read_source)` 工具，并在每次执行时提供当前权威路线；
+- 通过 `/memory-model` 检查并展示用户 JSONC，通过 `/restart-viking` 消费项目启动器控制能力而不直接管理子进程；
+- 在 session 与 turn 边界异步检查配置，同一错误只提示一次；只在启动器 PID、启动标识和锁一致时采用运行状态，区分用户配置、实际模型、应用目标和 readiness；
 - 捕获归档和索引错误，保持 Pi Agent 控制流继续；
 - 允许通过受控故障注入验证 Pi 原生扩展错误边界。
 
 ### 责任边界
 
-本模块负责 Pi 生命周期观察、归档与索引调度、工具注册和故障隔离。来源文件由长期记忆模块保存；embedding 与排序由召回模块承担；context、压缩、tree 导航和 Agent 循环由 Pi 提供。`recall_session` 通过 Pi 原生工具 schema 和提示进入 Agent，context 继续沿 Pi 原生路径构造。
+本模块负责 Pi 生命周期观察、归档与索引调度、工具和命令注册、运行状态展示及故障隔离。来源文件与配置编译由长时记忆模块承担；embedding 与排序由召回模块承担；子进程所有权由项目启动器承担；context、压缩、tree 导航和 Agent 循环由 Pi 提供。配置命令不写 Pi 消息、不修改任务模型或 branch，context 当前继续沿 Pi 原生路径构造。
 
 ## 3. 数据与不变量
 

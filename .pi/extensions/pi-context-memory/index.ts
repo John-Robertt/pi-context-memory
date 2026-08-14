@@ -16,6 +16,17 @@ import {
   SessionSourceIndexCoordinator,
   type SessionRouteSnapshot,
 } from "./session-memory-coordination.ts";
+import {
+  memoryModelConfigPath,
+  locateProjectRoot,
+  memoryModelSettingsFingerprint,
+  memoryModelConfigContentFingerprint,
+  validateMemoryModelSetting,
+  readRuntimeState,
+  requestOpenVikingRestart,
+  type MemoryModelSetting,
+  type OpenVikingRuntimeState,
+} from "./memory-model-configuration.ts";
 
 const SCHEMA_VERSION = 1;
 const observationPath = process.env.PCR_OBSERVATION_LOG
@@ -213,6 +224,39 @@ function payloadSummary(payload: unknown): Record<string, unknown> {
   };
 }
 
+function updateContextPathStatus(ctx: ExtensionContext): void {
+  if (ctx.hasUI) ctx.ui.setStatus("pi-context-memory", "Pi 原生");
+}
+
+function formatMemoryModelState(
+  configPath: string,
+  setting: MemoryModelSetting | undefined,
+  state: OpenVikingRuntimeState | undefined,
+): string {
+  const configured = setting ? `${setting.provider}/${setting.model}` : "not configured";
+  const running = state?.activeProvider && state.activeModel ? `${state.activeProvider}/${state.activeModel}` : "no VLM loaded";
+  const applied = Boolean(state?.ready && (setting
+    ? state.activeSettingsFingerprint === memoryModelSettingsFingerprint(setting)
+    : state.activeProvider === undefined
+      && state.activeModel === undefined
+      && state.activeSettingsFingerprint === undefined));
+  const configurationStatus = applied
+    ? "applied"
+    : state
+      ? "waiting for /restart-viking"
+      : "launcher unavailable";
+  return [
+    `Configuration file: ${configPath}`,
+    `Configured memory model: ${configured}`,
+    `Running OpenViking model: ${running}`,
+    `Service readiness: ${state?.ready ? "ready" : state?.phase ?? "launcher unavailable"}`,
+    `Configuration: ${configurationStatus}`,
+    state?.configurationError ? `Last cold-start configuration error: ${state.configurationError}` : undefined,
+    "Context path: Pi 原生",
+  ].filter((line): line is string => Boolean(line)).join("\n");
+}
+
+
 export default function piContextMemoryProbe(pi: ExtensionAPI): void {
   let sourceRecall: OpenVikingSourceRecall | undefined;
   try {
@@ -235,6 +279,32 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
   }> = [];
   const archiveIdleWaiters = new Set<() => void>();
   const queuedArchives = new Set<string>();
+  let lastMemoryModelConfigDiagnosticKey: string | undefined;
+  let memoryModelConfigCheck: Promise<void> | undefined;
+
+  async function reportMemoryModelConfigError(ctx: ExtensionContext): Promise<void> {
+    let root: string | undefined;
+    try {
+      root = await locateProjectRoot(ctx.cwd);
+      await validateMemoryModelSetting(root);
+      lastMemoryModelConfigDiagnosticKey = undefined;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const contentFingerprint = root ? await memoryModelConfigContentFingerprint(root) : undefined;
+      const diagnosticKey = `${contentFingerprint ?? "unreadable"}:${hash(message)}`;
+      if (diagnosticKey === lastMemoryModelConfigDiagnosticKey) return;
+      lastMemoryModelConfigDiagnosticKey = diagnosticKey;
+      writeRecord("memory_model_config_error", { error: message, contentFingerprint });
+      if (ctx.hasUI) ctx.ui.notify(`${message}\nPi will continue with its native context.`, "warning");
+    }
+  }
+
+  function scheduleMemoryModelConfigCheck(ctx: ExtensionContext): void {
+    if (memoryModelConfigCheck) return;
+    memoryModelConfigCheck = reportMemoryModelConfigError(ctx).catch(() => undefined).finally(() => {
+      memoryModelConfigCheck = undefined;
+    });
+  }
 
   function currentCoordinator(ctx: ExtensionContext): SessionMemoryCoordinator | undefined {
     const identity = sessionIdentity(ctx);
@@ -351,6 +421,63 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
     pumpArchiveQueue();
   }
 
+  pi.registerCommand("memory-model", {
+    description: "Inspect the user OpenViking memory model configuration",
+    handler: async (args, ctx) => {
+      let root: string | undefined;
+      try {
+        if (args.trim()) throw new Error("Usage: /memory-model. Edit the reported JSONC file to change the model.");
+        root = await locateProjectRoot(ctx.cwd);
+        const configPath = memoryModelConfigPath(root);
+        const setting = await validateMemoryModelSetting(root);
+        const state = await readRuntimeState(root);
+        lastMemoryModelConfigDiagnosticKey = undefined;
+        ctx.ui.notify(formatMemoryModelState(configPath, setting, state), "info");
+        updateContextPathStatus(ctx);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (root && message.startsWith("Invalid memory model configuration at ")) {
+          const contentFingerprint = await memoryModelConfigContentFingerprint(root);
+          lastMemoryModelConfigDiagnosticKey = `${contentFingerprint ?? "unreadable"}:${hash(message)}`;
+        }
+        ctx.ui.notify(message, "error");
+      }
+    },
+  });
+
+  pi.registerCommand("restart-viking", {
+    description: "Apply the user memory model configuration to the managed OpenViking instance",
+    handler: async (_args, ctx) => {
+      let root: string | undefined;
+      try {
+        root = await locateProjectRoot(ctx.cwd);
+        if (ctx.hasUI) ctx.ui.setStatus("pi-context-memory", "Pi 原生 · OpenViking applying");
+        const state = await requestOpenVikingRestart(root);
+        writeRecord("openviking_restart_complete", {
+          provider: state.activeProvider,
+          model: state.activeModel,
+          configFingerprint: state.activeConfigFingerprint,
+        });
+        ctx.ui.notify(`OpenViking ready: ${state.activeProvider ?? "no VLM"}/${state.activeModel ?? "source recall only"}`, "info");
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (root && message.startsWith("Invalid memory model configuration at ")) {
+          const contentFingerprint = await memoryModelConfigContentFingerprint(root);
+          lastMemoryModelConfigDiagnosticKey = `${contentFingerprint ?? "unreadable"}:${hash(message)}`;
+        }
+        writeRecord("openviking_restart_error", { error: message });
+        ctx.ui.notify(message, "error");
+      } finally {
+        updateContextPathStatus(ctx);
+      }
+    },
+  });
+
+  pi.on("session_start", (_event, ctx) => {
+    updateContextPathStatus(ctx);
+    scheduleMemoryModelConfigCheck(ctx);
+  });
+
   pi.registerTool({
     name: "recall_session",
     label: "Recall Session",
@@ -453,6 +580,8 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
   });
 
   pi.on("before_agent_start", (event, ctx) => {
+    updateContextPathStatus(ctx);
+    scheduleMemoryModelConfigCheck(ctx);
     writeRecord("before_agent_start", {
       promptBytes: Buffer.byteLength(event.prompt, "utf8"),
       systemPromptBytes: Buffer.byteLength(event.systemPrompt, "utf8"),

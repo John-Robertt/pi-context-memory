@@ -1,0 +1,116 @@
+{
+  "schemaVersion": 1,
+  "generatedBy": "scripts/validate-memory-model-runtime.mjs",
+  "runId": "memory-model-runtime-2026-08-14T08-10-13-969Z",
+  "recordedAt": "2026-08-14T08:12:38.126Z",
+  "piVersion": "0.84.1",
+  "openVikingVersion": "0.4.13",
+  "implementation": {
+    "sourceManifestSha256": "c08bae72e41a8d1a2d86c3d9820bf45a64ab6ca486824c8508a3c630c4dfd509",
+    "files": [
+      {
+        "path": ".pi/extensions/pi-context-memory/index.ts",
+        "sha256": "712d8f1321919c641997e126ae4198391f133c4c52d57f595f62055cd8a1ac0c"
+      },
+      {
+        "path": ".pi/extensions/pi-context-memory/memory-model-configuration.ts",
+        "sha256": "dc9279747eb33aa9f83e20edeb743b55a7bc775a13734d58e2b03b54e6c6dc1f"
+      },
+      {
+        "path": "config/openviking.json",
+        "sha256": "d5abacdcf5268ad5a7caa7fb9e6eb193ddb3016b16096b891f44e13a36c430e2"
+      },
+      {
+        "path": "pyproject.toml",
+        "sha256": "5412a67094ec9413d831e51d95487244d2d6071eec899fdbb0bf41363767ed1d"
+      },
+      {
+        "path": "scripts/check-validation-evidence.mjs",
+        "sha256": "1b64785fecbf855d28a79e7d642c9c4339d610ef5761d53b073f68e7c06743c5"
+      },
+      {
+        "path": "scripts/openviking-config.py",
+        "sha256": "5c84bae7c9a5d9903074d5d46694c10f70be4ebed99e133bb69a14bdb04bf8d8"
+      },
+      {
+        "path": "scripts/start-openviking.mjs",
+        "sha256": "938e2b066708a42b75efe2115daf959fc7b728a467ebfaa00033d3de9fc61e78"
+      },
+      {
+        "path": "scripts/validate-memory-model-runtime.mjs",
+        "sha256": "eb12d8205542828d3fa647e5007c86e55c5ea8f3b24d26db4a832ee19e8fe513"
+      },
+      {
+        "path": "scripts/validate-openviking-vlm-adapters.py",
+        "sha256": "9a9e057e2aa703276a92683c0158530cf61c652fa8e9c8bb8b3c25c050ee4984"
+      },
+      {
+        "path": "scripts/validation-evidence.mjs",
+        "sha256": "65d53dc566b3420486c478f2b3ee58eeb838709c43d3e40753b4b097116ffa71"
+      },
+      {
+        "path": "uv.lock",
+        "sha256": "910184bff539fd56b4b7f8fc2ee46439f3113c7394c1538d60ef3a5e3c78f094"
+      }
+    ],
+    "gitCommit": "2d03d3e871467ca947c3d1a18e307d245dad2203",
+    "workingTreeDirty": true
+  },
+  "passed": true,
+  "checks": {
+    "adapterProtocolsCovered": true,
+    "providerRegistryCovered": true,
+    "schemaObserved": true,
+    "litellmRoutesObserved": true,
+    "generatedConfigParsed": true,
+    "deterministicFingerprint": true,
+    "unknownFieldRejected": true,
+    "missingCredentialRejected": true,
+    "azureFieldRejected": true,
+    "userConfigPath": true,
+    "commentedTemplateCreated": true,
+    "litellmSourcesDocumented": true,
+    "jsoncConfigurationParsed": true,
+    "emptyConfigurationAccepted": true,
+    "invalidConfigDiagnosed": true,
+    "existingConfigPreserved": true,
+    "existingSymlinksPreserved": true,
+    "configSecretsExcluded": true,
+    "configurationDiagnosticContentHashed": true,
+    "concurrentLauncherRejected": true,
+    "deadChildReadySuppressed": true,
+    "targetPortPreflightPreservesInstance": true,
+    "preflightPreservesInstance": true,
+    "orderedRestart": true,
+    "operationDeadlinePublished": true,
+    "operationDeadlineCoversFailureCleanup": true,
+    "wrongLaunchRejected": true,
+    "interruptedControlOperationCompletes": true,
+    "automaticConfigErrorReported": true,
+    "commandNoProviderRequests": true,
+    "taskModelUnchanged": true,
+    "branchUnchanged": true,
+    "configCommandReadOnly": true,
+    "sharedUserConfig": true,
+    "configuredAndRunningDistinct": true,
+    "nullConfigurationStateReported": true,
+    "contextRemainsPiNative": true,
+    "concurrentRestartSerialized": true,
+    "readinessTimeoutPublished": true,
+    "childExitPublished": true,
+    "emptyConfigurationDisablesModel": true,
+    "signalCleansOwnedChild": true,
+    "staleRuntimeSuppressed": true,
+    "missingLauncherReported": true,
+    "unknownPortPreserved": true,
+    "launcherOwnershipProtected": true,
+    "staleLifecycleLockRequiresExplicitRecovery": true,
+    "invalidColdStartFallsBack": true,
+    "unrelatedReadyNotReconciled": true
+  },
+  "limitations": [
+    "The local scope uses a protocol-compatible OpenViking process double and makes no external Provider requests.",
+    "Concrete memory-model Working Memory capability remains a separately authorized Provider validation.",
+    "Automatic enhanced-context adoption and paired API-cost evidence belong to the context-enhancement delivery."
+  ]
+}

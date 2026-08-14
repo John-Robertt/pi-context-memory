@@ -9,4 +9,4 @@
 | 文档 | 当前责任 |
 | --- | --- |
 | [`source-archive.md`](source-archive.md) | 说明本地来源归档的位置、配置、诊断、降级与清理边界 |
-| [`session-recall.md`](session-recall.md) | 说明项目内依赖安装、OpenViking启动、召回配置、工具使用、索引恢复与故障降级 |
+| [`session-recall.md`](session-recall.md) | 说明项目依赖安装、托管 OpenViking 启停、记忆模型配置与重启、召回使用、恢复和故障降级 |

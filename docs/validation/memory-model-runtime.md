@@ -12,14 +12,16 @@
 
 固定检查包括：
 
-- 配置界面和编译器观察到的 Provider集合与 OpenViking registry 一致；
-- 项目设置只包含规范 `provider`、`model` 和 schema 要求的具体非凭据连接字段；
-- 每个字段都具有 OpenViking schema 定义的类型和语义，未知字段被拒绝；
+- JSONC 模板和编译器观察到的 Provider 集合与 OpenViking registry 一致，模板包含全部字段与认证提示；
+- LiteLLM 路由能力直接来自锁定 backend；模板逐来源覆盖规范前缀、关键词顺序、凭据环境变量、显式路由、云原生认证、`zai/` 特例和自定义 OpenAI-compatible 写法；adapter probe 核对关键词冲突、凭据分支、前缀补全、显式路由保留及来源专用默认值；
+- 默认路径严格为隔离 HOME 下的 `.pi/pi-context-memory.jsonc`，缺失目录不向组或其他用户开放，缺失文件以 `0600` 原子独占创建；已有和悬空符号链接保持不变；
+- 空文件、纯注释和 `memoryModel: null` 均表示未配置；普通注释、字符串内 URL 和尾逗号可解析；
+- 语法错误包含文件与行列，语义错误包含配置字段；未知根字段和模型字段被拒绝；已有文件均不被检查、命令或启动器覆盖；
 - 模型 ID 按所选 Provider语义进入生成配置；
 - 每个 Provider生成正确的连接字段和公共默认值；
 - 环境变量、云原生凭据链和 Provider/OpenViking认证存储与生成产物、状态、日志及 Pi session 保持分离；
-- 未知 Provider、空模型、缺失必要连接字段、无效 schema 和缺失必要凭据在当前实例停止前返回明确错误；
-- 相同输入产生相同配置指纹，运行配置可从项目设置和 OpenViking权威 schema 重建。
+- 运行中实例在 JSONC 语法、未知 Provider、空模型、缺失连接字段、无效 schema 或凭据错误时保持不变；
+- 相同输入产生相同配置指纹，运行配置可从用户 JSONC、项目基础配置和 OpenViking schema 重建。
 
 生成结果直接通过项目安装的 OpenViking schema 解析。Provider registry 中的每一项都是必需检查，依赖升级后同一入口自动观察并验证新的集合。
 
@@ -27,25 +29,30 @@
 
 使用隔离项目和 faux Pi Provider 验证：
 
-- `/memory-model` 正确读取、选择并原子保存项目级设置；
-- 保存后任务模型、Pi session branch 和 Provider 调用数保持不变；
-- 命令准确区分已保存设置与运行实例设置，并在不一致时提示 `/restart-viking`；
-- `/restart-viking` 返回启动器实际加载的 Provider 和模型，readiness、模型能力与增强上下文采用分别表达；
-- 两个 Pi session 观察同一项目设置，且设置保持在 Pi 对话之外。
+- `/memory-model` 只创建缺失模板、检查并展示用户配置，不接受写入参数且不改变文件；
+- session 启动时无 Provider 请求地提示配置错误，同一内容哈希只自动提示一次，内容变化后可再次提示，Pi 原生路径继续；
+- 检查和应用配置后，任务模型、Pi session branch 和 Provider 调用数保持不变；
+- 命令准确区分用户配置与运行实例，并在不一致时提示 `/restart-viking`；
+- `/restart-viking` 返回实际加载模型，`memoryModel: null` 在应用前显示等待重启、应用后显示无 VLM 且已生效；readiness、模型能力与上下文采用分别表达；
+- 两个 Pi session 观察同一用户文件，配置内容不进入 Pi 对话。
 
 ## 4. 生命周期、所有权与并发
 
 使用可控的本地 OpenViking替身和项目启动器验证：
 
-- 正常应用按“预检—停止—启动—readiness—发布状态”顺序完成；
-- 子进程退出、readiness 超时、陈旧所有权信息和控制请求中断均发布对应失败状态；
-- 项目启动器未运行时返回启动入口；
-- 未知进程占用目标端口时保持该进程和当前系统状态；
-- 启动器只终止与当前启动标识匹配的子进程；
+- 正常应用按“预检—停止—启动—`/health` 健康—发布状态”顺序完成；来源召回 runner 另外证明健康后的真实资源操作；
+- 子进程退出和 readiness 超时发布失败状态，失败目标与实际运行配置分离；
+- 冷启动配置无效时发布脱敏诊断并启动无 VLM 基础服务，错误模型不进入 `active*`；
+- 两个启动器竞争时只有原子取得生命周期锁的进程成为所有者，死锁要求显式核对后恢复；
+- 项目启动器未运行、控制信息与锁不匹配或启动标识错误时返回明确诊断；
+- 当前实例运行时，未知进程占用不同目标端口会在停止旧实例前失败并保留旧实例；
+- 启动器只终止自己持有的子进程，未知端口进程不被终止；
 - 两个 Pi 进程并发应用只产生一个有效实例和一个确定的运行配置；
-- 启动器收到退出信号时清理自己拥有的子进程。
+- 客户端使用覆盖配置 bridge、两次最坏停止、readiness 与响应余量的完整操作期限；本地替身让旧实例和失败新实例都忽略 `SIGTERM`，证明失败清理在期限内结束；
+- 断开已接受请求后应用仍完成；状态以请求操作 ID 发布，超时客户端不把其它 ready 状态误判为本次成功；
+- 启动器连续收到退出信号时共享一次清理，确认子进程退出后再释放所有权。
 
-测试记录进程 ID、启动标识、配置指纹、控制请求序号和 readiness 转换，不记录控制凭据。
+测试记录进程 ID、启动标识、配置指纹、控制请求结果和 readiness 转换，不记录控制凭据。
 
 ## 5. 降级与状态分离
 
@@ -67,4 +74,4 @@
 
 ## 7. 证据责任
 
-该能力的本地 runner 与稳定 evidence 覆盖配置转换、命令无副作用、所有权、并发应用、降级和状态分离。evidence 纳入 `scripts/check-validation-evidence.mjs` 的当前实现哈希与精确检查集；真实 Provider结果只作为明确授权的能力证据，不成为日常验证前置条件。
+`node scripts/validate-memory-model-runtime.mjs` 使用隔离设置、faux Pi Provider 和本地 OpenViking 协议替身，覆盖配置转换、命令无副作用、VLM adapter 协议、所有权、并发应用、降级和状态分离；结果保存到 [`../../validation/evidence/memory-model-runtime.json`](../../validation/evidence/memory-model-runtime.json)。evidence 纳入 `scripts/check-validation-evidence.mjs` 的当前实现哈希与精确检查集。真实 Provider 结果只作为明确授权的能力证据，不成为日常验证前置条件。
