@@ -13,7 +13,7 @@
 | [`context-enhancement-state.md`](context-enhancement-state.md) | 验证有界采用、完整 Pi 生命周期、降级和真实记忆模型成对质量 | [`../../validation/evidence/context-enhancement.json`](../../validation/evidence/context-enhancement.json)、[`../../validation/evidence/context-quality.json`](../../validation/evidence/context-quality.json) |
 | [`memory-model-runtime.md`](memory-model-runtime.md) | 验证用户 JSONC、配置编译、命令语义、OpenViking 所有权与重启降级 | [`../../validation/evidence/memory-model-runtime.json`](../../validation/evidence/memory-model-runtime.json) |
 
-四个日常 runner 均使用本地资源；上下文增强 runner 使用本地协议替身并实际观察 Pi Provider payload。`scripts/validation-evidence.mjs` 集中维护五份当前 evidence 的实现输入与必需 check 集；免费 checker 只读核对全部 evidence，新鲜度检查不会发起 Provider 请求。
+验证链按风险先运行四个本地 runner，再运行模型能力与成本 runner。上下文增强 runner 使用本地协议替身并实际观察 Pi Provider payload；质量与真实采用 runner 共用 [`../../validation/model.json`](../../validation/model.json) 的一个 `openRouterModel`，由它派生任务与记忆路线。`scripts/validation-evidence.mjs` 集中维护五份稳定 evidence 的实现输入与必需 check 集；checker 只读核对 evidence，新鲜度检查不会发起 Provider 请求。
 
 ```bash
 node scripts/validate-source-archive.mjs
@@ -23,7 +23,7 @@ node scripts/validate-memory-model-runtime.mjs
 node scripts/check-validation-evidence.mjs
 ```
 
-真实 Provider 质量实验不属于日常免费检查；在 OpenViking 记忆模型认证可用时执行：
+本地检查通过且 OpenViking 记忆模型凭据可用后，继续执行质量与成本环节：
 
 ```bash
 node scripts/validate-context-quality.mjs

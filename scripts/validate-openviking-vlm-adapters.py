@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import json
 import os
+import sys
 from types import SimpleNamespace
 
 from openviking.models.vlm import VLMFactory
@@ -12,6 +13,9 @@ from openviking.models.vlm.backends.codex_responses_adapter import (
     _convert_tools_for_responses,
 )
 
+if len(sys.argv) > 2:
+    raise SystemExit("Usage: validate-openviking-vlm-adapters.py [openrouter-model]")
+OPENROUTER_MODEL = sys.argv[1] if len(sys.argv) == 2 else "openrouter/validation/model"
 PROVIDERS = {
     "volcengine": "VolcEngineVLM",
     "openai": "OpenAIVLM",
@@ -210,8 +214,35 @@ def probe_codex_request_semantics():
     }
 
 
+def probe_litellm_openrouter_request_semantics():
+    calls = []
+    instance = VLMFactory.create(
+        {
+            "provider": "litellm",
+            "model": OPENROUTER_MODEL,
+            "api_key": "validation-only",
+        }
+    )
+    original = litellm_vlm.completion
+    litellm_vlm.completion = lambda **kwargs: calls.append(kwargs) or response()
+    try:
+        instance.get_completion(messages=MESSAGES, tools=TOOLS, tool_choice="auto")
+    finally:
+        litellm_vlm.completion = original
+    request = calls[0]
+    return {
+        "model": request.get("model"),
+        "apiKeyForwarded": request.get("api_key") == "validation-only",
+        "reasoningForwarded": any(key in request for key in ("reasoning", "reasoning_effort", "thinking")),
+        "temperatureForwarded": isinstance(request.get("temperature"), (int, float)),
+        "temperature": request.get("temperature"),
+        "timeoutForwarded": isinstance(request.get("timeout"), (int, float)),
+    }
+
+
 classes = {provider: probe_provider(provider) for provider in PROVIDERS}
 codex_request = probe_codex_request_semantics()
+litellm_openrouter_request = probe_litellm_openrouter_request_semantics()
 litellm_routing = probe_litellm_routing()
 litellm_routing_passed = all(
     litellm_routing[name]
@@ -229,6 +260,14 @@ litellm_routing_passed = all(
 result = {
     "passed": probe_codex_translation()
     and litellm_routing_passed
+    and litellm_openrouter_request == {
+        "model": OPENROUTER_MODEL,
+        "apiKeyForwarded": True,
+        "reasoningForwarded": False,
+        "temperatureForwarded": True,
+        "temperature": 0.0,
+        "timeoutForwarded": True,
+    }
     and codex_request == {
         "reasoningForwarded": False,
         "temperatureForwarded": False,
@@ -242,6 +281,7 @@ result = {
     "toolChoice": True,
     "functionCalls": True,
     "codexResponsesTranslation": True,
+    "litellmOpenRouterRequest": litellm_openrouter_request,
     "codexRequest": codex_request,
 }
 print(json.dumps(result, separators=(",", ":")))

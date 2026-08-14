@@ -19,7 +19,7 @@ Session 记忆协调对每个快照验证 session ID、session file、leaf、ent
 - 有序 entry ID 集合；
 - 完整路线指纹。
 
-后台配置检查发布已经验证的运行代际；配置文件或 runtime state 变化由文件观察器先使该内存代际和旧缓存失效，再异步重建。`context` hook 本身不读取文件或访问 OpenViking，只重新计算路线身份并核对已验证代际。只有代际与四项路线身份完全一致的就绪结果可以替换历史消息。
+后台运行检查以 Launcher 发布的受管 OpenViking 子进程作为运行代际。用户配置文件只描述下一次重启的目标；配置变化只刷新诊断，不能使仍在运行的实例、内存代际或缓存失效。runtime state 显示当前子进程停止或被新子进程替换时，扩展才取消旧任务并按新的 `launchId + childPid` 重建。`context` hook 本身不读取文件或启动 OpenViking 工作，只重新计算路线身份、核对当前运行实例，并可为同实例同路线的既有 pending 作有界等待。只有运行实例与四项路线身份完全一致的结果可以替换历史消息。
 
 当前 prompt 及其后续 assistant tool call、tool result 始终保留为 Pi 原生消息。增强内容只替换当前 prompt 之前的历史，避免破坏 Provider 对工具调用序列的要求。
 
@@ -33,32 +33,33 @@ session_start / turn_end / session_tree / session_compact / before_agent_start
       → 同一路线去重
       → 线性后继只追加新增 entry
       → 分叉路线使用隔离的 OpenViking Session
-      → 达到归档阈值时 commit，等待 Working Memory 后台任务终态
-      → 以固定 token budget 请求 context assembly
+      → batch append 后立即以固定 token budget 请求 context assembly，来源核验后发布精确路线 active history 快照
+      → 达到归档阈值时 commit；`accepted` 轮询 Working Memory 后台任务并以最终 assembly 更新同一路线，`skipped` 保留 active history 且不轮询空 task ID
   → 工作上下文优化格式化有界增强历史
-  → 就绪结果按完整路线身份和运行中记忆模型配置代际缓存
+  → 就绪结果按完整路线身份和当前受管 OpenViking 子进程代际缓存
 
 context
   → 重新取得当前 prompt 之前的路线身份
   → 精确命中就绪结果：增强消息 + 当前 Pi turn
-  → 未命中、过期或错误：保持全部 Pi 原生消息
+  → 精确路线已有在途准备：最多等待 1000 ms，只观察该任务是否发布来源核验结果
+  → 无精确 pending、等待超时、过期或错误：保持全部 Pi 原生消息并记为增强降级
 ```
 
-准备在 Provider 请求之外异步执行；OpenViking 延迟不能阻塞 Pi 原生调用。同一路线共享准备任务，运行任务之后只保留同一 Pi session 最新的未启动路线，防止旧分支形成无界积压；每个派生 session 的追加和 commit 保持串行。缓存与派生 session 数量有固定上限，淘汰只损失增强就绪度，不影响 Pi 历史。
+准备在 Provider 请求之外异步执行；`context` hook 不读取配置、不创建任务，也不为无精确 pending 的路线访问 OpenViking。为避免零间隔下一轮早于 active assembly，它只可在同代际、同精确路线已有在途任务时等待最多 1000 ms；到期立即原生降级。同一路线共享准备任务，运行任务之后只保留同一 Pi session 最新的未启动路线，防止旧分支形成无界积压；每个派生 session 的追加和 commit 保持串行。缓存与派生 session 数量有固定上限，淘汰只损失增强就绪度，不影响 Pi 历史。
 
 ## 5. 内容投影与预算
 
 Pi 集成先把当前路线中的用户、assistant、工具结果、bash、自定义上下文、branch summary 和 compaction 规范化；长时记忆只把规范化结果投影为 OpenViking 文本消息，并通过 `source_message_ids` 保留 Pi entry ID。`firstKeptEntryId`、`retainedTail`、消息 role 与内容 block 的版本差异只在 Pi 集成边界解释。
 
-OpenViking 返回 Working Memory overview 与预算后的活跃消息，具体字段和兼容差异由 [`../contracts/openviking-adapter.md`](../contracts/openviking-adapter.md) 统一归一化。overview 的语言和标题不是生产协议；已知无任务信息的通用失败回退与无法归一化的响应不可采用。扩展把有效内容格式化为一个隐藏的 Pi custom message，并再次执行字符上限保护；不把 OpenViking 消息 ID、摘要或状态写回 Pi session。显式 `recall_session` 继续承担来源级核对，增强摘要不能替代 Pi 权威 entry。
+OpenViking 返回 Working Memory overview 与预算后的活跃消息，具体字段和兼容差异由 [`../contracts/openviking-adapter.md`](../contracts/openviking-adapter.md) 统一归一化。commit 只接受 `accepted + task ID` 或 `skipped + 空 task ID`；后者表示保留窗口内没有可归档消息，不是失败。overview 的语言和标题不是生产协议；通用计数回退、矛盾或未知 commit 状态与无法归一化的响应不可采用。扩展把有效内容格式化为一个隐藏的 Pi custom message，并再次执行字符上限保护；不把 OpenViking 消息 ID、摘要或状态写回 Pi session。显式 `recall_session` 继续承担来源级核对，增强摘要不能替代 Pi 权威 entry。
 
 ## 6. 失败、分支与恢复
 
 - 路线切换立即使旧指纹结果不可采用；迟到结果只能进入自己的路线缓存。
-- OpenViking 创建、追加、commit、任务轮询或 context assembly 任一步失败，本轮保持 Pi 原生消息；失败、淘汰与关闭会尽力删除扩展自建的派生 Session，清理失败不阻断 Pi。
+- OpenViking 创建、追加、`accepted` commit 的任务轮询或 context assembly 任一步失败时，本轮保持 Pi 原生消息并记为增强降级；合法 `skipped` commit 保留 active history。commit 运行期间发布的 active history 快照在任务失败或超时后立即失效，不采用未完成任务产物。失败、淘汰与关闭会尽力删除扩展自建的派生 Session，清理失败不阻断 Pi。
 - 没有已配置且实际运行的记忆模型时不准备自动增强上下文，模型调用保持 Pi 原生；显式来源召回继续可用。
-- 配置校验失败、active/target 指纹不一致或重启开始时立即禁用增强并销毁旧代缓存；新代配置与运行状态一致后才重建。
-- tree、compaction、session replacement 与 reload 先把采用状态切回 Pi 原生；新实例或新路线只从 Pi 当前 leaf 重建，准备完成且实际进入 Provider 请求后再显示增强。
+- 配置校验失败或配置目标改变时，当前 ready 的受管实例继续提供增强，直到用户执行重启；重启预检失败同样保留旧实例。只有 runtime state 表明旧子进程已停止时才取消旧代缓存；新子进程 ready 后按新的进程代际重建。
+- tree、compaction、session replacement 与 reload 使新实例或新路线只从 Pi 当前 leaf 重建；重建期间显示“增强记忆 · 初始化中”或“增强记忆 · 生效中”，准备结果实际进入 Provider 请求后显示“增强记忆”。只有服务不可用并强制回退时显示“Pi 原生”。
 
 ## 7. 验证与校准
 

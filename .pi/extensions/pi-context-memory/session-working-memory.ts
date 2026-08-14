@@ -4,7 +4,7 @@ import type { SourceEntry } from "./long-term-memory.ts";
 import {
   OpenVikingHttpClient,
   normalizeBatchPendingTokens,
-  normalizeCommitTaskId,
+  normalizeCommitResult,
   normalizeSessionContext,
   normalizeTaskState,
   type NormalizedSessionContext,
@@ -17,7 +17,7 @@ const DEFAULT_CONTEXT_TOKEN_BUDGET = 12_000;
 const DEFAULT_COMMIT_PENDING_TOKENS = 6_000;
 const DEFAULT_KEEP_RECENT_MESSAGES = 8;
 const DEFAULT_MAX_MIRRORS = 8;
-const DEFAULT_TASK_TIMEOUT_MS = 60_000;
+export const DEFAULT_WORKING_MEMORY_TASK_TIMEOUT_MS = 180_000;
 const DEFAULT_TASK_POLL_MS = 100;
 export interface SessionWorkingMemoryOptions {
   contextTokenBudget?: number;
@@ -145,7 +145,7 @@ export class OpenVikingSessionMemory {
     this.commitPendingTokens = positiveInteger(options.commitPendingTokens, DEFAULT_COMMIT_PENDING_TOKENS, "Commit token threshold");
     this.keepRecentMessages = nonNegativeInteger(options.keepRecentMessages, DEFAULT_KEEP_RECENT_MESSAGES, "Recent message count");
     this.maxMirrors = positiveInteger(options.maxMirrors, DEFAULT_MAX_MIRRORS, "Route mirror limit");
-    this.taskTimeoutMs = positiveInteger(options.taskTimeoutMs, DEFAULT_TASK_TIMEOUT_MS, "Task timeout");
+    this.taskTimeoutMs = positiveInteger(options.taskTimeoutMs, DEFAULT_WORKING_MEMORY_TASK_TIMEOUT_MS, "Task timeout");
     this.taskPollMs = positiveInteger(options.taskPollMs, DEFAULT_TASK_POLL_MS, "Task poll interval");
   }
 
@@ -158,6 +158,26 @@ export class OpenVikingSessionMemory {
       && JSON.stringify(prepared.route.entryIds) === JSON.stringify(route.entryIds)
       ? prepared
       : undefined;
+  }
+
+  async waitForReady(
+    route: SessionRouteIdentity,
+    timeoutMs: number,
+    signal?: AbortSignal,
+  ): Promise<PreparedSessionMemory | undefined> {
+    if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 0) throw new Error("Ready wait timeout must be a non-negative integer");
+    const existing = this.getReady(route);
+    if (existing || timeoutMs === 0 || !this.pending.has(route.fingerprint)) return existing;
+
+    const deadline = Date.now() + timeoutMs;
+    while (this.pending.has(route.fingerprint) && Date.now() < deadline) {
+      signal?.throwIfAborted();
+      const prepared = this.getReady(route);
+      if (prepared) return prepared;
+      await new Promise<void>((resolveDelay) => setTimeout(resolveDelay, Math.min(5, deadline - Date.now())));
+    }
+    signal?.throwIfAborted();
+    return this.getReady(route);
   }
 
   prepare(
@@ -216,6 +236,7 @@ export class OpenVikingSessionMemory {
         this.trimReady();
         job.resolve(prepared);
       } catch (error) {
+        this.ready.delete(job.key);
         this.discardMirrorsForRoute(job.entries);
         job.reject(error);
       } finally {
@@ -289,22 +310,40 @@ export class OpenVikingSessionMemory {
         { keep_recent_count: this.keepRecentMessages },
         operationSignal,
       );
-      await this.waitForTask(normalizeCommitTaskId(result), operationSignal);
+      const commit = normalizeCommitResult(result);
+      const activeContext = await this.assembleContext(route, mirror, operationSignal);
+      this.ready.set(route.fingerprint, activeContext);
+      this.trimReady();
+      if (commit.status === "skipped") {
+        mirror.pendingTokens = 0;
+        this.trimMirrors(mirror);
+        return activeContext;
+      }
+      await this.waitForTask(commit.taskId, operationSignal);
       mirror.pendingTokens = 0;
     }
 
+    const prepared = await this.assembleContext(route, mirror, operationSignal);
+    this.trimMirrors(mirror);
+    return prepared;
+  }
+
+  private async assembleContext(
+    route: SessionRouteIdentity,
+    mirror: RouteMirror,
+    signal: AbortSignal,
+  ): Promise<PreparedSessionMemory> {
     const { result: assembled } = await this.client.request(
       "GET",
       `/api/v1/sessions/${encodeURIComponent(mirror.openVikingSessionId)}/context?token_budget=${this.contextTokenBudget}`,
       undefined,
-      operationSignal,
+      signal,
     );
     const context = normalizeSessionContext(assembled);
     const routeIds = new Set(route.entryIds);
     if (context.messages.some((message) => message.sourceMessageIds.some((id) => !routeIds.has(id)))) {
       throw new Error("OpenViking context contains sources outside the current Pi route");
     }
-    this.trimMirrors(mirror);
     return { route, openVikingSessionId: mirror.openVikingSessionId, context };
   }
 

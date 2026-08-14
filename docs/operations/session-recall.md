@@ -2,7 +2,7 @@
 
 ## 1. 安装与启动
 
-前置条件是 Node.js `>=22.19.0` 和一个能够加载本扩展当前公开 hook 的 Pi。当前 evidence 的宿主验证坐标为 Pi `0.84.1`；扩展不安装、降级或替换用户的 Pi，后续宿主兼容由项目维护者跟随验证。
+前置条件是 Node.js `>=22.19.0` 和一个能够加载本扩展当前公开 hook 的 Pi。当前 evidence 的宿主验证坐标为 Pi `0.84.2`；扩展不安装、降级或替换用户的 Pi，后续宿主兼容由项目维护者跟随验证。
 
 ```bash
 node scripts/install-dependencies.mjs
@@ -10,19 +10,20 @@ node scripts/install-dependencies.mjs
 
 安装脚本使用 `uv.lock`，把当前可复现的 uv、Python 3.12、OpenViking `0.4.13` 和本地 embedding 依赖安装到项目内 `.tools/`、`.venv/` 与 `.cache/`，不修改系统 Python 或 shell PATH。OpenViking 版本是项目私有依赖锁定，不是对外部服务的永久版本要求。基础服务配置位于 [`../../config/openviking.json`](../../config/openviking.json)；首次启动 Pi 或 OpenViking 时，系统在 `~/.pi/pi-context-memory.jsonc` 独占创建用户级注释模板。
 
-启动 OpenViking：
+启动 OpenViking。当前开发验证的 OpenRouter 记忆路线必须只在 launcher 终端提供密钥：
 
 ```bash
+export PCR_OPENVIKING_VLM_API_KEY="<OpenRouter API key>"
 node scripts/start-openviking.mjs
 ```
 
-启动脚本作为项目 OpenViking 生命周期所有者运行：它先原子创建 `.artifacts/openviking/runtime/launcher.lock`，再预检配置与目标端口，生成仅当前用户可读写的运行配置，启动子进程并等待 `/health` 返回 `healthy=true`。OpenViking `0.4.13` 的 `/ready` 还包含 `viking://` 目录检查，不作为进程启动屏障；来源读写能力由召回验证单独覆盖。`launcher.json` 发布 loopback 控制入口和完整操作期限，`state.json` 分别发布实际运行配置与当前应用目标；脚本只停止自己持有的子进程。首次启动会把约 46 MiB 的本地 embedding 模型下载到项目 `.cache/openviking/models/`。服务健康后，在另一个终端从同一仓库根目录启动 Pi：
+启动脚本作为项目 OpenViking 生命周期所有者运行：它先原子创建 `.artifacts/openviking/runtime/launcher.lock`，再预检配置与目标端口，生成仅当前用户可读写的运行配置，启动子进程并等待 `/health` 返回 `healthy=true`。LiteLLM OpenRouter 配置始终编译为稳定的 `PCR_OPENVIKING_VLM_API_KEY` 引用；只有 launcher 启动模型服务时必须拥有真实密钥，Pi 进程不接触密钥，也不重建 launcher 的可执行配置来决定当前增强是否可用，而是采用 runtime state 发布的 ready 受管子进程。OpenViking `0.4.13` 的 `/ready` 还包含 `viking://` 目录检查，不作为进程启动屏障；来源读写能力由召回验证单独覆盖。`launcher.json` 发布 loopback 控制入口和完整操作期限，`state.json` 分别发布实际运行实例与下一次应用目标；脚本只停止自己持有的子进程。启动器 PID、启动标识、锁和子进程必须一致。首次启动会把约 46 MiB 的本地 embedding 模型下载到项目 `.cache/openviking/models/`。服务健康后，在另一个终端从同一仓库根目录启动 Pi：
 
 ```bash
 pi
 ```
 
-项目被信任后，Pi 自动加载扩展并注册 `recall_session`。来源索引始终使用本地 embedding 和 `vectors_only`。当用户配置的记忆模型已经由项目启动器实际加载时，扩展还会异步维护当前路线的 OpenViking Session Working Memory，并在精确路线结果就绪后采用有界增强历史；未配置模型时保持来源召回与 Pi 原生上下文。
+项目被信任后，Pi 自动加载扩展并注册 `recall_session`。来源索引始终使用本地 embedding 和 `vectors_only`。当用户配置的记忆模型已经由项目启动器实际加载时，扩展还会异步维护当前路线的 OpenViking Session Working Memory；精确路线的 active history assembly 通过来源核验后即可采用有界增强历史，不等待 Working Memory 生成，任务完成后再以 overview 更新同一路线结果。未配置模型时保持来源召回与 Pi 原生上下文。
 
 项目内正常路径由启动脚本托管本地 OpenViking；仅使用显式召回时也可以通过 `PCR_OPENVIKING_URL` 连接受信服务，但 `/restart-viking` 只控制项目启动器拥有的本地实例。日常验证使用 runner 自启的受控本地 OpenViking 或协议替身，完整成本验证随自动上下文优化纵向交付建立，实验设计见 [`../validation/README.md`](../validation/README.md)。
 
@@ -32,9 +33,9 @@ pi
 | --- | --- | --- |
 | `PCR_OPENVIKING_URL` | `http://127.0.0.1:1933` | OpenViking服务根 URL |
 | `PCR_OPENVIKING_API_KEY` | 未设置 | 需要服务 API key 认证时发送 `X-API-Key` |
-| `PCR_OPENVIKING_VLM_API_KEY` | 未设置 | 普通 OpenViking VLM Provider 的模型凭据；只在子进程环境中展开 |
+| `PCR_OPENVIKING_VLM_API_KEY` | 未设置 | OpenViking VLM 凭据；当前 OpenRouter 开发路线要求 launcher 设置，生成配置只保存环境变量引用 |
 | `PCR_MEMORY_MODEL_SETTINGS` | 未设置 | 受控部署或验证覆盖记忆模型 JSONC 路径；普通运行不设置，设置时 Pi 与启动器必须使用同一值 |
-| `PCR_OPENVIKING_TIMEOUT_MS` | `30000` | 单次来源或 Session API 请求期限；Working Memory 任务另有 60 秒终态期限 |
+| `PCR_OPENVIKING_TIMEOUT_MS` | `30000` | 单次来源或 Session API 请求期限；Working Memory 任务另有 180 秒终态期限 |
 | `PCR_OPENVIKING_READINESS_TIMEOUT_MS` | `30000` | 启动器等待 `/health` 健康的期限 |
 | `PCR_OPENVIKING_STOP_TIMEOUT_MS` | `5000` | 启动器在升级为 `SIGKILL` 前等待子进程退出的期限 |
 | `PCR_OBSERVATION_LOG` | 未设置 | 仅供开发验证追加脱敏 JSONL 运行观察 |
@@ -43,30 +44,20 @@ pi
 
 ## 3. 使用
 
-执行 `/memory-model` 查看用户配置路径和当前运行模型。编辑 `~/.pi/pi-context-memory.jsonc`，把 `memoryModel: null` 替换为文件中一个 Provider 示例并填写模型及必要连接字段；保存后执行 `/restart-viking`。恢复为 `null` 并重启会停用 VLM、保留基础来源服务。命令不改写 JSONC，且只向当前项目启动器提交应用请求。普通 Provider 通过 `PCR_OPENVIKING_VLM_API_KEY` 提供凭据；LiteLLM 的 `model` 使用 `provider/model` 路由，API-key 来源可使用同一凭据入口，未设置时由 LiteLLM 读取来源环境变量或云原生凭据。
+执行 `/memory-model` 查看用户配置路径和当前运行模型。编辑 `~/.pi/pi-context-memory.jsonc`，把 `memoryModel: null` 替换为文件中一个 Provider 示例并填写模型及必要连接字段；保存后执行 `/restart-viking`。恢复为 `null` 并重启会停用 VLM、保留基础来源服务。命令不改写 JSONC，且只向当前项目启动器提交应用请求。普通运行由用户自行选择记忆模型；开发验证从 [`../../validation/model.json`](../../validation/model.json) 的一个 `openRouterModel` 派生 Pi 任务路线和 LiteLLM 记忆路线，再通过隔离配置运行，不要求修改用户文件。验证 launcher 必须通过 `PCR_OPENVIKING_VLM_API_KEY` 获得密钥。其它 LiteLLM 路由按来源使用同一凭据入口、来源环境变量或云原生凭据。
 
 系统不会改写已有 JSONC 的注释。若文件仍是未配置的旧模板，可先备份并删除该文件，再执行 `/memory-model` 生成当前模板；已经配置的文件应保留设置，只按新模板说明手工调整 LiteLLM 段。
 ```jsonc
 {
   "memoryModel": {
-    "provider": "openai",
-    "model": "<model-id>",
-    "api_base": "https://api.openai.com/v1" // optional
-  }
-}
-```
-
-扩展只选择 Provider、模型和必要连接字段，不主动写入 `thinking`、reasoning、temperature 等跨 Provider 控制。实际语义由 OpenViking 目标适配器及其最终 Provider 请求共同决定；例如当前 Codex Responses evidence 未转发 reasoning 或 temperature，因此 reasoning 使用 Provider 默认。
-LiteLLM 直接写上游来源路由，例如：
-
-```jsonc
-{
-  "memoryModel": {
     "provider": "litellm",
-    "model": "anthropic/<model-id>"
+    "model": "openrouter/<provider>/<model-id>"
   }
 }
 ```
+
+扩展只选择 Provider、模型和必要连接字段，不主动写入 `thinking`、reasoning、temperature 等跨 Provider 控制。实际语义由 OpenViking 目标适配器及最终请求共同决定；当前 LiteLLM OpenRouter evidence 保留模型路由，转发 adapter 默认 temperature `0`，不转发 reasoning。Pi 任务模型的 `thinking: off` 仍是独立条件。
+LiteLLM 的 `model` 直接写上游来源路由，当前 OpenRouter 形式为 `openrouter/<provider>/<model-id>`。
 
 模板给出 Bedrock、SageMaker、Vertex AI 的显式云路由示例；自定义 OpenAI-compatible 端点使用 `model: "openai/<model-id>"` 并填写 `api_base`。这些示例定义产品当前明确验证的路由形态，更多来源、认证和模型前缀以模板链接的 LiteLLM 官方目录为准。
 任务模型可以调用：
@@ -108,7 +99,15 @@ viking://resources/pi-context-memory/
 - `working_context_ready|error|rejected`：保存路线指纹、派生 session、token、内容哈希或脱敏错误；
 - `context`：保存原始与实际采用消息的哈希、字节、路线指纹及 `enhanced|pi-native` 路径。
 
-`.artifacts/openviking/runtime/state.json` 区分 `starting`、`ready`、`restarting`、`failed` 和 `stopped`，以 `active*` 表示实际模型、`target*` 表示应用目标。Pi 状态栏按每次实际模型消息显示“增强记忆”或“Pi 原生”；`/memory-model` 同时显示配置、运行模型与最近采用路径。运行中配置错误保持旧实例，冷启动配置错误启动无 VLM 基础服务；启动器 PID、启动标识、锁和子进程必须一致。
+真实采用诊断从 [`../../validation/model.json`](../../validation/model.json) 派生任务与记忆模型，只需选择 `accepted` 或 `skipped` 场景；runner 核对 `PCR_MEMORY_MODEL_SETTINGS` 解析到的配置（未设置时才是用户 JSONC）与同一环境下 runtime 的 active/target 坐标，不一致时拒绝运行。开发验证可让 launcher 与 runner 使用同一个 `.artifacts/` 隔离配置，无需修改用户文件。任务模型由 Pi 直接调用 OpenRouter，记忆模型由 OpenViking 经 LiteLLM 调用同一 OpenRouter 账户：
+
+```bash
+PCR_REAL_ADOPTION_SCENARIO=accepted \
+node scripts/validate-real-context-adoption.mjs
+```
+
+runner 固定 5 秒宿主启动窗口但不预等待 Working Memory；`skipped` 场景默认零额外轮次间隔核对第二轮，`accepted` 场景核对 active history 请求先于最终 Working Memory。原始 session、观察、RPC 和 Pi 任务 usage 只写入 `.artifacts/real-context-adoption/`；OpenRouter 最终账单仍是 billed cost 权威。
+`.artifacts/openviking/runtime/state.json` 区分 `starting`、`ready`、`restarting`、`failed` 和 `stopped`，以 `active*` 表示实际模型、`target*` 表示应用目标。Pi 状态栏实时显示“增强记忆 · 初始化中”“增强记忆 · 生效中”或“增强记忆”；只有增强不可用并强制回退时显示“Pi 原生”。`/memory-model` 另外显示配置、运行模型与最近实际采用路径。运行中配置错误保持旧实例，冷启动配置错误启动无 VLM 基础服务；启动器 PID、启动标识、锁和子进程必须一致。
 
 索引队列独立于来源归档和 Provider 请求。慢索引不会阻塞 Pi turn；显式召回重新同步当前历史路线并最多等待 5 秒，仍未完成时以“索引准备中”失败，不能伪装成空结果。查询不可达、超时或响应无效时 tool result 标为错误，Pi Agent 仍可继续。
 

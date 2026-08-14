@@ -33,7 +33,7 @@ OpenViking 只产生候选和分数。每个候选必须具有合法 URI 和有�
 
 ### 3.3 Session Working Memory
 
-Session create、batch append、commit、task polling 和 context assembly 使用 OpenViking 当前公开协议。核心字段经适配层归一化；可选 token 统计缺失时由扩展使用本地保守估算，不把诊断字段升级为必要契约。
+Session create、batch append、commit、task polling 和 context assembly 使用 OpenViking 当前公开协议。commit 只接受两种终态：`accepted` 必须携带 task ID 并轮询；`skipped` 必须为空 task ID，表示保留窗口内的合法 no-op，不轮询 task。矛盾或未知状态 fail closed。其它核心字段经适配层归一化；可选 token 统计缺失时由扩展使用本地保守估算，不把诊断字段升级为必要契约。
 
 Working Memory overview 是派生文本，不以固定语言、标题名称、数量、顺序或长度定义有效性。可采用响应必须包含非空、可识别且带来源 ID 的 active messages；未知内容形态、缺失来源、空 active tail 或已知通用回退都关闭本次增强。overview 的一般任务质量由共享 fixture 和真实质量 checker 验证。
 
@@ -41,13 +41,15 @@ Working Memory overview 是派生文本，不以固定语言、标题名称、�
 
 用户 JSONC 是扩展拥有的稳定、最小配置面，只包含当前用户需要选择的 Provider、模型和必要连接字段。扩展可以支持 OpenViking 能力的明确子集，不承诺复制其全部 Provider registry 或内部 LiteLLM 路由表。
 
+LiteLLM OpenRouter 模型始终编译为稳定的 `PCR_OPENVIKING_VLM_API_KEY` 引用；只有 launcher 启动实际模型服务时要求密钥，Pi 配置读取进程不接触密钥。Launcher 独占可执行配置校验与完整配置指纹；Pi 只读取不含凭据的用户设置用于诊断，并以 runtime state 中 ready 的受管子进程判断当前增强能力。无凭据 launcher 仍明确降级为无 VLM 基础服务。
+
 配置桥只在一个位置接触 OpenViking 配置校验入口。上游新增未知 Provider 不得使已有受支持 Provider 失效；上游删除或改变已支持能力时，适配验证必须失败并由维护者更新转换。
 
-`thinking`、reasoning、temperature 等参数只有在目标 Provider 的最终适配请求得到验证时才能形成产品承诺。当前质量 evidence 观察到 OpenViking Codex Responses 适配器没有转发 reasoning 或 temperature，因此 reasoning 使用 Provider 默认；这与 Pi 任务模型的 `thinking: off` 是两项独立条件。
+`thinking`、reasoning、temperature 等参数只有在目标 Provider 的最终适配请求得到验证时才能形成产品承诺。质量 runner 核对统一配置的 LiteLLM OpenRouter 路由与 API key 被保留，adapter 默认 temperature `0` 被转发，但 reasoning 不被转发；这与 Pi 任务模型的 `thinking: off` 是两项独立条件。
 
 ## 5. Pi 降级与生效条件
 
-配置发现、文件读取、Python bridge、OpenViking 健康和所有记忆操作都在 Provider 请求之外执行。Pi `context` hook 只读取已经完成的内存状态和当前路线就绪结果，绝不等待这些操作。
+配置发现、文件读取、Python bridge、OpenViking 健康和记忆准备都在 Provider 请求之外启动。Pi `context` hook 不发起这些操作；只有同代际、同精确路线已有 pending 时可等待最多 1000 ms 取得来源核验结果。
 
 任一能力正在检查、未知、失败、过期或与当前配置及路线不一致时，本次请求保持 Pi 原生消息。后台结果只影响完成后的后续请求，不能改变已经开始的 Provider 请求。
 

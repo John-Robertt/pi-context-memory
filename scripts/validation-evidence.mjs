@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { spawnSync } from "node:child_process";
+import { readValidationModels, VALIDATION_MODEL_CONFIG_PATH } from "./validation-model-config.mjs";
 
 const DEFINITIONS = {
   "source-archive": {
@@ -33,6 +34,7 @@ const DEFINITIONS = {
       ".pi/extensions/pi-context-memory/working-context-optimization.ts",
       "scripts/validate-source-archive.mjs",
       "scripts/validation-evidence.mjs",
+      "scripts/validation-model-config.mjs",
       "scripts/check-validation-evidence.mjs",
     ],
   },
@@ -91,6 +93,7 @@ const DEFINITIONS = {
       "scripts/install-dependencies.mjs",
       "scripts/validate-source-recall.mjs",
       "scripts/validation-evidence.mjs",
+      "scripts/validation-model-config.mjs",
       "scripts/check-validation-evidence.mjs",
       "uv.lock",
       "validation/fixtures/openviking-source-recall.json",
@@ -101,6 +104,7 @@ const DEFINITIONS = {
     evidencePath: "validation/evidence/context-enhancement.json",
     generatedBy: "scripts/validate-context-enhancement.mjs",
     requiredChecks: [
+      "activeHistoryAvailableDuringWorkingMemory",
       "backendFailureFallsBack",
       "backendFailureRecovery",
       "branchIsolation",
@@ -111,12 +115,15 @@ const DEFINITIONS = {
       "currentRouteIdentity",
       "currentTurnPreserved",
       "inFlightShutdownCleaned",
+      "inFlightContextWaitAdopted",
+      "inFlightReadyWaitBounded",
       "lifecycleProviderStateConsistent",
+      "memoryStatusLifecycle",
       "invalidRouteRejected",
       "lateRouteResultRejected",
       "linearRouteReused",
       "localProviderOnly",
-      "mismatchedRuntimeRejected",
+      "desiredConfigDoesNotDisableRuntime",
       "openVikingProtocolCovered",
       "ownedSessionsCleaned",
       "pendingRoutesCollapsed",
@@ -127,9 +134,13 @@ const DEFINITIONS = {
       "sessionReplacementLifecycle",
       "sessionIsolation",
       "sharedFixtureLoaded",
+      "skippedCommitRetainsActiveHistory",
+      "slowWorkingMemoryCompletesWithinDeadline",
       "sourceIdsPreserved",
       "treeLifecycle",
       "workingMemoryAssembled",
+      "workingMemoryTaskDeadlineBounded",
+      "workingMemoryTimeoutFallsBack",
       "workingContextResponseNormalized",
     ],
     files: [
@@ -144,6 +155,7 @@ const DEFINITIONS = {
       "scripts/check-validation-evidence.mjs",
       "scripts/validate-context-enhancement.mjs",
       "scripts/validation-evidence.mjs",
+      "scripts/validation-model-config.mjs",
       "validation/fixtures/context-enhancement-long-task.json",
     ],
   },
@@ -155,6 +167,7 @@ const DEFINITIONS = {
       "enhancedContextAdopted",
       "enhancedQuality",
       "memoryRequestSemanticsObserved",
+      "memoryUsageAttributed",
       "nativeQuality",
       "pairedConditions",
       "realWorkingMemoryReady",
@@ -176,6 +189,8 @@ const DEFINITIONS = {
       "scripts/check-validation-evidence.mjs",
       "scripts/validate-context-quality.mjs",
       "scripts/validation-evidence.mjs",
+      "scripts/validation-model-config.mjs",
+      VALIDATION_MODEL_CONFIG_PATH,
       "uv.lock",
       "validation/fixtures/context-enhancement-long-task.json",
     ],
@@ -190,6 +205,7 @@ const DEFINITIONS = {
       "azureFieldRejected",
       "branchUnchanged",
       "childExitPublished",
+      "codexIgnoresAmbientCredential",
       "commandNoProviderRequests",
       "commentedTemplateCreated",
       "concurrentLauncherRejected",
@@ -198,9 +214,9 @@ const DEFINITIONS = {
       "configSecretsExcluded",
       "configurationDiagnosticContentHashed",
       "configuredAndRunningDistinct",
-      "contextRemainsPiNative",
       "deadChildReadySuppressed",
       "deterministicFingerprint",
+      "desiredConfigDoesNotDisableRunning",
       "emptyConfigurationAccepted",
       "emptyConfigurationDisablesModel",
       "existingConfigPreserved",
@@ -213,9 +229,12 @@ const DEFINITIONS = {
       "launcherOwnershipProtected",
       "litellmCatalogDocumented",
       "litellmCatalogObserved",
+      "memoryStatusLifecycleVisible",
       "missingCredentialRejected",
       "missingLauncherReported",
       "nullConfigurationStateReported",
+      "openRouterCredentialReferenceStable",
+      "openRouterLauncherCredentialRequired",
       "operationDeadlineCoversFailureCleanup",
       "operationDeadlinePublished",
       "orderedRestart",
@@ -225,6 +244,7 @@ const DEFINITIONS = {
       "readinessTimeoutPublished",
       "schemaObserved",
       "sharedUserConfig",
+      "splitCredentialRuntimeRemainsAvailable",
       "signalCleansOwnedChild",
       "staleLifecycleLockRequiresExplicitRecovery",
       "staleRuntimeSuppressed",
@@ -253,6 +273,7 @@ const DEFINITIONS = {
       "scripts/start-openviking.mjs",
       "scripts/validate-memory-model-runtime.mjs",
       "scripts/validation-evidence.mjs",
+      "scripts/validation-model-config.mjs",
       "uv.lock",
     ],
   },
@@ -376,6 +397,7 @@ export function stableEvidenceMismatches(root, key, evidence) {
       "compactionProviderAdoption",
       "backendRecovery",
       "providerStateConsistent",
+      "memoryStatusLifecycle",
     ];
     if (!lifecycle || requiredLifecycle.some((name) => lifecycle[name] !== true)) {
       mismatches.push("context lifecycle evidence is incomplete");
@@ -391,6 +413,7 @@ export function stableEvidenceMismatches(root, key, evidence) {
     const native = evidence?.arms?.native;
     const enhanced = evidence?.arms?.enhanced;
     const fixture = JSON.parse(readFileSync(resolve(root, "validation/fixtures/context-enhancement-long-task.json"), "utf8"));
+    const models = readValidationModels(root);
     const qualityOutputValid = (arm) => {
       if (!arm || typeof arm.text !== "string" || sha256(arm.text) !== arm.textSha256) return false;
       try {
@@ -406,20 +429,36 @@ export function stableEvidenceMismatches(root, key, evidence) {
       || JSON.stringify(evidence?.execution?.order) !== JSON.stringify(["native", "enhanced"])) {
       mismatches.push("quality execution conditions are missing");
     }
-    if (typeof evidence?.models?.task !== "string" || typeof evidence?.models?.memory !== "string") {
-      mismatches.push("quality model evidence is missing");
+    if (evidence?.models?.task !== models.task
+      || evidence?.models?.memory !== models.memory) {
+      mismatches.push("quality models differ from validation/model.json");
     }
     if (typeof evidence?.memoryModelCondition?.configFingerprint !== "string"
       || !Array.isArray(evidence?.memoryModelCondition?.explicitRequestControls)
       || evidence.memoryModelCondition.explicitRequestControls.length !== 0
-      || typeof evidence?.models?.memory !== "string"
-      || !evidence.models.memory.startsWith("openai-codex/")
-      || evidence.memoryModelCondition.adapterRequest?.adapter !== "Codex Responses"
+      || evidence.models?.memory !== models.memory
+      || evidence.memoryModelCondition.adapterRequest?.adapter !== "LiteLLM OpenRouter"
+      || evidence.memoryModelCondition.adapterRequest?.model !== models.task
+      || evidence.memoryModelCondition.adapterRequest?.apiKeyForwarded !== true
       || evidence.memoryModelCondition.adapterRequest?.reasoningForwarded !== false
-      || evidence.memoryModelCondition.adapterRequest?.temperatureForwarded !== false
-      || evidence.memoryModelCondition.adapterRequest?.stream !== true
+      || evidence.memoryModelCondition.adapterRequest?.temperatureForwarded !== true
+      || evidence.memoryModelCondition.adapterRequest?.temperature !== 0
+      || evidence.memoryModelCondition.adapterRequest?.timeoutForwarded !== true
       || evidence.memoryModelCondition.reasoningSemantics !== "provider-default") {
       mismatches.push("memory model request-control evidence is missing");
+    }
+    const tokenRows = evidence?.openVikingUsage?.tokenRows;
+    const memoryTokenRows = Array.isArray(tokenRows)
+      ? tokenRows.filter((row) => row?.source === "vlm"
+        && row.provider === "litellm"
+        && row.model_name === models.task)
+      : [];
+    const memoryTotalTokens = memoryTokenRows.reduce((total, row) => total + (Number.isSafeInteger(row.token_count) ? row.token_count : 0), 0);
+    if (memoryTokenRows.length !== 2
+      || !memoryTokenRows.some((row) => row.token_type === "input" && row.token_count > 0)
+      || !memoryTokenRows.some((row) => row.token_type === "output" && row.token_count > 0)
+      || evidence?.openVikingUsage?.memoryTotalTokens !== memoryTotalTokens) {
+      mismatches.push("OpenRouter memory token attribution is missing");
     }
     if (!qualityOutputValid(native) || !qualityOutputValid(enhanced)) {
       mismatches.push("quality arm output is invalid");

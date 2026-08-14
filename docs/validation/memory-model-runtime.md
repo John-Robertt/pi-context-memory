@@ -4,7 +4,7 @@
 
 本文定义如何证明 [`../features/memory-model-configuration.md`](../features/memory-model-configuration.md) 的最小配置体验及 [`../system/memory-model-runtime.md`](../system/memory-model-runtime.md) 的配置转换、实例所有权和重启边界成立。
 
-日常验证使用本地资源和协议替身，不产生外部 Provider 调用。真实模型能力与成本验证使用显式授权的受控入口。
+验证按风险先运行本地资源和协议替身，再在凭据可用时运行 [`../../validation/model.json`](../../validation/model.json) 选择的 OpenRouter 模型能力与成本环节。
 
 ## 2. 配置转换
 
@@ -15,11 +15,11 @@
 - 上游新增未知 Provider 不进入用户配置面，也不会使已有受支持 Provider 失效；
 - 配置桥只使用 OpenViking 聚合导出的 `OpenVikingConfig` 与 `VLMConfig` 校验入口，不读取其私有 registry 或 backend 路由表；
 - 模板说明扩展验证的 Provider、必要字段、认证入口、少量显式云路由示例和 LiteLLM 官方目录，不复制内部关键词和路由顺序；
-- 生成配置不主动覆盖跨 Provider 语义不一致的 `thinking`、reasoning、temperature 或 stream；adapter probe 另外核对最终 Codex Responses 请求未转发 reasoning/temperature；
+- 生成配置不主动覆盖跨 Provider 语义不一致的 `thinking`、reasoning、temperature 或 stream；adapter probe 另外核对 LiteLLM OpenRouter 请求保留模型路由、转发 temperature `0` 且不转发 reasoning；
 - 默认路径严格为隔离 HOME 下的 `.pi/pi-context-memory.jsonc`，缺失目录不向组或其他用户开放，缺失文件以 `0600` 原子独占创建；已有和悬空符号链接保持不变；
 - 空文件、纯注释和 `memoryModel: null` 均表示未配置；普通注释、字符串内 URL 和尾逗号可解析；
 - 语法和语义错误形成有路径的脱敏诊断，已有文件不被检查、命令或启动器覆盖；
-- 凭据与生成产物、状态、日志及 Pi session 分离，相同输入产生相同配置指纹。
+- 凭据与生成产物、状态、日志及 Pi session 分离；LiteLLM OpenRouter 无论核验进程是否持有密钥都生成同一环境变量引用和配置指纹，真实密钥只由 launcher 要求；原生 `openai-codex` 始终使用 Codex OAuth，并忽略环境中的 OpenRouter 凭据。
 
 生成结果直接通过项目安装的 OpenViking 配置入口解析。依赖升级后由维护者重新运行同一入口；固定版本 VLM adapter 探针继续单独观察消息、tools、tool choice 和 function call 行为，但其内部路由细节不进入生产配置契约。
 ## 3. 命令语义
@@ -39,7 +39,7 @@
 
 - 正常应用按“预检—停止—启动—`/health` 健康—发布状态”顺序完成；来源召回 runner 另外证明健康后的真实资源操作；
 - 子进程退出和 readiness 超时发布失败状态，失败目标与实际运行配置分离；
-- 冷启动配置无效时发布脱敏诊断并启动无 VLM 基础服务，错误模型不进入 `active*`；
+- 冷启动配置无效或 LiteLLM OpenRouter launcher 缺少凭据时发布脱敏诊断并启动无 VLM 基础服务，错误模型不进入 `active*`；
 - 两个启动器竞争时只有原子取得生命周期锁的进程成为所有者，死锁要求显式核对后恢复；
 - 项目启动器未运行、控制信息与锁不匹配或启动标识错误时返回明确诊断；
 - 当前实例运行时，未知进程占用不同目标端口会在停止旧实例前失败并保留旧实例；
@@ -53,13 +53,15 @@
 
 ## 5. 降级与状态分离
 
-在当前实例停止前、新实例启动中和 readiness 后分别发起受控调用，证明：
+在当前实例继续运行、重启替换和新实例 readiness 后分别发起受控调用，证明：
 
-- 配置检查、应用或服务准备期间，Pi `context` 不等待这些操作，任务请求立即使用 Pi 原生路径；
-- 在途 OpenViking请求结束为受控失败，后续有效工作按当前路线重新提交；
+- 修改、清空或写错待应用配置不会停止当前 ready 实例，重启预检失败也保留该实例；
+- Launcher 持有 VLM 凭据而 Pi 核验进程不持有时，Pi 仍识别并使用当前 ready 实例；
+- 旧子进程真正停止后，Pi `context` 不等待重启操作，任务请求立即使用 Pi 原生路径；
+- 在途 OpenViking 请求结束为受控失败，后续有效工作按当前路线重新提交；
 - 显式召回失败形成 Pi 可处理的错误结果；
-- readiness 后保持“Pi 原生”，直到当前 session 与路线核验通过的增强结果实际进入 Provider 请求；
-- 配置加载、服务就绪、模型能力和上下文采用四项事实能够独立观测。
+- 启动与实际服务重启显示“增强记忆 · 初始化中”，服务可用但当前路线尚未采用时显示“增强记忆 · 生效中”，运行实例或服务不可用并强制回退时只显示“Pi 原生”；
+- 配置加载、服务就绪、模型能力、用户生命周期状态和每次 Provider 实际采用路径能够独立观测。
 
 ## 6. 模型能力边界
 
@@ -67,8 +69,8 @@
 
 具体模型的 Working Memory create/update 能力由真实受控 fixture 或实际调用确认。能力不足时，Pi 原生路径继续任务并提供模型能力诊断。
 
-真实 Provider验证单独记录模型、Provider、请求次数、usage、成本、工具调用结果和取消行为，与日常免费 runner 保持分离。
+模型能力与成本环节从统一配置派生任务与记忆路线，并记录任务 usage/cost、记忆 token 路由、工具调用结果和取消行为。最终 billed cost 仍需与 OpenRouter 账单逐 generation 关联。
 
 ## 7. 证据责任
 
-`node scripts/validate-memory-model-runtime.mjs` 使用隔离设置、faux Pi Provider 和本地 OpenViking 协议替身，覆盖配置转换、命令无副作用、VLM adapter 协议、所有权、并发应用、降级和状态分离；结果保存到 [`../../validation/evidence/memory-model-runtime.json`](../../validation/evidence/memory-model-runtime.json)。evidence 纳入 `scripts/check-validation-evidence.mjs` 的当前实现哈希与精确检查集。真实 Provider 结果只作为明确授权的能力证据，不成为日常验证前置条件。
+`node scripts/validate-memory-model-runtime.mjs` 使用隔离设置、faux Pi Provider 和本地 OpenViking 协议替身，覆盖配置转换、命令无副作用、VLM adapter 协议、凭据路由、所有权、并发应用、降级和状态分离；结果保存到 [`../../validation/evidence/memory-model-runtime.json`](../../validation/evidence/memory-model-runtime.json)。evidence 纳入 `scripts/check-validation-evidence.mjs` 的当前实现哈希与精确检查集。统一配置选择的模型结果由质量与成本 runner 继续验证。

@@ -13,10 +13,14 @@ import {
 import { FileLongTermMemory } from "../.pi/extensions/pi-context-memory/long-term-memory.ts";
 import { compileOpenVikingConfig } from "../.pi/extensions/pi-context-memory/memory-model-configuration.ts";
 import { SessionMemoryCoordinator } from "../.pi/extensions/pi-context-memory/session-memory-coordination.ts";
-import { normalizeSessionContext } from "../.pi/extensions/pi-context-memory/openviking-protocol.ts";
-import { projectRouteEntries } from "../.pi/extensions/pi-context-memory/session-working-memory.ts";
+import { normalizeCommitResult, normalizeSessionContext } from "../.pi/extensions/pi-context-memory/openviking-protocol.ts";
+import {
+  DEFAULT_WORKING_MEMORY_TASK_TIMEOUT_MS,
+  projectRouteEntries,
+} from "../.pi/extensions/pi-context-memory/session-working-memory.ts";
 import {
   applyPreparedWorkingContext,
+  DEFAULT_IN_FLIGHT_READY_WAIT_MS,
   formatWorkingContext,
   WorkingContextOptimizer,
 } from "../.pi/extensions/pi-context-memory/working-context-optimization.ts";
@@ -31,6 +35,17 @@ const fixture = JSON.parse(readFileSync(fixturePath, "utf8"));
 mkdirSync(artifactRoot, { recursive: true });
 const implementation = captureImplementationEvidence(root, "context-enhancement");
 const startedAt = new Date().toISOString();
+const MEMORY_STATUS = {
+  initializing: "增强记忆 · 初始化中",
+  activating: "增强记忆 · 生效中",
+  active: "增强记忆",
+  native: "Pi 原生",
+};
+const enhancementStatuses = new Set([
+  MEMORY_STATUS.initializing,
+  MEMORY_STATUS.activating,
+  MEMORY_STATUS.active,
+]);
 
 function writeJson(path, value) {
   mkdirSync(dirname(path), { recursive: true });
@@ -128,6 +143,8 @@ async function startOpenVikingDouble() {
     deletedSessions: [],
     createResponseDelayMs: 0,
     contextResponseDelayMs: 0,
+    taskPollsBeforeCompletion: 2,
+    skipNextCommit: false,
     failNextContext: false,
     failContextCount: 0,
     providerRequests: 0,
@@ -192,16 +209,43 @@ async function startOpenVikingDouble() {
           send(response, 404, { status: "error", error: { message: "session not found" } });
           return;
         }
-        const taskId = `task-${state.tasks.size + 1}`;
         session.commits += 1;
+        const keepRecent = Number.isSafeInteger(body?.keep_recent_count) ? body.keep_recent_count : 0;
+        if (state.skipNextCommit) {
+          state.skipNextCommit = false;
+          session.pendingTokens = 0;
+          send(response, 200, {
+            status: "ok",
+            result: {
+              session_id: session.id,
+              status: "skipped",
+              task_id: null,
+              archive_uri: null,
+              archived: false,
+              reason: "all_within_keep_window",
+            },
+          });
+          return;
+        }
+        const taskId = `task-${state.tasks.size + 1}`;
         state.tasks.set(taskId, {
           id: taskId,
           status: "pending",
           polls: 0,
+          completeAfterPolls: state.taskPollsBeforeCompletion,
           session,
-          keepRecent: Number.isSafeInteger(body?.keep_recent_count) ? body.keep_recent_count : 0,
+          keepRecent,
         });
-        send(response, 200, { status: "ok", result: { task_id: taskId, session_id: session.id } });
+        send(response, 200, {
+          status: "ok",
+          result: {
+            session_id: session.id,
+            status: "accepted",
+            task_id: taskId,
+            archive_uri: `viking://session/${session.id}/archive/${session.commits}`,
+            archived: true,
+          },
+        });
         return;
       }
 
@@ -213,7 +257,7 @@ async function startOpenVikingDouble() {
           return;
         }
         task.polls += 1;
-        if (task.polls >= 2 && task.status !== "completed") {
+        if (task.polls >= task.completeAfterPolls && task.status !== "completed") {
           task.status = "completed";
           task.session.overview = [
             "# Working Memory",
@@ -581,25 +625,24 @@ async function runPiAdoptionCase(openViking) {
       () => readObservations(observationLog).filter((event) => event.type === "agent_settled").length >= 4,
       "fourth Pi agent settlement",
     );
-    const invalidationsBeforeMismatch = readObservations(observationLog)
-      .filter((event) => event.type === "memory_model_generation_invalidated").length;
+    const rechecksBeforeDesiredChange = readObservations(observationLog)
+      .filter((event) => event.type === "memory_model_generation_recheck").length;
     writeFileSync(settingsTargetPath, `${JSON.stringify({ memoryModel: null })}\n`, "utf8");
     await waitFor(
-      () => readObservations(observationLog).filter((event) => event.type === "memory_model_generation_invalidated").length > invalidationsBeforeMismatch,
-      "post-ready symlink-target generation invalidation",
+      () => readObservations(observationLog).filter((event) => event.type === "memory_model_generation_recheck").length > rechecksBeforeDesiredChange,
+      "post-ready desired configuration recheck",
     );
     await client.send("prompt", { message: "fifth post-ready mismatch prompt" });
     await waitFor(
       () => readObservations(observationLog).filter((event) => event.type === "agent_settled").length >= 5,
       "fifth Pi agent settlement",
     );
-    const recoveryObservationOffset = readObservations(observationLog).length;
+    const desiredRecoveryRecheckOffset = readObservations(observationLog).length;
     writeFileSync(settingsTargetPath, `${JSON.stringify({ memoryModel: memorySetting })}\n`, "utf8");
     await waitFor(
-      () => readObservations(observationLog).slice(recoveryObservationOffset)
-        .some((event) => event.type === "working_context_ready"),
-      "post-mismatch symlink-target recovery",
-      10_000,
+      () => readObservations(observationLog).slice(desiredRecoveryRecheckOffset)
+        .some((event) => event.type === "memory_model_generation_recheck"),
+      "post-mismatch desired configuration recheck",
     );
     const promptAndSettle = async (message) => {
       const observationOffset = readObservations(observationLog).length;
@@ -660,22 +703,7 @@ async function runPiAdoptionCase(openViking) {
       const actualIds = mirror?.batches.flat().flatMap((message) => message.source_message_ids) ?? [];
       return JSON.stringify(actualIds) === JSON.stringify(expectedIds);
     };
-    const invalidationsBeforeRuntimeMismatch = readObservations(observationLog)
-      .filter((event) => event.type === "memory_model_generation_invalidated").length;
-    writeRuntimeState(settingsFingerprint, "post-ready-wrong-runtime-config");
-    await waitFor(
-      () => readObservations(observationLog).filter((event) => event.type === "memory_model_generation_invalidated").length > invalidationsBeforeRuntimeMismatch,
-      "post-ready runtime generation invalidation",
-    );
-    const postReadyRuntimeMismatchRun = await promptAndSettle("sixth post-ready runtime mismatch prompt");
-    const runtimeRecoveryOffset = readObservations(observationLog).length;
-    writeRuntimeState(settingsFingerprint);
-    await waitFor(
-      () => readObservations(observationLog).slice(runtimeRecoveryOffset)
-        .some((event) => event.type === "working_context_ready"),
-      "post-ready runtime recovery",
-      10_000,
-    );
+    const stableRuntimeRun = await promptAndSettle("sixth desired configuration remains active prompt");
     await promptAndSettle("seventh lifecycle baseline prompt");
     const backendFailureOffset = readObservations(observationLog).length;
     openViking.state.failContextCount = 1;
@@ -685,7 +713,7 @@ async function runPiAdoptionCase(openViking) {
       "Pi backend failure observation",
       10_000,
     );
-    openViking.state.contextResponseDelayMs = 500;
+    openViking.state.contextResponseDelayMs = DEFAULT_IN_FLIGHT_READY_WAIT_MS + 300;
     const backendNativeRun = await promptAndSettle("backend failure native probe");
     const recoveryReadyState = await waitForCurrentWorkingContext(backendFailureOffset);
     openViking.state.contextResponseDelayMs = 0;
@@ -719,7 +747,7 @@ async function runPiAdoptionCase(openViking) {
     const statusBeforeCancellation = client.events.filter((event) => event.type === "extension_ui_request" && event.method === "setStatus").at(-1)?.statusText;
     await client.send("prompt", { message: `/validation-cancel-tree ${branchBLeafId}` });
     await sleep(50);
-    const canceledTreeStatusStable = statusBeforeCancellation === "增强记忆"
+    const canceledTreeStatusStable = enhancementStatuses.has(statusBeforeCancellation)
       && client.events.filter((event) => event.type === "extension_ui_request" && event.method === "setStatus").at(-1)?.statusText === statusBeforeCancellation
       && readObservations(observationLog).filter((event) => event.type === "session_tree").length === treeCountBeforeCancellation;
     const rootObservationOffset = readObservations(observationLog).length;
@@ -766,7 +794,7 @@ async function runPiAdoptionCase(openViking) {
     await client.send("prompt", { message: "/validation-cancel-compact" });
     const compactCancelled = await client.send("compact").then(() => false, (error) => String(error?.message ?? error).includes("cancelled"));
     await sleep(50);
-    const canceledCompactStatusStable = compactCancelled && compactStatusBeforeCancellation === "增强记忆"
+    const canceledCompactStatusStable = compactCancelled && enhancementStatuses.has(compactStatusBeforeCancellation)
       && client.events.filter((event) => event.type === "extension_ui_request" && event.method === "setStatus").at(-1)?.statusText === compactStatusBeforeCancellation
       && readObservations(observationLog).filter((event) => event.type === "session_compact").length === compactCountBeforeCancellation;
 
@@ -815,6 +843,17 @@ async function runPiAdoptionCase(openViking) {
     const overflowReadyState = await waitForCurrentWorkingContext(overflowObservationOffset);
     const overflowAdoptionRun = await promptAndSettle("overflow compaction enhanced adoption probe");
 
+    openViking.state.contextResponseDelayMs = 120;
+    await promptAndSettle("in-flight route preparation prompt");
+    const inFlightWaitRun = await promptAndSettle("in-flight route adoption prompt");
+    openViking.state.contextResponseDelayMs = 0;
+    const inFlightWaitStart = inFlightWaitRun.observations.find((event) => event.type === "before_agent_start");
+    const inFlightWaitReady = inFlightWaitRun.observations.find((event) => event.type === "working_context_ready");
+    const inFlightWaitProvider = inFlightWaitRun.observations.find((event) => event.type === "before_provider_request");
+    const inFlightWaitElapsedMs = inFlightWaitStart && inFlightWaitProvider
+      ? Date.parse(inFlightWaitProvider.at) - Date.parse(inFlightWaitStart.at)
+      : Number.POSITIVE_INFINITY;
+
     const observations = readObservations(observationLog);
     const treeEvents = observations.filter((event) => event.type === "session_tree");
     const compactionEvents = observations.filter((event) => event.type === "session_compact");
@@ -838,6 +877,8 @@ async function runPiAdoptionCase(openViking) {
       }
     }
     const statusEvents = client.events.filter((event) => event.type === "extension_ui_request" && event.method === "setStatus");
+    const statusTexts = statusEvents.map((event) => event.statusText);
+    const providerUiStates = [];
     let providerPayloadIndex = 0;
     const uiProviderStateConsistent = lifecycleProviderRequests.every((requestEvent) => {
       const matchedIndex = provider.state.payloads.findIndex((payload, index) => index >= providerPayloadIndex
@@ -846,8 +887,24 @@ async function runPiAdoptionCase(openViking) {
       providerPayloadIndex = matchedIndex + 1;
       const receivedAt = provider.state.receivedAt[matchedIndex];
       const status = statusEvents.filter((event) => event._receivedAt <= receivedAt).at(-1)?.statusText;
-      return status === (requestEvent.contextPath === "enhanced" ? "增强记忆" : "Pi 原生");
+      providerUiStates.push({ contextPath: requestEvent.contextPath, status });
+      return requestEvent.contextPath === "enhanced"
+        ? status === MEMORY_STATUS.active || status === MEMORY_STATUS.activating
+        : status === MEMORY_STATUS.initializing
+          || status === MEMORY_STATUS.activating
+          || status === MEMORY_STATUS.native;
     });
+    const memoryStatusLifecycle = statusTexts[0] === MEMORY_STATUS.initializing
+      && statusTexts.includes(MEMORY_STATUS.activating)
+      && statusTexts.includes(MEMORY_STATUS.active)
+      && statusTexts.includes(MEMORY_STATUS.native)
+      && statusTexts.every((status) => status === undefined
+        || status === MEMORY_STATUS.initializing
+        || status === MEMORY_STATUS.activating
+        || status === MEMORY_STATUS.active
+        || status === MEMORY_STATUS.native)
+      && providerUiStates.some((state) => state.contextPath === "pi-native" && state.status === MEMORY_STATUS.native)
+      && providerUiStates.some((state) => state.contextPath === "pi-native" && state.status === MEMORY_STATUS.activating);
     const workingContextErrors = observations.filter((event) => event.type === "working_context_error");
     const expectedWorkingContextErrors = workingContextErrors.filter((event) => event.error === "OpenViking HTTP 503: controlled context failure").length === 1
       && workingContextErrors.every((event) => event.error === "OpenViking HTTP 503: controlled context failure"
@@ -891,7 +948,8 @@ async function runPiAdoptionCase(openViking) {
       backendRecovery: backendNativeRun.observations.some((event) => event.type === "before_provider_request" && event.contextPath === "pi-native")
         && requestAdoptedFor(backendRecoveredRun, recoveryReadyState)
         && expectedWorkingContextErrors,
-      providerStateConsistent: providerTransitionConsistent && uiProviderStateConsistent,
+      providerStateConsistent: providerTransitionConsistent && uiProviderStateConsistent && memoryStatusLifecycle,
+      memoryStatusLifecycle,
       eventCounts: {
         tree: treeEvents.length,
         compaction: compactionEvents.length,
@@ -902,8 +960,7 @@ async function runPiAdoptionCase(openViking) {
     };
     const providerRequestObservations = observations.filter((event) => event.type === "before_provider_request");
     const firstProviderRequest = providerRequestObservations[0];
-    const coldStartMismatchedRuntimeRequest = providerRequestObservations[1];
-    const postReadyMismatchedRuntimeRequest = providerRequestObservations[4];
+    const postReadyDesiredMismatchRequest = providerRequestObservations[4];
     const firstWorkingContextReady = observations.find((event) => event.type === "working_context_ready");
     const enhancedContext = observations.findLast((event) => event.type === "context" && event.contextPath === "enhanced");
     const enhancedProviderRequest = observations.findLast((event) => event.type === "before_provider_request" && event.contextPath === "enhanced");
@@ -925,16 +982,18 @@ async function runPiAdoptionCase(openViking) {
       contextHookNonBlocking: typeof firstProviderRequest?.sequence === "number"
         && typeof firstWorkingContextReady?.sequence === "number"
         && firstProviderRequest.sequence < firstWorkingContextReady.sequence,
-      mismatchedRuntimeRemainsNative: firstProviderRequest?.contextPath === "pi-native"
-        && firstProviderRequest?.contextDecision === "pi-native"
-        && coldStartMismatchedRuntimeRequest?.contextPath === "pi-native"
-        && coldStartMismatchedRuntimeRequest?.contextDecision === "pi-native"
-        && postReadyMismatchedRuntimeRequest?.contextPath === "pi-native"
-        && postReadyMismatchedRuntimeRequest?.contextDecision === "pi-native"
-        && postReadyRuntimeMismatchRun.observations.some((event) =>
+      inFlightContextWaitAdopted: inFlightWaitProvider?.contextPath === "enhanced"
+        && inFlightWaitProvider?.payloadHasEnhancedContext === true
+        && typeof inFlightWaitReady?.sequence === "number"
+        && typeof inFlightWaitProvider.sequence === "number"
+        && inFlightWaitReady.sequence < inFlightWaitProvider.sequence
+        && inFlightWaitElapsedMs <= DEFAULT_IN_FLIGHT_READY_WAIT_MS + 50,
+      desiredConfigDoesNotDisableRuntime: postReadyDesiredMismatchRequest?.contextPath === "enhanced"
+        && postReadyDesiredMismatchRequest?.contextDecision === "enhanced"
+        && stableRuntimeRun.observations.some((event) =>
           event.type === "before_provider_request"
-          && event.contextPath === "pi-native"
-          && event.contextDecision === "pi-native"),
+          && event.contextPath === "enhanced"
+          && event.contextDecision === "enhanced"),
       currentTurnOnly: priorPromptMessages.length === 0,
       lifecycle,
       providerRequests: provider.state.payloads.length,
@@ -962,6 +1021,7 @@ try {
     && fixture.task?.checker?.requiredDecision === "bounded-current-route"
     && fixture.task?.checker?.requiredEvidenceEntryId === "b000000c";
   assert(checks.sharedFixtureLoaded, "Shared long-task fixture is invalid");
+  checks.workingMemoryTaskDeadlineBounded = DEFAULT_WORKING_MEMORY_TASK_TIMEOUT_MS === 180_000;
   const structuredOverview = [
     "# Working Memory",
     "## Session Title",
@@ -1189,6 +1249,81 @@ try {
     && adopted[2] === currentTurn[3]
     && adopted[3] === currentTurn[4];
 
+  openViking.state.skipNextCommit = true;
+  const skippedCommitRequestStart = openViking.state.requests.length;
+  const skippedCommitTaskCount = openViking.state.tasks.size;
+  const skippedCommitOptimizer = new WorkingContextOptimizer(openViking.baseUrl, undefined, 2_000, {
+    contextTokenBudget: 2_000,
+    commitPendingTokens: 1,
+    keepRecentMessages: 100,
+    maxContextChars: 1_600,
+    taskTimeoutMs: 2_000,
+    taskPollMs: 5,
+  });
+  let skippedCommitPrepared;
+  let skippedCommitError;
+  try {
+    skippedCommitPrepared = await skippedCommitOptimizer.prepare(commonRoute, common);
+  } catch (error) {
+    skippedCommitError = error;
+  }
+  const skippedCommitRequests = openViking.state.requests.slice(skippedCommitRequestStart);
+  checks.skippedCommitRetainsActiveHistory = skippedCommitError === undefined
+    && skippedCommitPrepared?.hasWorkingMemory === false
+    && skippedCommitPrepared.content.includes(commonRoute.leafId)
+    && openViking.state.tasks.size === skippedCommitTaskCount
+    && skippedCommitRequests.every((request) => !request.path.startsWith("/api/v1/tasks/"));
+  await skippedCommitOptimizer.shutdown();
+
+  openViking.state.taskPollsBeforeCompletion = 100;
+  const slowTaskOptimizer = new WorkingContextOptimizer(openViking.baseUrl, undefined, 2_000, {
+    contextTokenBudget: 2_000,
+    commitPendingTokens: 1,
+    keepRecentMessages: 3,
+    maxContextChars: 1_600,
+    taskTimeoutMs: 1_000,
+    taskPollMs: 5,
+  });
+  const slowTaskPreparation = slowTaskOptimizer.prepare(commonRoute, common);
+  const inFlightReadyWaitStarted = Date.now();
+  const activeWhileCommitting = await slowTaskOptimizer.waitForReady(commonRoute, DEFAULT_IN_FLIGHT_READY_WAIT_MS);
+  const inFlightReadyWaitElapsedMs = Date.now() - inFlightReadyWaitStarted;
+  const activeWhileCommittingTask = [...openViking.state.tasks.values()].at(-1);
+  const activeHistoryAdopted = activeWhileCommitting
+    ? applyPreparedWorkingContext(currentTurn, activeWhileCommitting)
+    : [];
+  checks.inFlightReadyWaitBounded = DEFAULT_IN_FLIGHT_READY_WAIT_MS === 1_000
+    && inFlightReadyWaitElapsedMs <= DEFAULT_IN_FLIGHT_READY_WAIT_MS + 50;
+  checks.activeHistoryAvailableDuringWorkingMemory = activeWhileCommitting?.hasWorkingMemory === false
+    && activeWhileCommittingTask?.polls < 100
+    && activeHistoryAdopted[0]?.role === "custom"
+    && activeHistoryAdopted[1] === currentTurn[2];
+  const slowTaskPrepared = await slowTaskPreparation;
+  const slowTask = [...openViking.state.tasks.values()].at(-1);
+  checks.slowWorkingMemoryCompletesWithinDeadline = slowTaskPrepared.hasWorkingMemory
+    && slowTask?.status === "completed"
+    && slowTask.polls >= 100;
+  await slowTaskOptimizer.shutdown();
+
+  openViking.state.taskPollsBeforeCompletion = Number.MAX_SAFE_INTEGER;
+  const timeoutOptimizer = new WorkingContextOptimizer(openViking.baseUrl, undefined, 2_000, {
+    contextTokenBudget: 2_000,
+    commitPendingTokens: 1,
+    keepRecentMessages: 3,
+    maxContextChars: 1_600,
+    taskTimeoutMs: 30,
+    taskPollMs: 5,
+  });
+  let taskTimedOut = false;
+  try {
+    await timeoutOptimizer.prepare(commonRoute, common);
+  } catch (error) {
+    taskTimedOut = String(error).includes("timed out");
+  }
+  checks.workingMemoryTimeoutFallsBack = taskTimedOut && timeoutOptimizer.getReady(commonRoute) === undefined;
+  await timeoutOptimizer.shutdown();
+  openViking.state.taskPollsBeforeCompletion = 2;
+
   const failedOptimizer = new WorkingContextOptimizer(openViking.baseUrl, undefined, 2_000, {
     contextTokenBudget: 2_000,
     commitPendingTokens: 1,
@@ -1252,6 +1387,19 @@ try {
     && [...openViking.state.sessions.keys()].every((sessionId) => baselineSessionIds.has(sessionId))
     && openViking.state.sessions.size === baselineSessionIds.size;
 
+  const commitProtocolFailClosed = [
+    { status: "accepted", task_id: null },
+    { status: "skipped", task_id: "unexpected" },
+    { status: "skipped", task_id: null, reason: 7 },
+    { status: "unknown", task_id: null },
+  ].every((response) => {
+    try {
+      normalizeCommitResult(response);
+      return false;
+    } catch {
+      return true;
+    }
+  });
   const protocol = new Set(openViking.state.requests.map((request) => `${request.method} ${request.path.replace(/pcm-[^/]+/g, "<session>").replace(/task-\d+/g, "<task>")}`));
   checks.openVikingProtocolCovered = [
     "POST /api/v1/sessions",
@@ -1260,12 +1408,13 @@ try {
     "GET /api/v1/tasks/<task>",
     "GET /api/v1/sessions/<session>/context",
     "DELETE /api/v1/sessions/<session>",
-  ].every((entry) => protocol.has(entry));
+  ].every((entry) => protocol.has(entry)) && commitProtocolFailClosed;
   const piAdoption = await runPiAdoptionCase(openViking);
   checks.piContextHookAdopted = piAdoption.adopted;
   checks.providerStateUnspoofable = piAdoption.spoofedMarkerRemainsNative;
   checks.contextHookNonBlocking = piAdoption.contextHookNonBlocking;
-  checks.mismatchedRuntimeRejected = piAdoption.mismatchedRuntimeRemainsNative;
+  checks.inFlightContextWaitAdopted = piAdoption.inFlightContextWaitAdopted;
+  checks.desiredConfigDoesNotDisableRuntime = piAdoption.desiredConfigDoesNotDisableRuntime;
   checks.providerPayloadCurrentTurn = piAdoption.currentTurnOnly;
   checks.localProviderOnly = piAdoption.providerRequests > 5 && openViking.state.providerRequests === 0;
   checks.treeLifecycle = piAdoption.lifecycle.treeRoundTrip
@@ -1282,6 +1431,7 @@ try {
     && piAdoption.lifecycle.compactionProviderAdoption;
   checks.backendFailureRecovery = piAdoption.lifecycle.backendRecovery;
   checks.lifecycleProviderStateConsistent = piAdoption.lifecycle.providerStateConsistent;
+  checks.memoryStatusLifecycle = piAdoption.lifecycle.memoryStatusLifecycle;
 
   await optimizer.shutdown();
   checks.ownedSessionsCleaned = openViking.state.sessions.size === 0 && openViking.state.deletedSessions.length > 0;
@@ -1320,7 +1470,7 @@ try {
     runId,
     startedAt,
     completedAt: new Date().toISOString(),
-    piVersion: "0.84.1",
+    piVersion: "0.84.2",
     openVikingVersion: "0.4.13-protocol",
     fixture: {
       path: "validation/fixtures/context-enhancement-long-task.json",

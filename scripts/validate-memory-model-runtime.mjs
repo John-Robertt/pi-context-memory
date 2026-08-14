@@ -25,7 +25,7 @@ import {
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 if (process.argv.length !== 2) throw new Error("Usage: node scripts/validate-memory-model-runtime.mjs");
-const expectedPiVersion = "0.84.1";
+const expectedPiVersion = "0.84.2";
 const piVersion = spawnSync("pi", ["--version"], { encoding: "utf8" }).stdout.trim();
 if (piVersion !== expectedPiVersion) throw new Error(`Memory model validation requires Pi ${expectedPiVersion}; found ${piVersion || "unavailable"}`);
 const runId = process.env.PCR_RUN_ID ?? `memory-model-runtime-${new Date().toISOString().replaceAll(/[:.]/g, "-")}`;
@@ -297,6 +297,7 @@ async function validateConfiguration() {
   );
   const adapterResult = adapterProbe.status === 0 ? JSON.parse(adapterProbe.stdout) : undefined;
   const adapterRoutes = adapterResult?.litellmRoutes;
+  const openRouterRequest = adapterResult?.litellmOpenRouterRequest;
   const adapterProtocolsCovered = adapterResult?.passed === true
     && Object.keys(adapterResult.providers).join(",") === expectedProviders.join(",")
     && adapterResult.messages === true
@@ -311,6 +312,12 @@ async function validateConfiguration() {
     && adapterRoutes.nativeRoutePreserved === true
     && adapterRoutes.customOpenAICompatible === true
     && adapterRoutes.ollamaDefaults === true
+    && openRouterRequest?.model === "openrouter/validation/model"
+    && openRouterRequest.apiKeyForwarded === true
+    && openRouterRequest.reasoningForwarded === false
+    && openRouterRequest.temperatureForwarded === true
+    && openRouterRequest.temperature === 0
+    && openRouterRequest.timeoutForwarded === true
     && adapterResult.codexRequest?.reasoningForwarded === false
     && adapterResult.codexRequest?.temperatureForwarded === false
     && adapterResult.codexRequest?.stream === true
@@ -342,6 +349,26 @@ async function validateConfiguration() {
     { provider: "azure", model: "validation" },
     env,
   )));
+  const openRouterSetting = { provider: "litellm", model: "openrouter/validation/model" };
+  const openRouterWithoutCredential = await compileOpenVikingConfig(
+    root,
+    openRouterSetting,
+    { ...env, PCR_OPENVIKING_VLM_API_KEY: "" },
+  );
+  const openRouterWithCredential = await compileOpenVikingConfig(root, openRouterSetting, env);
+  const openRouterCredentialReferenceStable = openRouterWithoutCredential.configFingerprint === openRouterWithCredential.configFingerprint
+    && openRouterWithoutCredential.config.vlm.api_key === "${PCR_OPENVIKING_VLM_API_KEY}"
+    && !JSON.stringify(openRouterWithoutCredential.config).includes("validation-only");
+  const codexSetting = { provider: "openai-codex", model: "validation-model" };
+  const codexWithoutCredential = await compileOpenVikingConfig(
+    root,
+    codexSetting,
+    { ...env, PCR_OPENVIKING_VLM_API_KEY: "" },
+  );
+  const codexWithAmbientCredential = await compileOpenVikingConfig(root, codexSetting, env);
+  const codexIgnoresAmbientCredential = codexWithoutCredential.configFingerprint === codexWithAmbientCredential.configFingerprint
+    && !Object.hasOwn(codexWithAmbientCredential.config.vlm, "api_key")
+    && !JSON.stringify(codexWithAmbientCredential.config).includes("validation-only");
 
   const isolatedHome = join(caseDir, "user-home");
   const templateEnv = {
@@ -459,8 +486,10 @@ async function validateConfiguration() {
     && !semanticError.includes("must-not-be-stored"),
   );
   const unknownFieldRejected = Boolean(semanticError);
-  const configSecretsExcluded = compiled.every((item) => JSON.stringify(item.config).includes("${PCR_OPENVIKING_VLM_API_KEY}"))
-    && compiled.every((item) => !JSON.stringify(item.config).includes("validation-only"));
+  const configSecretsExcluded = compiled.every((item) => !JSON.stringify(item.config).includes("validation-only"))
+    && compiled.every((item) => item.provider === "openai-codex"
+      ? !Object.hasOwn(item.config.vlm, "api_key")
+      : item.config.vlm.api_key === "${PCR_OPENVIKING_VLM_API_KEY}");
   return {
     checks: {
       adapterProtocolsCovered,
@@ -471,6 +500,8 @@ async function validateConfiguration() {
       generatedConfigParsed,
       providerDefaultsNotOverridden,
       deterministicFingerprint,
+      openRouterCredentialReferenceStable,
+      codexIgnoresAmbientCredential,
       unknownFieldRejected,
       missingCredentialRejected,
       azureFieldRejected,
@@ -494,6 +525,31 @@ async function validateLauncherAndCommands() {
   mkdirSync(caseDir, { recursive: true });
   const fakeServer = join(caseDir, "fake-openviking.mjs");
   createFakeServer(fakeServer);
+  const missingCredentialDir = join(caseDir, "openrouter-missing-credential");
+  mkdirSync(missingCredentialDir, { recursive: true });
+  const missingCredentialBase = join(missingCredentialDir, "base.json");
+  writeJson(missingCredentialBase, baseConfig(await freePort(), join(missingCredentialDir, "data")));
+  const missingCredentialEnv = validationEnvironment(missingCredentialDir, missingCredentialBase, fakeServer);
+  delete missingCredentialEnv.PCR_OPENVIKING_VLM_API_KEY;
+  await writeMemoryModelConfig(missingCredentialEnv.PCR_MEMORY_MODEL_SETTINGS, {
+    provider: "litellm",
+    model: "openrouter/validation/model",
+  });
+  const missingCredentialLauncher = startLauncher(missingCredentialEnv);
+  let missingCredentialState;
+  try {
+    missingCredentialLauncher.stderr.resume();
+    missingCredentialLauncher.stdout.resume();
+    missingCredentialState = await waitFor(async () => {
+      const state = await readRuntimeState(root, missingCredentialEnv);
+      return state?.ready === true && state.configurationError ? state : undefined;
+    }, "OpenRouter credential diagnostic");
+  } finally {
+    await stopLauncher(missingCredentialLauncher).catch(() => undefined);
+  }
+  const openRouterLauncherCredentialRequired = missingCredentialState?.ready === true
+    && missingCredentialState.activeProvider === undefined
+    && missingCredentialState.configurationError.includes("PCR_OPENVIKING_VLM_API_KEY is required for LiteLLM OpenRouter models");
   const port = await freePort();
   const basePath = join(caseDir, "base.json");
   writeJson(basePath, baseConfig(port, join(caseDir, "data")));
@@ -560,16 +616,39 @@ async function validateLauncherAndCommands() {
       && event.method === "notify"
       && event.message.includes("Invalid memory model configuration"));
     const automaticDiagnostic = invalidPiCase.observations.find((row) => row.type === "memory_model_config_error");
+    const invalidConfigStatuses = invalidPiCase.events.filter((event) => event.type === "extension_ui_request"
+      && event.method === "setStatus").map((event) => event.statusText);
     const automaticConfigErrorReported = automaticWarnings.length === 1
-      && automaticWarnings[0].message.includes("Pi will continue with its native context.")
+      && automaticWarnings[0].message.includes("The running OpenViking instance remains available until restart.")
       && /^[a-f0-9]{64}$/.test(automaticDiagnostic?.contentFingerprint ?? "")
       && !invalidPiCase.observations.some((row) => row.type === "before_provider_request");
+    const desiredConfigDoesNotDisableRunning = invalidConfigStatuses.includes("增强记忆 · 生效中")
+      && !invalidConfigStatuses.includes("Pi 原生");
     await writeMemoryModelConfig(env.PCR_MEMORY_MODEL_SETTINGS, { provider: "openai", model: "second-model", api_base: "https://example.invalid/v1" });
     const second = await requestOpenVikingRestart(root, env);
     const orderedRestart = second.ready === true
       && second.childPid !== firstChildPid
       && second.configurationError === undefined
       && !processAlive(firstChildPid);
+
+    await writeMemoryModelConfig(env.PCR_MEMORY_MODEL_SETTINGS, { provider: "openai-codex", model: "credential-boundary" });
+    const credentialBoundaryState = await requestOpenVikingRestart(root, env);
+    const piWithoutCredentialEnv = { ...env };
+    delete piWithoutCredentialEnv.PCR_OPENVIKING_VLM_API_KEY;
+    const credentialBoundaryPiCase = await runPiCommandCase(
+      join(caseDir, "pi-credential-boundary"),
+      piWithoutCredentialEnv,
+      ["/memory-model"],
+    );
+    const credentialBoundaryStatuses = credentialBoundaryPiCase.events.filter((event) => event.type === "extension_ui_request"
+      && event.method === "setStatus").map((event) => event.statusText);
+    const splitCredentialRuntimeRemainsAvailable = credentialBoundaryState.ready === true
+      && credentialBoundaryState.activeProvider === "openai-codex"
+      && credentialBoundaryStatuses.includes("增强记忆 · 生效中")
+      && !credentialBoundaryStatuses.includes("Pi 原生")
+      && credentialBoundaryPiCase.events.some((event) => event.type === "extension_ui_request"
+        && event.method === "notify"
+        && event.message.includes("Configuration: applied"));
 
     const wrongInfo = await readLauncherInfo(root, env);
     const operationDeadlinePublished = wrongInfo.operationTimeoutMs === OPENVIKING_CONFIG_BRIDGE_TIMEOUT_MS
@@ -642,9 +721,15 @@ async function validateLauncherAndCommands() {
       && !nullPiCase.observations.some((row) => row.type === "before_provider_request");
     const statusEvents = [...piCase.events, ...secondPiCase.events, ...nullPiCase.events].filter((event) => event.type === "extension_ui_request"
       && event.method === "setStatus");
-    const contextRemainsPiNative = statusEvents.length > 0
-      && statusEvents.every((event) => event.statusText?.startsWith("Pi 原生"))
-      && statusEvents.every((event) => !event.statusText?.includes("OpenViking ready") && !event.statusText?.includes("OpenViking unavailable"));
+    const statusTexts = statusEvents.map((event) => event.statusText);
+    const memoryStatusLifecycleVisible = statusTexts.includes("增强记忆 · 初始化中")
+      && statusTexts.includes("增强记忆 · 生效中")
+      && statusTexts.includes("Pi 原生")
+      && statusTexts.every((status) => status === undefined
+        || status === "增强记忆 · 初始化中"
+        || status === "增强记忆 · 生效中"
+        || status === "增强记忆"
+        || status === "Pi 原生");
 
     console.error("[memory-model-runtime] restart failure matrix");
     await writeMemoryModelConfig(env.PCR_MEMORY_MODEL_SETTINGS, { provider: "openai", model: "slow-ready", api_base: "https://example.invalid/v1" });
@@ -715,6 +800,9 @@ async function validateLauncherAndCommands() {
         wrongLaunchRejected,
         interruptedControlOperationCompletes,
         automaticConfigErrorReported,
+        desiredConfigDoesNotDisableRunning,
+        openRouterLauncherCredentialRequired,
+        splitCredentialRuntimeRemainsAvailable,
         commandNoProviderRequests,
         taskModelUnchanged,
         branchUnchanged,
@@ -722,7 +810,7 @@ async function validateLauncherAndCommands() {
         sharedUserConfig,
         configuredAndRunningDistinct,
         nullConfigurationStateReported,
-        contextRemainsPiNative,
+        memoryStatusLifecycleVisible,
         concurrentRestartSerialized,
         readinessTimeoutPublished,
         childExitPublished,

@@ -109,6 +109,9 @@ def compile_config(payload):
     credential_available = payload.get("credentialAvailable") is True
 
     provider = setting["provider"]
+    credential_reference_required = (
+        provider == "litellm" and setting["model"].lower().startswith("openrouter/")
+    )
     if provider not in {"litellm", "openai-codex"} and not credential_available:
         raise ValueError(f"{CREDENTIAL_ENV} is required for OpenViking provider {provider}")
 
@@ -119,7 +122,7 @@ def compile_config(payload):
     for field in ("api_base", "api_version"):
         if field in setting:
             vlm[field] = setting[field]
-    if credential_available:
+    if provider != "openai-codex" and (credential_available or credential_reference_required):
         vlm["api_key"] = f"${{{CREDENTIAL_ENV}}}"
 
     generated = deepcopy(base_config)

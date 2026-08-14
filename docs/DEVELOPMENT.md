@@ -6,51 +6,51 @@
 
 ## 2. 当前可运行状态
 
-当前 evidence 的宿主坐标是 Pi `0.84.1`，项目私有记忆依赖锁定为 OpenViking `0.4.13`。扩展通过独立 Pi 规范化边界观察持久化 session 当前 branch，把权威路线归档到 session 隔离的本地来源存储，并异步同步可检索任务文本。`recall_session(search|read_source)` 在当前路线内排序、预览和展开 Pi 权威 entry；带 `fullOutputPath` 的 toolResult 保存完整副本。上游版本变化由扩展适配，不要求用户降级 Pi。
+当前 evidence 的宿主坐标是 Pi `0.84.2`，项目私有记忆依赖锁定为 OpenViking `0.4.13`。扩展通过独立 Pi 规范化边界观察持久化 session 当前 branch，把权威路线归档到 session 隔离的本地来源存储，并异步同步可检索任务文本。`recall_session(search|read_source)` 在当前路线内排序、预览和展开 Pi 权威 entry；带 `fullOutputPath` 的 toolResult 保存完整副本。上游版本变化由扩展适配，不要求用户降级 Pi。
 
-用户通过 `~/.pi/pi-context-memory.jsonc` 配置 OpenViking 记忆模型；`/memory-model` 检查配置和当前运行状态，`/restart-viking` 通过项目启动器安全应用。没有实际运行的记忆模型时，来源召回继续可用，模型上下文保持 Pi 原生。
+用户正常运行时通过 `~/.pi/pi-context-memory.jsonc` 配置 OpenViking 记忆模型；开发验证不要求修改该文件。模型能力与成本 runner 共用 [`validation/model.json`](../validation/model.json) 的单一 `openRouterModel`，由它派生 Pi 任务路线和 LiteLLM 记忆路线；质量 runner 在 `.artifacts/` 写入隔离配置并通过 `PCR_MEMORY_MODEL_SETTINGS` 只注入验证进程，真实采用 runner 则核对同一配置与托管 runtime。OpenRouter 记忆请求的密钥通过 `PCR_OPENVIKING_VLM_API_KEY` 提供给验证 launcher。`/memory-model` 检查用户配置和运行状态，`/restart-viking` 安全应用；没有实际运行的记忆模型时，来源召回继续可用，模型上下文保持 Pi 原生。
 
-共享长任务 fixture 固定目标更新、冲突 branch、工具证据、Pi compaction 和压缩后继续。记忆模型可用后，扩展在 Provider 请求之外异步把当前有效投影写入 OpenViking Session：线性后继复用镜像，分叉或 compaction 改变有效前缀时隔离镜像；达到阈值后 commit、等待任务终态并取得有界 context assembly。共同 OpenViking 适配层统一 HTTP、响应与错误语义；overview 标题和可选诊断不是生产协议，缺失来源、未知内容、空 active tail、通用回退与其它 malformed 响应不可采用。
+共享长任务 fixture 固定目标更新、冲突 branch、工具证据、Pi compaction 和压缩后继续。记忆模型可用后，扩展在 Provider 请求之外异步把当前有效投影写入 OpenViking Session：线性后继复用镜像，分叉或 compaction 改变有效前缀时隔离镜像；batch append 后先发布来源已核验的精确路线 active history assembly。达到阈值后，OpenViking `accepted` commit 在 180 秒有界终态期限内生成 Working Memory，完成后以 overview 更新同一路线；`skipped` commit 表示消息都位于保留窗口，空 task ID 不再使 active history 失效。共同适配层拒绝矛盾或未知状态、缺失来源、未知内容、空 active tail、通用回退与其它 malformed 响应。
 
-Pi `context` hook 只读取内存中的已验证配置代际和就绪路线，不等待配置文件、Python bridge 或 OpenViking；配置或 runtime state 变化由文件观察器先使旧代际失效，再后台检查并重建，期间请求立即保持 Pi 原生。采用时重新核对当前 prompt 之前的 session、session file、leaf、有序 entry 和完整路线指纹。tree、compaction、session replacement 与 reload 先回到 Pi 原生，操作后的实例从 Pi 当前 leaf 重建；状态由实际 `context` 决定并在 Provider payload 再核对。
+Pi `context` hook 只读取内存中的当前受管 OpenViking 子进程和路线状态，不读取配置或启动新 OpenViking 工作；用户配置只描述下一次重启目标，变化或校验失败不会中断仍然 ready 的实例。精确路线已有在途准备时最多等待 1000 ms 取得来源核验结果，无 pending 或超时立即按 Pi 原生消息继续。采用时重新核对当前 prompt 之前的 session、session file、leaf、有序 entry 和完整路线指纹。`before_agent_start` 使用 Pi 当时已持久化的完整历史，不再误删上一轮；tree、compaction、session replacement 与 reload 从 Pi 当前 leaf 重建。状态栏实时区分“增强记忆 · 初始化中”“增强记忆 · 生效中”“增强记忆”和服务不可用时的“Pi 原生”；Provider 实际采用路径独立记录。
 
 当前证据：
 
 - [`validation/evidence/source-archive.json`](../validation/evidence/source-archive.json)：session 隔离、branch 切换、来源恢复、完整结果与存储失败；
 - [`validation/evidence/source-recall.json`](../validation/evidence/source-recall.json)：受控 OpenViking、向量索引、队列边界、当前路线召回和权威展开；
 - [`validation/evidence/memory-model-runtime.json`](../validation/evidence/memory-model-runtime.json)：用户配置、配置编译、安全重启、生命周期所有权和冷启动降级；
-- [`validation/evidence/context-enhancement.json`](../validation/evidence/context-enhancement.json)：共享 fixture、路线与代际身份、有效 compaction 投影、tree 往返、fork/clone/resume/reload、三类 compaction、Provider/UI 状态一致性、故障降级和清理；
-- [`validation/evidence/context-quality.json`](../validation/evidence/context-quality.json)：真实 OpenViking Working Memory 下两个 arm 使用同一任务模型并保持当前决定 `bounded-current-route` 与来源 `b000000c`；最终 Codex Responses 适配请求未转发 reasoning 或 temperature，reasoning 语义为 Provider 默认。
+- [`validation/evidence/context-enhancement.json`](../validation/evidence/context-enhancement.json)：共享 fixture、路线与代际身份、合法 skipped commit、1000 ms 精确 pending 等待、commit 运行期间的 active history 采用、慢任务完成与超时降级、完整 Pi 生命周期、Provider/UI 一致性和清理；
+- `scripts/validate-real-context-adoption.mjs`：统一验证模型的真实采用入口，不预等待 Working Memory；Pi `0.84.2` 下 skipped 场景的零间隔第二轮 Provider payload 已采用增强，accepted 场景在最终 Working Memory 完成前已用 active history 发出增强请求，原始产物保存在 Git 忽略的 `.artifacts/real-context-adoption/`；
+- [`validation/evidence/context-quality.json`](../validation/evidence/context-quality.json)：最近一次两个 arm 均保持当前决定 `bounded-current-route` 与来源 `b000000c`，并记录实际任务/记忆模型坐标、记忆调用路由与 token；本次状态生命周期改动后实现绑定已过期，需在验证凭据可用后重新运行质量 runner。
 
-四个日常 runner 使用本地资源；真实质量 runner 独立执行。`node scripts/check-validation-evidence.mjs` 免费只读核对五份 evidence 与当前实现，不会重新发起 Provider 请求。
+四个本地 runner 与模型质量、真实采用 runner 共同构成验证链；按风险先运行本地检查，凭据可用时继续模型能力与成本环节。`node scripts/check-validation-evidence.mjs` 只读核对五份稳定 evidence，不会重新发起 Provider 请求；当前只报告 `context-quality` evidence 的实现绑定待刷新。
 
 ## 3. 当前主导约束
 
-完整 Pi 生命周期已成立；真实记忆模型只证明一个固定长任务 fixture 的成对路线连续性样本，不能外推为一般质量等价。当前可执行主导约束是为该成对入口补齐完整 API 成本归属：质量 runner 能读取两个 Pi session 的任务模型 token 与 cost，但尚未把 OpenViking Working Memory 生成、重试和降级请求逐 generation 对应到 Provider 最终账单。
+增强状态现按“增强记忆 · 初始化中 → 增强记忆 · 生效中 → 增强记忆”实时展示，只有配置、代际或后端不可用并强制回退时显示“Pi 原生”；Provider 实际采用路径保持独立记录。四份本地 evidence 已覆盖启动、路线变化、tree/session/compaction、后端失败和恢复，并与当前实现一致。
 
-现有单次样本中增强 arm 的任务侧输入明显更小，只能解释有界上下文机制；缓存条件不同且记忆请求账单缺失，不能据此证明完整成本优势。下一交付先建立完整请求归属，再扩展任务与重复次数，并交替 arm 顺序复核质量和完整成本。
+当前立即约束是质量 evidence 尚未与状态生命周期改动后的扩展入口及统一模型配置重新绑定；验证进程取得 OpenRouter 凭据后直接重跑 `validate-context-quality.mjs`，确认任务质量仍成立。随后主导约束回到完整账单归属：把每个任务、记忆、重试和降级请求绑定到 OpenRouter 最终 billed cost，才能判断增强路径是否具有完整成本优势。
 
 ## 4. 当前交付边界
 
-**目标**：建立原生 Pi / 增强路径的完整 API 请求与最终账单归属，使任务质量成立后的成本比较覆盖任务模型、Working Memory 生成、重试与降级。
+**目标**：在任务质量保持成立后，把原生与增强 arm 的全部 OpenRouter billed cost 归入同一可复核实验，判断增强路径是否具有完整成本优势。
 
 **需要完成**：
 
-- 为每个质量实验 run、arm 和 generation 建立稳定身份；
-- 归集 Pi 任务请求与 OpenViking 记忆请求的 Provider 最终 input、output、cache 和金额；
-- 明确失败、重试、降级与未实际发送请求的归属语义；
-- 固定任务、模型、thinking、工具、checker、执行顺序、缓存条件和重复次数；
-- 两个 arm 任一质量失败时，本轮不形成成本优势结论。
+- 为任务模型和 OpenViking 记忆模型请求记录可与 OpenRouter 账单关联的 run/request 身份，不保存凭据或完整 payload；
+- 把记忆生成、任务调用、重试与降级请求全部归入对应 arm；
+- 使用同一任务、模型、thinking、工具边界和重复次数执行 native/enhanced 成对实验；
+- 同时保留 checker 结果、Provider payload 采用事实、token usage 与最终 billed cost。
 
-**完成条件**：四份本地 evidence 持续通过；真实质量 evidence 持续满足两个 arm 的 checker 与增强实际采用；每个实际 generation 都有唯一账单归属；增强 arm 的完整成功任务账单低于原生 Pi arm。
+**完成条件**：两个 arm 均有效完成任务，所有 OpenRouter 请求可完整归属且无未解释费用；增强 arm 的完整 billed cost 低于 native arm 时，才能形成成本优势结论。
 
 ## 5. 推进规则
 
-保持 Pi 原生路径、当前路线身份和来源权威不变量。真实 Provider 实验固定任务、模型、工具边界、checker 和重复次数；结果偏离预期时回到最早缺少证据的 Working Memory、采用或生命周期判断，不通过增加状态分支掩盖未知。
+保持 Pi 原生接续能力、当前路线身份和来源权威不变量，但不把 Pi 原生接续计为增强成功。真实 Provider 实验固定任务模型、记忆模型、thinking、工具边界和输入间隔；结果偏离预期时回到最早缺少证据的 commit、active assembly、pending 等待或 Provider 采用边界，不通过放宽路线核验掩盖未知。
 
 ## 6. 下一执行入口
 
-1. 在质量 runner 中为 Pi 与 OpenViking 请求建立共同 run/arm/generation 归属；
-2. 从 Provider 最终响应或账单来源收集全部 token、cache 与金额，拒绝缺失 generation；
-3. 扩展代表性任务与重复次数，预先规定并交替 arm 顺序，先复核两个 arm 质量；
-4. 比较完整成功任务账单，并按结果重新识别主导约束。
+1. 向验证进程提供 `PCR_OPENVIKING_VLM_API_KEY` 后直接运行 `node scripts/validate-context-quality.mjs`，恢复质量 evidence 与当前扩展入口的实现绑定；
+2. 调查 OpenRouter 与 LiteLLM 响应中可稳定关联账单的 request/generation 标识和 billed cost 字段；
+3. 把关联信息加入成对质量 runner 的 run-local 原始产物与稳定 evidence 校验；
+4. 固定重复次数运行 native/enhanced 两个 arm，核对完整费用归属与任务质量；只有归属完整后才比较并形成成本结论。

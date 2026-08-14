@@ -2,21 +2,21 @@
   "schemaVersion": 1,
   "generatedBy": "scripts/validate-context-enhancement.mjs",
   "scope": "local",
-  "runId": "context-enhancement-2026-08-14T16-51-29-546Z",
-  "startedAt": "2026-08-14T16:51:29.559Z",
-  "completedAt": "2026-08-14T16:51:54.050Z",
-  "piVersion": "0.84.1",
+  "runId": "context-enhancement-2026-08-14T21-05-20-526Z",
+  "startedAt": "2026-08-14T21:05:20.538Z",
+  "completedAt": "2026-08-14T21:05:28.857Z",
+  "piVersion": "0.84.2",
   "openVikingVersion": "0.4.13-protocol",
   "fixture": {
     "path": "validation/fixtures/context-enhancement-long-task.json",
     "name": "bounded-context-route-continuity"
   },
   "implementation": {
-    "sourceManifestSha256": "4b7ab4e23c72b723a50bfc04a5e95789a9a6911c41686efc18fca6be9a0b145a",
+    "sourceManifestSha256": "236eda150a094c093792e3367f589f35cb1009cdd277e63b559dbc260fb22431",
     "files": [
       {
         "path": ".pi/extensions/pi-context-memory/index.ts",
-        "sha256": "af4fbe321a6cf05d78d6ca2f9766b9750c6c3f6e679a12039a0988fd426d2636"
+        "sha256": "36710855109325128fa00ddd44c0b1bb7d926040a9f9431e57e0f003c4e2c748"
       },
       {
         "path": ".pi/extensions/pi-context-memory/long-term-memory.ts",
@@ -24,11 +24,11 @@
       },
       {
         "path": ".pi/extensions/pi-context-memory/memory-model-configuration.ts",
-        "sha256": "2608d22ad9cd53bb882fff1001a94dc9bc21f484f18574cd0fd011a36f2d2788"
+        "sha256": "270467148579a1b9141665cdc62cff6dbb0311ba26013dff0a15a5049b7baec0"
       },
       {
         "path": ".pi/extensions/pi-context-memory/openviking-protocol.ts",
-        "sha256": "d0806e2d26aceeb657dad183fe0a047211fadf3de02531d56a0d61c814d44c05"
+        "sha256": "072f287089aa8593eea47428c9a0b986beaa2634b2ddf43a6d3f06b5c7ffd89c"
       },
       {
         "path": ".pi/extensions/pi-context-memory/pi-session-protocol.ts",
@@ -40,11 +40,11 @@
       },
       {
         "path": ".pi/extensions/pi-context-memory/session-working-memory.ts",
-        "sha256": "388b3e1ff19984dca962c6fc6f65a49810610cf5843e6f84056a466db95135bf"
+        "sha256": "a76d58c57bdf943cafd74d191f20a54ddce61bb84b7b0177a63838cca3f2eae5"
       },
       {
         "path": ".pi/extensions/pi-context-memory/working-context-optimization.ts",
-        "sha256": "13ee7afc300599ed460079d4999ad923ea2c955d19daf4b84e45e0f7973316e0"
+        "sha256": "64e14b83b20d28cf964ad0801b182a18187355f395403a3df90c5e97903a9e91"
       },
       {
         "path": "scripts/check-validation-evidence.mjs",
@@ -52,23 +52,28 @@
       },
       {
         "path": "scripts/validate-context-enhancement.mjs",
-        "sha256": "b35bd4747213b0f14d13f43ecabdd5b8d5239da0255fb5e8898f667a85c02cde"
+        "sha256": "43cddceb16e8c5c10521cba3ca543dd81ff5edd99c54519f689d261f7da5e2b6"
       },
       {
         "path": "scripts/validation-evidence.mjs",
-        "sha256": "8dbf189f6178d558e6795114caec470f779a26e941c43b2b02dfdb58ae86a8d8"
+        "sha256": "771c13dc85ac4642ad07cbabd7b140ae66161fd3c6ccd8899b173c77edaa1c16"
+      },
+      {
+        "path": "scripts/validation-model-config.mjs",
+        "sha256": "30b9c777779612593eba4e5fff5679cc2d91434286261964465d115d067702d5"
       },
       {
         "path": "validation/fixtures/context-enhancement-long-task.json",
         "sha256": "8aed19f4611f47d8d000b89e6901727cd213282849e6faf5a5d1a4adda724694"
       }
     ],
-    "gitCommit": "ee37dd7ec21fe619857902a8589a3853e2eb1a4f",
+    "gitCommit": "b8108fedef8127ca20687471cda1d88aed22a6eb",
     "workingTreeDirty": true
   },
   "passed": true,
   "checks": {
     "sharedFixtureLoaded": true,
+    "workingMemoryTaskDeadlineBounded": true,
     "workingContextResponseNormalized": true,
     "piProtocolFailClosed": true,
     "currentRouteIdentity": true,
@@ -82,6 +87,11 @@
     "sourceIdsPreserved": true,
     "compactionBoundary": true,
     "currentTurnPreserved": true,
+    "skippedCommitRetainsActiveHistory": true,
+    "inFlightReadyWaitBounded": true,
+    "activeHistoryAvailableDuringWorkingMemory": true,
+    "slowWorkingMemoryCompletesWithinDeadline": true,
+    "workingMemoryTimeoutFallsBack": true,
     "backendFailureFallsBack": true,
     "pendingRoutesCollapsed": true,
     "inFlightShutdownCleaned": true,
@@ -89,7 +99,8 @@
     "piContextHookAdopted": true,
     "providerStateUnspoofable": true,
     "contextHookNonBlocking": true,
-    "mismatchedRuntimeRejected": true,
+    "inFlightContextWaitAdopted": true,
+    "desiredConfigDoesNotDisableRuntime": true,
     "providerPayloadCurrentTurn": true,
     "localProviderOnly": true,
     "treeLifecycle": true,
@@ -97,20 +108,21 @@
     "compactionLifecycle": true,
     "backendFailureRecovery": true,
     "lifecycleProviderStateConsistent": true,
+    "memoryStatusLifecycle": true,
     "ownedSessionsCleaned": true
   },
   "details": {
     "routes": {
-      "common": "3764fee44226ca432a99f4ec13dab903a0e8d217d03e4e5578a09f09327f3bd2",
-      "branchA": "9655484742965e0772cfac2395ce07afab13783d1c14f73e89c78218278774a5",
-      "branchB": "5e195bacbb24d2944414d9f60c310650174b97883843342960d4baefdc983de1",
-      "afterCompaction": "6e1536d37a1321d636b146cbbde729fdd70e2e9d27978bbbad546993d4ab083f"
+      "common": "e1c3fa59d67e48fe4b6623e921b9d329550bd0896ea28e4c741b6f2f08b6f05f",
+      "branchA": "ffb90ac7e74de1744175e2dcabf1643c339c81b369e8c4e8f8cb0c7f776829d5",
+      "branchB": "7f0a244a82131f56e7ddab2b73e01d4deeadfa37ee90e6a3d3f7070de03fadbf",
+      "afterCompaction": "710bfe5c04c62606075bc0a37ae1fe1d782842ff6e8ffd90c7e8fee342afdc81"
     },
     "openViking": {
-      "sessionsCreated": 30,
-      "sessionsDeleted": 30,
-      "tasks": 7,
-      "requests": 1122
+      "sessionsCreated": 22,
+      "sessionsDeleted": 22,
+      "tasks": 9,
+      "requests": 1284
     },
     "context": {
       "branchAChars": 1162,
@@ -119,8 +131,8 @@
       "branchBEstimatedTokens": 553
     },
     "pi": {
-      "providerRequests": 34,
-      "enhancedContextEvents": 19,
+      "providerRequests": 36,
+      "enhancedContextEvents": 26,
       "lifecycle": {
         "treeRoundTrip": true,
         "treeSummaryChoices": true,
@@ -136,12 +148,13 @@
         "compactionProviderAdoption": true,
         "backendRecovery": true,
         "providerStateConsistent": true,
+        "memoryStatusLifecycle": true,
         "eventCounts": {
           "tree": 6,
           "compaction": 3,
           "starts": 10,
           "shutdowns": 5,
-          "providerRequests": 28
+          "providerRequests": 30
         }
       }
     }

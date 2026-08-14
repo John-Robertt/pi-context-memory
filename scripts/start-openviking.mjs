@@ -11,6 +11,7 @@ import { dirname, join, resolve } from "node:path";
 import {
   atomicWriteJson,
   compileOpenVikingConfig,
+  MEMORY_MODEL_CREDENTIAL_ENV,
   MemoryModelConfigurationError,
   OPENVIKING_CONFIG_BRIDGE_TIMEOUT_MS,
   readMemoryModelSetting,
@@ -158,6 +159,11 @@ async function prepareCandidate() {
   const setting = await readMemoryModelSetting(root);
   if (!setting) return baseCandidate(undefined);
   try {
+    if (setting.provider === "litellm"
+      && setting.model.toLowerCase().startsWith("openrouter/")
+      && !process.env[MEMORY_MODEL_CREDENTIAL_ENV]?.trim()) {
+      throw new Error(`${MEMORY_MODEL_CREDENTIAL_ENV} is required for LiteLLM OpenRouter models`);
+    }
     return await compileOpenVikingConfig(root, setting);
   } catch (error) {
     throw new MemoryModelConfigurationError(

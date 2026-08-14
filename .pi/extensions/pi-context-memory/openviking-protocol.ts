@@ -132,11 +132,30 @@ export function normalizeBatchPendingTokens(value: unknown): number | undefined 
     : undefined;
 }
 
-export function normalizeCommitTaskId(value: unknown): string {
-  if (!value || typeof value !== "object" || typeof (value as Record<string, unknown>).task_id !== "string") {
-    throw new Error("OpenViking commit response has no task ID");
+export function normalizeCommitResult(value: unknown):
+  | { status: "accepted"; taskId: string }
+  | { status: "skipped"; reason?: string } {
+  if (!value || typeof value !== "object") throw new Error("OpenViking commit response is invalid");
+  const commit = value as Record<string, unknown>;
+  if (commit.status === "accepted") {
+    if (typeof commit.task_id !== "string" || commit.task_id.length === 0) {
+      throw new Error("OpenViking accepted commit response has no task ID");
+    }
+    return { status: "accepted", taskId: commit.task_id };
   }
-  return (value as Record<string, unknown>).task_id as string;
+  if (commit.status === "skipped") {
+    if (commit.task_id !== null && commit.task_id !== undefined) {
+      throw new Error("OpenViking skipped commit response unexpectedly has a task ID");
+    }
+    if (commit.reason !== undefined && typeof commit.reason !== "string") {
+      throw new Error("OpenViking skipped commit response has invalid reason");
+    }
+    return {
+      status: "skipped",
+      ...(typeof commit.reason === "string" ? { reason: commit.reason } : {}),
+    };
+  }
+  throw new Error(`OpenViking commit response has unknown status ${String(commit.status)}`);
 }
 
 export function normalizeTaskState(value: unknown): { status: string; error?: unknown } {

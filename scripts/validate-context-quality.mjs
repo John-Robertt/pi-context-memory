@@ -11,6 +11,7 @@ import {
   assertImplementationEvidenceUnchanged,
   captureImplementationEvidence,
 } from "./validation-evidence.mjs";
+import { readValidationModels } from "./validation-model-config.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 if (process.argv.length !== 2) throw new Error("Usage: node scripts/validate-context-quality.mjs");
@@ -19,16 +20,15 @@ const runId = process.env.PCR_RUN_ID ?? `context-quality-${new Date().toISOStrin
 const artifactRoot = join(root, ".artifacts/context-quality", runId);
 const fixturePath = join(root, "validation/fixtures/context-enhancement-long-task.json");
 const evidencePath = join(root, "validation/evidence/context-quality.json");
-const taskModel = process.env.PCR_QUALITY_MODEL?.trim() || "openai-codex/gpt-5.4";
-const memoryModel = process.env.PCR_QUALITY_MEMORY_MODEL?.trim() || taskModel;
+const { task: taskModel, memory: memoryModel } = readValidationModels(root);
 const fixture = JSON.parse(readFileSync(fixturePath, "utf8"));
 const implementation = captureImplementationEvidence(root, "context-quality");
 const startedAt = new Date().toISOString();
 mkdirSync(artifactRoot, { recursive: true });
 const piVersion = commandOutput("pi", ["--version"]);
 const openVikingVersion = commandOutput(join(root, ".venv/bin/python"), ["-c", "import openviking; print(openviking.__version__)"]);
-if (piVersion !== "0.84.1" || openVikingVersion !== "0.4.13") {
-  throw new Error(`Quality validation requires Pi 0.84.1 and OpenViking 0.4.13 (found ${piVersion}/${openVikingVersion})`);
+if (piVersion !== "0.84.2" || openVikingVersion !== "0.4.13") {
+  throw new Error(`Quality validation requires Pi 0.84.2 and OpenViking 0.4.13 (found ${piVersion}/${openVikingVersion})`);
 }
 
 function assert(condition, message) {
@@ -331,18 +331,27 @@ async function runArm(name, model, openViking) {
   }
 }
 
-const task = parseModel(taskModel, "PCR_QUALITY_MODEL");
-const memory = parseModel(memoryModel, "PCR_QUALITY_MEMORY_MODEL");
+const task = parseModel(taskModel, "task model");
+const memory = parseModel(memoryModel, "memory model");
+assert(
+  Boolean(process.env.PCR_OPENVIKING_VLM_API_KEY?.trim()),
+  "Quality validation requires PCR_OPENVIKING_VLM_API_KEY",
+);
 const adapterProbe = JSON.parse(commandOutput(
   join(root, ".venv/bin/python"),
-  [join(root, "scripts/validate-openviking-vlm-adapters.py")],
+  [join(root, "scripts/validate-openviking-vlm-adapters.py"), memory.model],
 ));
-const memoryRequestSemantics = memory.provider === "openai-codex" && adapterProbe.passed === true
+const memoryRequestSemantics = memory.provider === "litellm"
+  && memory.model === taskModel
+  && adapterProbe.passed === true
   ? {
-    adapter: "Codex Responses",
-    reasoningForwarded: adapterProbe.codexRequest?.reasoningForwarded,
-    temperatureForwarded: adapterProbe.codexRequest?.temperatureForwarded,
-    stream: adapterProbe.codexRequest?.stream,
+    adapter: "LiteLLM OpenRouter",
+    model: adapterProbe.litellmOpenRouterRequest?.model,
+    apiKeyForwarded: adapterProbe.litellmOpenRouterRequest?.apiKeyForwarded,
+    reasoningForwarded: adapterProbe.litellmOpenRouterRequest?.reasoningForwarded,
+    temperatureForwarded: adapterProbe.litellmOpenRouterRequest?.temperatureForwarded,
+    temperature: adapterProbe.litellmOpenRouterRequest?.temperature,
+    timeoutForwarded: adapterProbe.litellmOpenRouterRequest?.timeoutForwarded,
   }
   : undefined;
 const runtimeDir = join(artifactRoot, "openviking-runtime");
@@ -353,6 +362,7 @@ const baseConfig = JSON.parse(readFileSync(join(root, "config/openviking.json"),
 const port = await freePort();
 baseConfig.server.host = "127.0.0.1";
 baseConfig.server.port = port;
+baseConfig.storage.workspace = join(artifactRoot, "openviking-data");
 writeJson(baseConfigPath, baseConfig);
 writeJson(settingsPath, { memoryModel: memory });
 const compiledMemoryModel = await compileOpenVikingConfig(root, memory, {
@@ -414,6 +424,19 @@ try {
   const openViking = { url: `http://127.0.0.1:${port}`, runtimeDir, settingsPath, baseConfigPath, observerPath };
   const native = await runArm("native", task, openViking);
   const enhanced = await runArm("enhanced", task, openViking);
+  const usageDatabase = join(baseConfig.storage.workspace, "_system/usage_audit/usage_audit.sqlite3");
+  const openVikingTokenUsage = JSON.parse(commandOutput(
+    join(root, ".venv/bin/python"),
+    [
+      "-c",
+      "import json, sqlite3, sys; connection = sqlite3.connect(sys.argv[1]); connection.row_factory = sqlite3.Row; print(json.dumps([dict(row) for row in connection.execute('SELECT source, token_type, provider, model_name, token_count FROM usage_token_hourly ORDER BY source, token_type, provider, model_name')]))",
+      usageDatabase,
+    ],
+  ));
+  const memoryTokenUsage = openVikingTokenUsage.filter((row) => row.source === "vlm"
+    && row.provider === "litellm"
+    && row.model_name === taskModel);
+  const memoryTotalTokens = memoryTokenUsage.reduce((total, row) => total + row.token_count, 0);
   const nativePassed = Object.values(native.checker).every(Boolean);
   const enhancedPassed = Object.values(enhanced.checker).every(Boolean);
   const checks = {
@@ -421,10 +444,17 @@ try {
     enhancedQuality: enhancedPassed,
     enhancedContextAdopted: enhanced.adopted && enhanced.observations.enhancedProviderRequests > 0,
     realWorkingMemoryReady: enhanced.observations.workingContextReady > 0,
+    memoryUsageAttributed: memoryTokenUsage.length === 2
+      && memoryTokenUsage.some((row) => row.token_type === "input" && row.token_count > 0)
+      && memoryTokenUsage.some((row) => row.token_type === "output" && row.token_count > 0)
+      && memoryTotalTokens > 0,
     sameTaskModel: native.model === taskModel && enhanced.model === taskModel,
-    memoryRequestSemanticsObserved: memoryRequestSemantics?.reasoningForwarded === false
-      && memoryRequestSemantics.temperatureForwarded === false
-      && memoryRequestSemantics.stream === true,
+    memoryRequestSemanticsObserved: memoryRequestSemantics?.model === taskModel
+      && memoryRequestSemantics.apiKeyForwarded === true
+      && memoryRequestSemantics.reasoningForwarded === false
+      && memoryRequestSemantics.temperatureForwarded === true
+      && memoryRequestSemantics.temperature === 0
+      && memoryRequestSemantics.timeoutForwarded === true,
     pairedConditions: Boolean(native.condition)
       && JSON.stringify(native.condition) === JSON.stringify(enhanced.condition),
   };
@@ -439,6 +469,7 @@ try {
     piVersion,
     openVikingVersion,
     models: { task: taskModel, memory: memoryModel },
+    openVikingUsage: { tokenRows: openVikingTokenUsage, memoryTotalTokens },
     memoryModelCondition: {
       configFingerprint: compiledMemoryModel.configFingerprint,
       explicitRequestControls: explicitMemoryRequestControls,
@@ -459,7 +490,7 @@ try {
     arms: { native, enhanced },
     limitations: [
       "This experiment establishes paired task quality with one fixed fixture and does not establish general quality equivalence.",
-      "API cost comparison remains a separate stage and must include all task and memory requests.",
+      "OpenViking memory-token usage is attributed to OpenRouter; complete billed cost still comes from the OpenRouter account and remains a separate comparison stage.",
     ],
   };
   assertImplementationEvidenceUnchanged(root, "context-quality", implementation);

@@ -32,7 +32,7 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 if (process.argv.length !== 2) throw new Error("Usage: node scripts/validate-source-recall.mjs");
 const scope = "local";
 const implementation = captureImplementationEvidence(root, "source-recall");
-const expectedPiVersion = "0.84.1";
+const expectedPiVersion = "0.84.2";
 const expectedOpenVikingVersion = "0.4.13";
 const piVersion = spawnSync("pi", ["--version"], { encoding: "utf8" }).stdout.trim();
 if (piVersion !== expectedPiVersion) {

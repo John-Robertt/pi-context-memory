@@ -10,6 +10,7 @@ import {
 import type { SessionRouteIdentity } from "./session-memory-coordination.ts";
 
 const DEFAULT_MAX_CONTEXT_CHARS = 48_000;
+export const DEFAULT_IN_FLIGHT_READY_WAIT_MS = 1_000;
 
 export interface WorkingContextOptions extends SessionWorkingMemoryOptions {
   maxContextChars?: number;
@@ -111,6 +112,15 @@ export class WorkingContextOptimizer {
 
   getReady(route: SessionRouteIdentity): PreparedWorkingContext | undefined {
     const prepared = this.sessionMemory.getReady(route);
+    return prepared ? this.project(prepared) : undefined;
+  }
+
+  async waitForReady(
+    route: SessionRouteIdentity,
+    timeoutMs = DEFAULT_IN_FLIGHT_READY_WAIT_MS,
+    signal?: AbortSignal,
+  ): Promise<PreparedWorkingContext | undefined> {
+    const prepared = await this.sessionMemory.waitForReady(route, timeoutMs, signal);
     return prepared ? this.project(prepared) : undefined;
   }
 

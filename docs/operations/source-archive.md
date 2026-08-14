@@ -4,7 +4,7 @@
 
 项目扩展 [`.pi/extensions/pi-context-memory/index.ts`](../../.pi/extensions/pi-context-memory/index.ts) 被 Pi 加载后，会自动归档持久化 session 的当前活动路线。临时 session 不归档；归档本身不修改模型输入。
 
-当前 evidence 的宿主验证坐标是 Pi `0.84.1`。Pi 升级后的兼容验证由项目维护者承担；扩展不会要求用户降级宿主。维护者使用以下无 Provider 本地入口复核：
+当前 evidence 的宿主验证坐标是 Pi `0.84.2`。Pi 升级后的兼容验证由项目维护者承担；扩展不会要求用户降级宿主。维护者使用以下无 Provider 本地入口复核：
 
 ```bash
 node scripts/validate-source-archive.mjs

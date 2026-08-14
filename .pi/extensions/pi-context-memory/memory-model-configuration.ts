@@ -506,7 +506,7 @@ export async function validateMemoryModelSetting(
   root: string,
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<MemoryModelSetting | undefined> {
-  return (await validateMemoryModelConfiguration(root, env))?.setting;
+  return readMemoryModelSetting(root, env);
 }
 
 export async function memoryModelConfigContentFingerprint(
