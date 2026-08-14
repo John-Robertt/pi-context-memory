@@ -8,7 +8,7 @@ OpenViking原生配置、运行配置格式和进程通信由系统设计统一�
 
 ## 2. 目标与边界
 
-用户通过 Pi 扩展配置当前项目共享的记忆模型。可选来源、模型语义和来源必要字段直接来自项目锁定 OpenViking版本的 VLM 能力描述；界面只要求用户选择来源、填写模型 ID，并在所选来源需要时提供无法推导的连接信息。
+用户通过 Pi 扩展配置当前项目共享的 OpenViking VLM。可选 Provider、模型语义和必要字段直接来自项目锁定 OpenViking 版本的 VLM 能力描述；界面只要求用户选择 Provider、填写模型 ID，并在所选 Provider 需要时提供无法推导的连接信息。
 
 记忆模型设置独立于 Pi `/model` 的任务模型设置。修改记忆模型保持当前任务模型和 Pi session branch 不变，也不产生任务模型调用或对话消息。
 
@@ -16,7 +16,7 @@ OpenViking原生配置、运行配置格式和进程通信由系统设计统一�
 
 ## 3. `/memory-model`
 
-`/memory-model` 展示当前项目保存的记忆模型设置、运行实例实际加载的设置及二者是否一致。选择界面根据 OpenViking能力描述提供来源、模型和必要连接字段，并由产品补充名称、说明和可推导默认值。
+`/memory-model` 展示当前项目保存的 OpenViking VLM 设置、运行实例实际加载的设置及二者是否一致。选择界面根据 OpenViking 能力描述提供 Provider、模型和必要连接字段，并由产品补充名称、说明和可推导默认值。
 
 设置通过 OpenViking schema 校验后原子保存。保存设置与运行实例一致时显示“已生效”；二者不一致时显示“等待应用”并提示使用 `/restart-viking`。运行实例确认加载目标设置后，界面更新为“已生效”。
 
@@ -38,7 +38,7 @@ readiness 检查只验证本地服务，不产生外部 Provider 调用。具体
 
 ## 6. 完成条件
 
-- 用户只填写来源、模型和该来源要求的必要连接信息，其余 OpenViking配置由系统生成；
+- 用户只填写 OpenViking VLM Provider、模型和该 Provider 要求的必要连接信息，其余 OpenViking 配置由系统生成；
 - 可选范围与项目锁定 OpenViking版本的 VLM 能力描述一致；
 - 凭据与产品设置、Pi session 和运行状态保持分离；
 - `/memory-model` 准确区分已保存设置和运行实例设置；
