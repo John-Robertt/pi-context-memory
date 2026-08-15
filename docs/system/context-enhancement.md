@@ -1,67 +1,244 @@
-# 自动上下文增强系统设计
+# 增强记忆工作上下文系统设计
 
 ## 1. 文档角色
 
-本文定义 Pi 集成、Session 记忆协调、长时记忆与工作上下文优化模块怎样协作，把 OpenViking Session Working Memory 和 context assembly 作为当前路线的有界增强上下文。用户可观察行为见 [`../features/context-enhancement-state.md`](../features/context-enhancement-state.md)，证明方法见 [`../validation/context-enhancement-state.md`](../validation/context-enhancement-state.md)。
+本文定义 Pi 集成、Session 记忆协调、长时记忆与工作上下文优化模块怎样协作，在扩展启用期间独占任务模型工作上下文与自动压缩。用户可观察行为见 [`../features/context-enhancement-state.md`](../features/context-enhancement-state.md)，OpenViking 边界见 [`../contracts/openviking-adapter.md`](../contracts/openviking-adapter.md)，证明方法见 [`../validation/context-enhancement-state.md`](../validation/context-enhancement-state.md)。
 
-## 2. 目标与边界
+## 2. 设计目标与边界
 
-系统在不修改 Pi session 历史、tree、工具执行和原生压缩语义的前提下，用当前用户 prompt 之前的权威路线准备增强上下文。准备未完成、结果过期或 OpenViking 不可用时，本次模型调用保持 Pi 原生消息。
+系统以 Pi session 当前 branch 为事实权威，为每个任务模型请求构造来源可恢复、协议合法且有界的增强上下文。扩展启用期间不存在请求级路径选择：满足增强条件的请求发送，不满足条件的请求在 Provider 前终止。
 
-OpenViking 负责 Session Working Memory、活跃消息预算和 context assembly；Pi 当前 session、leaf、连续父链与原始 entry 决定结果能否采用。扩展不实现第二套摘要模型、相关性算法或事实权威。
+Pi 继续拥有 Agent 循环、session 历史、工具执行、tree 和 branch 语义。系统不修改或删除 Pi 权威 entry，只控制任务模型实际收到的消息。
 
-## 3. 路线与采用身份
+设计同时处理两个增长方向：
 
-Session 记忆协调对每个快照验证 session ID、session file、leaf、entry 唯一性和连续父链，并从完整 entry 内容生成路线指纹。准备结果绑定：
+- 当前用户 prompt 之前的跨轮历史；
+- 当前 prompt 之后快速增长的 assistant、工具调用与工具结果。
 
-- Pi session ID 与 session file；
-- 当前历史 leaf；
-- 有序 entry ID 集合；
-- 完整路线指纹。
+## 3. 运行与路线状态
 
-后台运行检查以 Launcher 发布的受管 OpenViking 子进程作为运行代际。用户配置文件只描述下一次重启的目标；配置变化只刷新诊断，不能使仍在运行的实例、内存代际或缓存失效。runtime state 显示当前子进程停止或被新子进程替换时，扩展才取消旧任务并按新的 `launchId + childPid` 重建。`context` hook 本身不读取文件或启动 OpenViking 工作，只重新计算路线身份、核对当前运行实例，并可为同实例同路线的既有 pending 作有界等待。只有运行实例与四项路线身份完全一致的结果可以替换历史消息。
+### 3.1 运行状态
 
-当前 prompt 及其后续 assistant tool call、tool result 始终保留为 Pi 原生消息。增强内容只替换当前 prompt 之前的历史，避免破坏 Provider 对工具调用序列的要求。
-
-## 4. 准备与采用流程
+Session 记忆协调维护：
 
 ```text
-session_start / turn_end / session_tree / session_compact / before_agent_start
-  → Pi 集成取得当前权威路线
-  → Session 记忆协调验证路线并生成采用身份
-  → 长时记忆模块按路线准备 OpenViking Session
-      → 同一路线去重
-      → 线性后继只追加新增 entry
-      → OpenViking 镜像绑定 Pi session 与 session file；不同所有权或分叉路线使用隔离 Session
-      → batch append 与必要的 commit Phase 1 在镜像快速队列内串行；Phase 1 返回后立即以固定 token budget assembly，来源核验后发布该精确路线 active history
-      → `accepted` 的慢速 Phase 2 在队列外轮询；期间同一镜像继续追加线性后继，任务完成后按镜像最新 revision 重新 assembly，只提升仍匹配的最新精确路线
-      → 每个镜像同时至多一个 commit task；期间新增 token 独立累计，旧任务完成后达到阈值才启动下一次 commit；`skipped` 保留 active history 且不轮询空 task ID
-  → 工作上下文优化格式化有界增强历史
-  → 就绪结果按完整路线身份和当前受管 OpenViking 子进程代际缓存
+initializing → ready → faulted
+      ↑           │
+      └───────────┘  仅由显式重启或重新验证进入新代际
 
-context
-  → 重新取得当前 prompt 之前的路线身份
-  → 精确命中就绪结果：增强消息 + 当前 Pi turn
-  → 精确路线已有在途准备：最多等待 1000 ms，只观察该任务是否发布来源核验结果
-  → 无精确 pending、等待超时、过期或错误：保持全部 Pi 原生消息并记为增强降级
+任意状态 → stopping
 ```
 
-准备在 Provider 请求之外异步执行；`context` hook 不读取配置、不创建任务，也不为无精确 pending 的路线访问 OpenViking。为避免零间隔下一轮早于 active assembly，它只可在同代际、同精确路线已有在途任务时等待最多 1000 ms；到期立即原生降级。同一路线共享准备任务，快速队列只串行创建、追加、commit Phase 1、assembly 和提升等镜像状态变更；慢速 Phase 2 轮询独立运行，不阻塞后续路线。运行中的快速操作之后只保留同一 Pi session 最新的未启动路线，防止旧分支形成无界积压。缓存与活跃派生 session 数量有固定上限；有 commit 在途的淘汰镜像先标记 retired，任务终态后再删除，淘汰只损失增强就绪度，不影响 Pi 历史。
+- `initializing`：配置、受管 OpenViking 实例和记忆模型能力正在建立；
+- `ready`：当前运行代际具有有效能力证明；
+- `faulted`：必要条件失败，新的任务模型请求被阻断；
+- `stopping`：session 正在关闭，不接受新工作。
 
-## 5. 内容投影与预算
+`initializing` 中到达的请求加入当前代际初始化屏障；成功后同一请求继续构造增强上下文。用户取消只移除对应等待者，不锁存服务故障；初始化失败或请求操作期限结束时 abort 并进入 `faulted`。
 
-Pi 集成先把当前路线中的用户、assistant、工具结果、bash、自定义上下文、branch summary 和 compaction 规范化；长时记忆只把规范化结果投影为 OpenViking 文本消息，并通过 `source_message_ids` 保留 Pi entry ID。`firstKeptEntryId`、`retainedTail`、消息 role 与内容 block 的版本差异只在 Pi 集成边界解释。
+`faulted` 保存稳定错误码、脱敏原因、运行代际、发生位置和恢复入口。恢复创建新代际，不复用故障代际的 pending、ready 或请求证明。
 
-OpenViking 返回 Working Memory overview 与预算后的活跃消息，具体字段和兼容差异由 [`../contracts/openviking-adapter.md`](../contracts/openviking-adapter.md) 统一归一化。commit 只接受 `accepted + task ID` 或 `skipped + 空 task ID`；后者表示保留窗口内没有可归档消息，不是失败。overview 的语言和标题不是生产协议；通用计数回退、矛盾或未知 commit 状态与无法归一化的响应不可采用。扩展把有效内容格式化为一个隐藏的 Pi custom message，并再次执行字符上限保护；不把 OpenViking 消息 ID、摘要或状态写回 Pi session。显式 `recall_session` 继续承担来源级核对，增强摘要不能替代 Pi 权威 entry。
+### 3.2 路线状态
 
-## 6. 失败、分支与恢复
+每个运行代际内，路线按完整身份维护：
 
-- 路线切换立即使旧指纹结果不可采用；迟到结果只能进入自己的路线缓存。
-- OpenViking 创建、追加、commit Phase 1 或首次 context assembly 失败时，该精确路线不发布并按 Pi 原生接续；合法 `skipped` commit 保留 active history。Phase 2 失败、超时或最终 assembly 失败时，不采用未核验的 Working Memory，但保留 Phase 1 后已经来源核验的 active history；后续路线仍可继续追加和重试。迟到任务只能提升完成时镜像最新 revision 对应的精确路线，不能删除或覆盖更新路线。失败、淘汰与关闭会尽力删除扩展自建的派生 Session，清理失败不阻断 Pi。
-- 没有已配置且实际运行的记忆模型时不准备自动增强上下文，模型调用保持 Pi 原生；显式来源召回继续可用。
-- 配置校验失败或配置目标改变时，当前 ready 的受管实例继续提供增强，直到用户执行重启；重启预检失败同样保留旧实例。只有 runtime state 表明旧子进程已停止时才取消旧代缓存；新子进程 ready 后按新的进程代际重建。
-- tree、compaction、session replacement 与 reload 使新实例或新路线只从 Pi 当前 leaf 重建；重建期间显示“增强记忆 · 初始化中”或“增强记忆 · 生效中”，准备结果实际进入 Provider 请求后显示“增强记忆”。只有服务不可用并强制回退时显示“Pi 原生”。
+```text
+absent → preparing → ready
+           │     └→ failed
+           └→ absent  最后一个等待者取消且结果未发布
+```
 
-## 7. 验证与校准
+路线身份包含：
 
-共享长任务 fixture 固定目标更新、冲突路线、工具证据、compaction 和压缩后继续。本地 runner 证明完整 tree 往返、fork/clone/resume/reload、三类 compaction、路线精确采用、迟到结果隔离、预算上限、当前 turn 保留和后端故障降级。真实 Provider 成对质量 runner 证明同一任务模型下原生与增强 arm 均保持当前决定和证据入口；完整 API 成本继续由成本实验归集。
+- Pi session ID；
+- session file；
+- 当前历史 leaf；
+- 有序 message entry 与 ControlBoundary ID；
+- message 完整内容指纹和无 summary 文本的 ControlBoundary 身份；
+- OpenViking 运行代际。
+
+路线状态属于内部协调数据。`preparing` 期间用户状态保持“增强记忆”；只有路线失败或操作期限结束才使运行状态进入 `faulted`。
+
+## 4. 请求输入模型
+
+每次 `context` 调用把消息划分为：
+
+```text
+HistoricalRoute
+  当前用户 prompt 之前的 Pi 权威路线
+
+CurrentTurn
+  当前用户 prompt
+  + prompt 后的 assistant 文本
+  + 已完成工具批次
+  + 尚需保留的其它当前回合消息
+```
+
+`HistoricalRoute` 由 OpenViking Working Memory 和来源核验的 active history 构成稳定增强历史；目标、约束和有效决定由这两类来源的连续性保持，不建立独立语义锚点状态。`CurrentTurn` 由工作上下文优化直接治理，不等待慢速 Working Memory 提取后才处理大工具结果。
+
+Pi 集成先验证 context 时刻的完整 `SessionRouteSnapshot`，把 compaction/branch summary 归一化为无文本 ControlBoundary，再以当前 Agent run 的 user prompt 为边界拆分。`HistoricalRouteKey` 绑定 prompt 之前的有序 message 内容与 ControlBoundary 身份；`CurrentTurnKey` 绑定该 prompt、后续已持久化 message entry、尚未落盘但实际传入的消息及其顺序。请求证明同时绑定当前 session leaf、两个 key 和最终内容哈希。
+
+同一 user prompt 后的连续工具循环只更新 `CurrentTurnKey`，不为每个工具结果重做历史 Working Memory。Agent settled 后可以为完整回合预备下一条 HistoricalRoute；下一 user prompt 到达时只复用与实际前缀精确一致的结果。
+
+首轮请求具有合法空 `HistoricalRoute`。它仍绑定已经通过实际能力验证的运行代际，并生成增强证明。
+
+## 5. 工具批次与来源屏障
+
+### 5.1 原子批次
+
+一个包含工具调用的 assistant 消息与其全部对应 tool result 构成 `ToolBatch`。批次只有在调用 ID 完整匹配、每个调用具有一个最终结果且顺序可解释时才可进入上下文构造。
+
+批次处理只有两种合法结果：
+
+- **raw**：保留整个批次的原消息对象和顺序；
+- **projected**：移除整个协议批次，以一个隐藏增强投影表示其任务语义和来源。
+
+系统不保留孤立 tool call 或 tool result，也不在批次内部按字符截断协议消息。
+
+### 5.2 投影内容
+
+工具批次投影由本地确定性算法生成，不调用模型，至少包含：
+
+- 批次顺序、工具名称和调用 ID；
+- assistant 文本与允许 thinking block 的类型、大小、哈希和有界 head/tail；
+- 参数规范化表示的大小、哈希与有界 head/tail；
+- 成功、错误、取消和截断状态；
+- 已支持结果 block 的类型、大小、哈希与有界 head/tail；
+- 错误、否定文本和完成状态的保留区域；
+- Pi entry ID、完整输出路径、来源内容哈希或展开入口；
+- 原始与投影大小、省略范围和恢复方式。
+
+图片、未知 content block、缺失调用结果或无法建立来源的内容不静默投影，而是返回明确失败。
+
+### 5.3 来源屏障
+
+工作上下文准备在用投影替代原始大结果前，等待长时记忆确认对应 Pi entry 和完整结果具有可恢复来源。来源写入、完整性校验或身份核验失败时，不发送缺失必要信息的任务模型请求。
+
+## 6. 历史路线准备
+
+Session 记忆协调为精确 `HistoricalRoute` 调用幂等的 `ensureReady`：
+
+1. 已有精确 ready 结果时直接复用；
+2. 已有相同 pending 时加入同一任务；
+3. 路线尚未准备时创建准备任务；
+4. 线性后继复用同一 OpenViking Session 并追加增量；
+5. 分叉、session replacement 或有效前缀变化使用隔离 Session；
+6. 来源核验的 active history 和 Working Memory 按 OpenViking 契约组装；
+7. 结果只发布给创建它的运行代际和完整路线身份。
+
+操作期限用于限定等待和形成诊断，不用于选择另一条任务路径。期限结束、任务失败或结果不可信时，路线进入 `failed`，运行状态锁存故障。
+
+accepted Working Memory task 完成并通过最终 assembly 核验前，路线保持 `preparing`，依赖该路线的请求继续等待；`skipped` 只在契约确认无需提取时使用既有 Working Memory 与来源核验 active history 形成 ready。单个请求取消不取消仍有消费者的共享任务。ready 运行中的后端失败、取消、超时或 assembly 失败使当前代际进入能力故障；stopping 期间的清理取消不创建新故障。
+
+## 7. 工作上下文构造
+
+工作上下文优化按以下顺序分配预算：
+
+1. 当前用户 prompt；
+2. 保持 Provider 合法所需的 CurrentTurn 结构；
+3. 当前回合中影响下一步的错误、否定结果和证据；
+4. 当前有效且有界的完整 Working Memory；
+5. 来源核验的近期 active history；
+6. 已进入当前请求的召回结果和补充背景。
+
+预算选择以任务可靠完成和事实可信为约束。内容无法在保持这些约束及工具协议的前提下进入模型窗口时，构造返回失败。
+
+最终结果包含：
+
+- 隐藏增强历史消息；
+- 有界 CurrentTurn 消息；
+- ProviderPayloadProfile 身份；
+- session、实际 leaf、HistoricalRouteKey、CurrentTurnKey 和运行代际；
+- system prompt 与 active tool schema 哈希；
+- 上下文消息内容哈希；
+- 单次请求 nonce；
+- 来源集合与预算统计。
+
+## 8. Provider 请求闸门
+
+### 8.1 `context` 闸门
+
+```text
+context
+  → 读取当前运行状态
+  → 计算 HistoricalRoute 和 CurrentTurn
+  → ensureReady 精确历史路线
+  → 等待工具批次来源屏障
+  → 构造有界工作上下文
+  → 重新核对 session、leaf、路线和运行代际
+  → 返回增强消息并发布单次请求证明
+```
+
+任一步骤失败时，Pi 集成调用 `ctx.abort()` 终止当前 Agent 请求，记录结构化阻断原因并显示故障诊断。扩展异常不能用作控制流；所有可预期错误必须在集成边界转换为确定的阻断结果。
+
+### 8.2 最终 Provider 闸门
+
+`before_provider_request` 以当前单次请求证明核对最终序列化 payload：
+
+- 当前任务 Provider、模型和 API 与授权证明一致，并具有已验证的 PayloadProofAdapter；
+- 归一化后的系统、工具 schema 和有序消息与授权输入一致；
+- nonce 存在、未消费且只出现于预期增强消息；
+- 运行代际、实际 leaf、HistoricalRouteKey 和 CurrentTurnKey 仍为当前值；
+- payload 增强内容哈希与 `context` 决定一致；
+- 没有其它扩展删除或替换必要增强内容；
+- 当前请求没有故障锁存。
+
+核对成功时原子消费 nonce；重复、迟到或并发复用同一证明的 payload 被阻断。核对失败时在网络请求发出前 abort。Provider payload 是增强实际采用的最终事实，`context` 返回值本身不构成成功证明。
+
+## 9. Pi compaction 与 tree summary 抑制
+
+增强工作上下文持续保持有界，因此任务模型 usage 正常情况下不进入 Pi compaction 阈值。Pi 发出 `session_before_compact` 时，Pi 集成在增强模式下取消该 compaction：
+
+- threshold 表示增强预算控制没有成立；
+- overflow 表示增强 payload 超出模型边界；
+- manual 表示用户调用了不属于增强运行路径的压缩入口。
+
+这些事件不触发 Pi 摘要模型。threshold 和 overflow 锁存工作上下文故障；manual 返回增强记忆已自动管理上下文的明确提示。
+
+`session_before_tree` 不等待记忆、不生成摘要。Pi `0.84.2` 适配器在用户选择 summary 时返回空的扩展 summary，使宿主跳过原生 summarizer、继续目标导航且不建立 `branch_summary` entry；未选择 summary 时直接保持无摘要导航。若宿主版本尚未验证这一抑制契约，则取消带 summary 的 tree 操作，也不允许原生模型请求。操作后的 leaf 重新定义唯一有效路线。
+
+Session 中已有 compaction 或 branch summary entry 只参与路线身份和边界解释；其 summary 文本从 VLM 输入、来源索引、Working Memory 与任务模型上下文中排除。
+
+## 10. 并发、迟到结果与清理
+
+- 同一精确路线共享一个准备任务；
+- 同一 session 的线性后继按来源顺序串行写入镜像；
+- 不同 branch 使用独立镜像；
+- 迟到结果只进入自己的代际与路线缓存；
+- 路线切换不会放宽身份核验；
+- pending、ready、镜像和清理任务都有明确上限；
+- session shutdown 取消运行任务并尽力删除扩展创建的 OpenViking Session；
+- 清理错误进入运行观测，不自动重放用户任务。
+
+## 11. 故障与恢复
+
+故障记录必须区分：配置、认证、Launcher 所有权、服务、模型能力、来源、路线、OpenViking 协议、工具批次、预算、Provider 证明和关闭阶段。
+
+恢复流程为：
+
+```text
+用户修复配置、凭据、服务或存储条件
+  → 执行 /restart-viking，或在扩展更新后重新启动 Pi
+  → 创建新运行代际
+  → 实际能力探针通过
+  → 清除旧代路线与请求证明
+  → 从当前 Pi branch 重建来源和工作上下文
+  → 状态恢复为“增强记忆”
+```
+
+恢复不自动发送用户 prompt，不继续中断前未完成的工具批次。用户根据当前 session 状态重新提交任务。
+
+## 12. 验证与校准
+
+设计成立需要同时证明：
+
+- 必要外部服务可用时，复杂长任务全部有效完成；
+- 多个快速、并行和大输出工具批次保持有界并正确推进任务；
+- 慢于内部准备预期的路线最终增强发送或明确阻断，不产生其它路径请求；
+- 每个已发送 Provider payload 都具有当前增强证明；
+- 各类必要能力失败时 Provider 请求数不增加；
+- Pi compaction 和 tree summary 的模型请求均为零，tree 不新建 `branch_summary` entry；
+- tree、fork、clone、resume、reload 和已有 compaction session 只采用当前路线；
+- 禁用扩展并重新启动后 Pi 原生行为独立可用。
+
+具体任务、checker、重复次数、blocked 证据和运行入口由 [`../validation/context-enhancement-state.md`](../validation/context-enhancement-state.md) 定义。

@@ -1,77 +1,135 @@
-# 记忆模型配置与 OpenViking 重启验证
+# 记忆模型配置与运行能力验证
 
 ## 1. 验证责任
 
-本文定义如何证明 [`../features/memory-model-configuration.md`](../features/memory-model-configuration.md) 的最小配置体验及 [`../system/memory-model-runtime.md`](../system/memory-model-runtime.md) 的配置转换、实例所有权和重启边界成立。
+本文定义如何证明 [`../features/memory-model-configuration.md`](../features/memory-model-configuration.md) 的用户体验、[`../system/memory-model-runtime.md`](../system/memory-model-runtime.md) 的配置与运行代际，以及 [`../contracts/openviking-adapter.md`](../contracts/openviking-adapter.md) 的实际记忆模型能力证明成立。
 
-验证按风险先运行本地资源和协议替身，再在凭据可用时运行 [`../../validation/model.json`](../../validation/model.json) 选择的 OpenRouter 模型能力与成本环节。
+验证先使用本地配置入口、协议替身和受控进程覆盖确定性边界，再使用真实受管 OpenViking 与当前已配置的实际记忆 Provider/模型证明能力探针、accepted task、assembly、续租和恢复。只有替身通过时不能把记忆模型能力标记为完成。
 
-## 2. 配置转换
+真实验证沿用 manifest 固定的记忆 Provider/模型；坐标不变时，其付费调用属于正常验证，不逐次申请授权。需要改变记忆 Provider 或模型时才停止并请求用户决定。
 
-验证扩展明确支持的 Provider 子集能够通过项目安装的 OpenViking 聚合配置入口，并为每个受支持 Provider 生成配置 fixture。OpenAI-compatible 服务和 LiteLLM 使用代表性连接配置覆盖对应转换路径。
+## 2. 配置转换与文件安全
 
 固定检查包括：
 
-- 上游新增未知 Provider 不进入用户配置面，也不会使已有受支持 Provider 失效；
-- 配置桥只使用 OpenViking 聚合导出的 `OpenVikingConfig` 与 `VLMConfig` 校验入口，不读取其私有 registry 或 backend 路由表；
-- 模板说明扩展验证的 Provider、必要字段、认证入口、少量显式云路由示例和 LiteLLM 官方目录，不复制内部关键词和路由顺序；
-- 生成配置不主动覆盖跨 Provider 语义不一致的 `thinking`、reasoning、temperature 或 stream；adapter probe 另外核对 LiteLLM OpenRouter 请求保留模型路由、转发 temperature `0` 且不转发 reasoning；
-- 默认路径严格为隔离 HOME 下的 `.pi/pi-context-memory.jsonc`，缺失目录不向组或其他用户开放，缺失文件以 `0600` 原子独占创建，已有普通文件读取时收紧为 `0600` 且内容不变；已有和悬空符号链接保持不变；
-- 空文件、纯注释和 `memoryModel: null` 均表示未配置；普通注释、字符串内 URL 和尾逗号可解析；
-- 语法和语义错误形成有路径的脱敏诊断，已有文件不被检查、命令或启动器覆盖；
-- `api_key` 归属于单个记忆模型设置；直接 key 与 `$NAME` / `${NAME}` 环境引用都原样编译到 `0600` 运行配置，引用在 OpenViking 加载时展开；必需字段缺失或引用变量未设置时在停旧实例前失败；无需 API key 的 LiteLLM 云原生认证及 `openai-codex` 原生认证仍可省略；用户 key 不进入状态、诊断、日志、evidence 或 Pi session；
-- 真实质量 runner 通过 Pi 认证命令解析 `openrouter` key 并只返回环境引用与单次子进程环境；本地替身验证命令参数、环境继承、调用失败脱敏以及父进程环境不被修改。
+- 候选 Provider 子集通过项目安装的 OpenViking 聚合配置入口；只有实际纵向检查通过的 Provider/模型组合进入已支持矩阵；
+- 配置桥不读取上游私有 registry 或 backend 路由表；
+- 上游新增未知 Provider 不影响已有受支持配置；
+- 模板说明必要字段、认证入口和官方路由来源，不复制完整 Provider 目录；
+- 默认路径严格位于隔离 HOME 的 `.pi/pi-context-memory.jsonc`；
+- 缺失文件以 `0600` 原子独占创建，已有普通文件只收紧权限而不改写内容；
+- 普通注释、字符串 URL 和尾逗号正确解析；
+- 语法和语义错误形成带路径的脱敏诊断；
+- 直接 key 与 `$NAME` / `${NAME}` 环境引用原样编译到 `0600` 运行配置；
+- 必要凭据缺失或引用变量未设置时在停止旧实例前失败；
+- 无需 API key 的来源使用其原生认证；
+- key、OAuth token、云凭据和认证响应不进入状态、日志、evidence 或 Pi session；
+- `thinking`、reasoning、temperature 等参数只有在最终适配请求验证后进入契约。
 
-生成结果直接通过项目安装的 OpenViking 配置入口解析。依赖升级后由维护者重新运行同一入口；固定版本 VLM adapter 探针继续单独观察消息、tools、tool choice 和 function call 行为，但其内部路由细节不进入生产配置契约。
 ## 3. 命令语义
 
-使用隔离项目和 faux Pi Provider 验证：
+使用隔离 Pi 和本地任务 Provider 验证：
 
-- `/memory-model` 只创建缺失模板、检查并展示用户配置，不接受写入参数且不改变文件；
-- session 启动时无 Provider 请求地提示配置错误，同一内容哈希只自动提示一次，内容变化后可再次提示，Pi 原生路径继续；
-- 检查和应用配置后，任务模型、Pi session branch 和 Provider 调用数保持不变；
-- 命令准确区分用户配置与运行实例，并在不一致时提示 `/restart-viking`；
-- `/restart-viking` 返回实际加载模型，`memoryModel: null` 在应用前显示等待重启、应用后显示无 VLM 且已生效；readiness、模型能力与上下文采用分别表达；
-- 两个 Pi session 观察同一用户文件，配置内容不进入 Pi 对话。
+- `/memory-model` 只创建缺失模板、检查和展示，不接受写入参数；
+- 命令准确区分目标配置、active 进程、service readiness、memory capability 和 requestReady；
+- `memoryModel: null` 明确表示没有任务请求能力；
+- 配置检查和应用不改变任务模型、Pi session 或 branch；
+- 命令自身不产生任务 Provider 请求；
+- 配置错误提示具有稳定错误码，同一未变化诊断不重复刷屏；
+- `/restart-viking` 只有在服务与实际能力探针都通过后报告 ready；
+- 多个 Pi session 观察同一用户文件，配置内容不进入 Pi 对话。
 
-## 4. 生命周期、所有权与并发
+## 4. 启动器所有权与并发
 
-使用可控的本地 OpenViking替身和项目启动器验证：
+使用受控 OpenViking 子进程验证：
 
-- 正常应用按“预检—停止—启动—`/health` 健康—发布状态”顺序完成；来源召回 runner 另外证明健康后的真实资源操作；
-- 子进程退出和 readiness 超时发布失败状态，失败目标与实际运行配置分离；
-- 冷启动配置无效、必需 `api_key` 缺失或引用的环境变量未设置时发布不含 key 的诊断并启动无 VLM 基础服务，错误模型不进入 `active*`；
-- 两个启动器竞争时只有原子取得生命周期锁的进程成为所有者，死锁要求显式核对后恢复；
-- 项目启动器未运行、控制信息与锁不匹配或启动标识错误时返回明确诊断；
-- 当前实例运行时，未知进程占用不同目标端口会在停止旧实例前失败并保留旧实例；
-- 启动器只终止自己持有的子进程，未知端口进程不被终止；
-- 两个 Pi 进程并发应用只产生一个有效实例和一个确定的运行配置；
-- 客户端使用覆盖配置 bridge、两次最坏停止、readiness 与响应余量的完整操作期限；本地替身让旧实例和失败新实例都忽略 `SIGTERM`，证明失败清理在期限内结束；
-- 断开已接受请求后应用仍完成；状态以请求操作 ID 发布，超时客户端不把其它 ready 状态误判为本次成功；
-- 启动器连续收到退出信号时共享一次清理，确认子进程退出后再释放所有权。
+- 启动按“预检—停止旧实例—启动—service readiness—能力探针—发布代际”顺序完成；
+- 活锁拒绝第二启动器，死锁需要显式核对；
+- 启动器只终止自己持有的子进程；
+- 未知进程占用目标端口时在停止旧实例前失败；
+- 同一项目的并发应用请求串行且结果确定；
+- target 配置与 active process 始终分离；
+- 客户端操作 ID 和期限覆盖预检、停止、启动、readiness、能力探针与失败清理；
+- 客户端断开不撤销已接受操作，超时结果只按同一操作 ID 对账；
+- 子进程提前退出、readiness 失败和能力失败发布准确阶段；
+- 连续退出信号共享一次清理，并在子进程终态后释放所有权。
 
-测试记录进程 ID、启动标识、配置指纹、控制请求结果和 readiness 转换，不记录控制凭据。
+## 5. 实际记忆模型能力探针
 
-## 5. 降级与状态分离
+本地协议替身和真实 OpenViking 都必须观察探针完整流程：
 
-在当前实例继续运行、重启替换和新实例 readiness 后分别发起受控调用，证明：
+1. 创建隔离 Session；
+2. 写入带来源 ID 的确定性消息；
+3. commit 返回 `accepted + task ID`；
+4. task 达到 completed；
+5. context assembly 具有有效 Working Memory 和当前来源；
+6. 探针 Session 被删除；
+7. 能力证明绑定 launchId、childPid、模型、配置、协议、探针版本和 `validUntil`。
 
-- 修改、清空或写错待应用配置不会停止当前 ready 实例，重启预检失败也保留该实例；
-- `api_key` 使用环境引用且只有 Launcher 环境持有实际值时，Pi 核验进程仍可通过配置指纹识别并使用当前 ready 实例，且不会显示或记录凭据；
-- 旧子进程真正停止后，Pi `context` 不等待重启操作，任务请求立即使用 Pi 原生路径；
-- 在途 OpenViking 请求结束为受控失败，后续有效工作按当前路线重新提交；
-- 显式召回失败形成 Pi 可处理的错误结果；
-- 启动与实际服务重启显示“增强记忆 · 初始化中”，服务可用但当前路线尚未采用时显示“增强记忆 · 生效中”，运行实例或服务不可用并强制回退时只显示“Pi 原生”；
-- 配置加载、服务就绪、模型能力、用户生命周期状态和每次 Provider 实际采用路径能够独立观测。
+以下状态不能通过：
 
-## 6. 模型能力边界
+- 只有 `/health` 或 `/ready` 成功；
+- 配置成功但模型调用失败；
+- commit 返回 `skipped`；
+- task failed、cancelled、未知或超时；
+- assembly 为空、缺失来源、跨路线或包含通用失败文本；
+- 探针证明与 active 子进程或配置指纹不一致。
 
-本地协议替身覆盖项目锁定 OpenViking 依赖中的 VLM adapter 类型，检查消息、tools、tool choice 与 function call 转换。扩展支持的用户配置面和固定版本 adapter 行为分别验证；后者不反向定义生产配置范围。
+真实模型探针保存 Provider、模型、task、token、响应 ID 和内容哈希，不保存完整响应或凭据。探针费用进入完整成本归属。
 
-具体模型的 Working Memory create/update 能力由真实受控 fixture 或实际调用确认。能力不足时，Pi 原生路径继续任务并提供模型能力诊断。
+实际证据还必须覆盖一次业务 Session accepted task 对能力租约的续租、一次租约到期后的实际重新探针，以及一次实际进程中断后 `/restart-viking` 创建新代际并恢复。协议替身只能补充失败矩阵。
 
-模型能力与成本环节从统一配置派生任务与记忆路线，并记录任务 usage/cost、记忆 token 路由、工具调用结果和取消行为。最终 billed cost 仍需与 OpenRouter 账单逐 generation 关联。
+## 6. 运行代际与请求能力
 
-## 7. 证据责任
+分别改变 target 配置、active 子进程、service readiness、模型能力和适配版本，验证：
 
-`node scripts/validate-memory-model-runtime.mjs` 使用隔离设置、faux Pi Provider 和本地 OpenViking 协议替身，覆盖配置转换、命令无副作用、VLM adapter 协议、凭据路由、所有权、并发应用、降级和状态分离；结果保存到 [`../../validation/evidence/memory-model-runtime.json`](../../validation/evidence/memory-model-runtime.json)。evidence 纳入 `scripts/check-validation-evidence.mjs` 的当前实现哈希与精确检查集。统一配置选择的模型结果由质量与成本 runner 继续验证。
+- 用户文件变化不改变当前 ready 代际；
+- 重启预检失败保持当前 ready 实例；
+- active 子进程停止立即撤销旧代 requestReady；
+- 新子进程 service ready 但能力未通过时任务 Provider 请求数为零；
+- 同代际业务 accepted task 只有在完整 assembly 核验后续租；
+- 能力证明到期且续租 pending 或失败时任务 Provider 请求数为零；
+- 能力证明只对绑定的子进程、配置和适配版本有效；
+- 新代际不复用旧代 pending、ready context 或请求证明；
+- 新代际只从当前 Pi branch 重建；
+- 运行实例与配置目标不一致时诊断准确但不影响有效旧代。
+
+## 7. 故障阻断与恢复
+
+分别注入配置、凭据、Launcher、锁、端口、进程、readiness、模型能力、task 和 assembly 故障。每个场景必须证明：
+
+- 新任务模型请求在 Provider 前被阻断；
+- Provider 接收数不增加；
+- 状态为“增强记忆 · 故障”或仍处于初始化；
+- `/memory-model` 显示准确、脱敏的责任阶段；
+- 当前 Pi session 和来源保持不变；
+- 系统不自动发送或重放用户 prompt；
+- 用户修复并执行 `/restart-viking` 后创建新代际；
+- 新代际能力探针通过后恢复“增强记忆”；
+- 用户重新提交的任务使用增强 Provider payload。
+
+## 8. 当前 ready 实例与待应用配置
+
+验证当前 ready 实例运行期间：
+
+- 修改、清空或写错用户配置只更新目标诊断；
+- 配置文件 watcher 不销毁 active 能力证明；
+- `/restart-viking` 预检失败保留旧实例；
+- 成功重启在旧实例停止后撤销旧代并建立新代；
+- Pi 进程无需持有 Launcher 环境中的实际 key 即可核对当前代际；
+- 任何观测不显示或记录 key。
+
+## 9. 执行入口与 evidence
+
+目标入口为：
+
+```bash
+node scripts/validate-memory-model-runtime.mjs
+node scripts/validate-context-enhancement.mjs
+node scripts/validate-context-quality.mjs
+node scripts/check-validation-evidence.mjs
+```
+
+`memory-model-runtime` evidence 分别保存 controlled 与 actual 检查：配置、权限、所有权和协议故障可以由受控证据覆盖；能力探针、业务续租、租约到期、实际重启与恢复必须关联固定 `ValidationCoordinates`、真实 Provider 响应 ID/usage 和原始 artifact。`context-enhancement` evidence 保存故障后的 Provider 零增量和恢复采用；真实质量 evidence 保存实际模型与账单归属。
+
+runner 和 stable evidence 必须随实现更新后才能证明本文目标。当前有效证据范围由 [`../DEVELOPMENT.md`](../DEVELOPMENT.md) 维护。

@@ -2,77 +2,158 @@
 
 ## 1. 当前责任
 
-本模块是系统与 Pi 的唯一集成边界。它观察 Pi 生命周期，通过 `pi-session-protocol.ts` 把 `SessionManager` 的版本化 entry 与消息形态规范化为下游稳定输入，注册 `recall_session`、`/memory-model` 和 `/restart-viking`，并在 `context` hook 中采用当前路线已经就绪的有界增强历史。持久状态实时显示“增强记忆 · 初始化中”“增强记忆 · 生效中”或“增强记忆”；只有增强不可用并强制回退时显示“Pi 原生”。
+本模块是系统与 Pi 的唯一集成边界。它观察 Pi 生命周期，通过 `pi-session-protocol.ts` 将版本化 session entry 和消息形态规范化为下游稳定输入，注册用户命令与召回工具，并执行增强上下文、自动压缩和最终 Provider 请求的宿主边界动作。
 
-来源文件、记忆模型配置和 OpenViking Session Working Memory 由长时记忆模块拥有；有界消息构造由工作上下文优化拥有；索引与排序由召回模块拥有；branch 有效性与路线身份由 Session 记忆协调拥有；OpenViking进程由项目启动器拥有。
+来源、OpenViking Session 和记忆模型能力由长时记忆模块拥有；运行与路线决定由 Session 记忆协调拥有；有界消息构造由工作上下文优化拥有；排序与来源展开由召回模块拥有；OpenViking 子进程由项目启动器拥有。
 
-实现入口位于 [`.pi/extensions/pi-context-memory/index.ts`](../../.pi/extensions/pi-context-memory/index.ts)。跨模块流程见 [`../system/source-archiving.md`](../system/source-archiving.md)、[`../system/source-recall.md`](../system/source-recall.md) 和 [`../system/context-enhancement.md`](../system/context-enhancement.md)。
+实现入口位于 [`.pi/extensions/pi-context-memory/index.ts`](../../.pi/extensions/pi-context-memory/index.ts)。跨模块流程见 [`../system/context-enhancement.md`](../system/context-enhancement.md)、[`../system/memory-model-runtime.md`](../system/memory-model-runtime.md)、[`../system/source-archiving.md`](../system/source-archiving.md) 和 [`../system/source-recall.md`](../system/source-recall.md)。
 
-## 2. 当前目标与责任分工
+## 2. 输入与规范化边界
 
-- 观察 session、当前 branch、消息、工具、压缩和 Provider 生命周期；
-- 在 `session_start`、`turn_end`、`session_tree`、`session_compact` 和 `session_shutdown` 排队当前路线归档；
-- 归档成功后独立排队来源索引，普通 Provider turn 不等待索引；
-- 在 `session_start`、`turn_end`、`session_tree`、`session_compact` 和 `before_agent_start` 异步准备当前路线 Working Memory；
-- 在每次 `context` 事件重新计算当前 prompt 之前的路线身份，只采用精确匹配的就绪结果；
-- 保留当前 user prompt 及其后的 assistant tool call、tool result 原对象和顺序；
-- 注册有界的 `recall_session(search|read_source)` 工具，并在每次执行时提供当前权威路线；
-- 通过 `/memory-model` 展示用户配置与实际运行状态，通过 `/restart-viking` 使用项目启动器控制能力；
-- 捕获归档、索引和上下文准备错误，保持 Pi Agent 控制流继续。
+模块从 Pi 读取：
 
-### 责任边界
+- session ID 与持久化 session file；
+- 当前 leaf 和从根到 leaf 的 branch entry；
+- `context` 中的实际 Agent messages；
+- 当前 system prompt 与 active tool schema；
+- tool call、tool result 和 assistant 消息生命周期；
+- compaction、tree、fork、clone、resume、reload 和 shutdown 事件；
+- 最终 Provider payload；
+- 当前模型、上下文窗口和取消信号。
 
-本模块负责 Pi 生命周期观察、调度、工具和命令注册、增强消息实际采用、状态展示及故障隔离。它不生成 Working Memory、不格式化增强历史、不执行相关性排序，也不管理 OpenViking子进程。配置命令不写 Pi 消息、不修改任务模型或 branch。
+`pi-session-protocol.ts` 独占解释 Pi 版本差异，包括 message role、content block、`firstKeptEntryId`、`retainedTail`、branch summary、bash 与完整输出位置。下游模块只接收稳定的 session、route、current turn 和来源表示。compaction/branch summary 被规范化为不含 summary 文本的 `ControlBoundary`，不得伪装成 user message。
 
-Pi 原生 session 历史、context 构建、tree 导航、compaction 和 Agent 循环保持权威；扩展只通过 Pi 公开 `context` hook 非破坏性替换本次模型消息。
+```text
+ControlBoundary = {
+  type: "compaction" | "branch-summary",
+  id,
+  parentId,
+  firstKeptEntryId? | fromId?
+}
+```
 
-## 3. 数据与不变量
+`summary`、`retainedTail`、`details` 和 `usage` 不进入该下游表示；compaction 前仍在当前 parent 链上的原始 message entry 按其自身身份读取，branch summary 的 `fromId` 只用于边界身份而不展开废弃 branch。
 
-Pi 集成只向其它模块传递规范化的持久化 session 身份、当前 leaf，以及 `SessionManager.getBranch()` 从根到 leaf 返回的原始条目。临时 session 因没有可恢复来源而跳过归档、索引、召回和自动上下文增强。
+临时 session 没有可恢复来源，不具备增强记忆请求条件。扩展保持初始化或故障状态，直到进入持久化 session 或用户禁用扩展重新启动。
 
-当前不变量：
+## 3. 对外能力
 
-1. 只有 `context` handler 可以返回模型消息；它不读取配置或启动文件、Python bridge、OpenViking 工作，只能为同代际、同精确路线的既有 pending 等待最多 1000 ms；
-2. 配置检查、本地归档、来源索引和 Working Memory 准备都在 Provider 请求之外执行；
-3. `tool_result` 事件发生时权威 toolResult entry 尚未进入 leaf，只能在后续路线提交时处理；
-4. branch 是每次调用时 Pi 的当前路线，不被提升为独立任务身份；
-5. 自动采用与显式搜索都排除当前 prompt，自身 query、tool call 和结果不会提前进入历史；
-6. 采用前必须重新核对 session、session file、leaf、有序 entry 和完整路线指纹；
-7. 自动增强绑定 Launcher 当前 ready 的受管 OpenViking 子进程；配置文件变化只更新下一次重启目标与诊断，不销毁当前实例缓存，runtime state 确认子进程停止或替换后才取消旧任务并重建；
-8. Provider 观察只记录形状、字节、哈希和 usage，不保存完整 payload；
-9. 任一增强错误都不能成为 Pi `extension_error` 或阻止原生模型调用；
-10. Provider 实际采用路径以 `context` 决定与 payload 一致性核验为准并独立记录；用户状态由增强生命周期驱动，普通用户文本不能触发“增强记忆”，正常准备中的原生请求也不能触发“Pi 原生”。
+本模块提供：
 
-## 4. 生命周期与协作
+- Pi 生命周期到 Session 记忆协调的稳定事件输入；
+- `context` 阶段的增强请求闸门；
+- 为工作上下文优化提供 ProviderPayloadProfile；
+- `before_provider_request` 阶段的最终增强证明核验；
+- `session_before_compact` 的增强压缩所有权；
+- `session_before_tree` 的 tree summary 抑制；
+- `recall_session(search|read_source)`；
+- `/memory-model` 和 `/restart-viking`；
+- “增强记忆 · 初始化中”“增强记忆”和“增强记忆 · 故障”状态；
+- 脱敏的请求、阻断、来源、运行代际和生命周期观测。
+
+## 4. 请求闸门
+
+### 4.1 `context`
+
+每次任务模型调用前：
+
+1. 读取当前 session、branch 和实际 messages；
+2. `initializing` 时加入当前代际能力屏障；
+3. 请求 Session 记忆协调授权当前请求；
+4. 等待精确历史路线、来源屏障和当前回合投影；
+5. 重新核对 session、leaf、路线和运行代际；
+6. 成功时返回工作上下文优化构造的增强消息；
+7. 失败时调用 `ctx.abort()`，保存阻断原因并按责任更新运行状态。
+
+扩展抛错不是阻断机制。最外层 handler 捕获所有可预期错误，并把它们转换为确定的授权失败；返回原始 Pi messages 不是合法结果。
+
+### 4.2 最终 Provider 核验
+
+`before_provider_request` 使用与当前任务 Provider API 匹配的 `PayloadProofAdapter`，把最终序列化 payload 归一化为可核对的模型、系统、工具 schema 与有序消息表示，再与 `context` 保存的预期模型和 Agent messages 比较。核验同时绑定 nonce、代际、实际 leaf、HistoricalRouteKey、CurrentTurnKey、内容哈希和适配版本。
+
+只有完整表示与授权决定一致的 payload 可以发送。未知 API、未知 payload 形态、必要字段缺失、消息变化或证明不一致都返回 `provider-proof` 故障；适配层不能只检查 sentinel 存在。
+
+核验失败时调用 `ctx.abort()`。观测记录 Provider、模型、payload 哈希、增强证明和阻断码，不保存完整 payload。
+
+## 5. Pi 原生摘要抑制
+
+`session_before_compact` 在扩展运行期间确定性取消 Pi compaction：
+
+- threshold 和 overflow 锁存工作上下文故障；
+- manual 提示增强记忆已经自动管理上下文；
+- handler 不调用外部服务，确保 compaction 决定简单、同步且可验证。
+
+`session_before_tree` 不等待记忆服务。Pi `0.84.2` 中，用户选择 summary 时先提示“增强记忆已禁用 tree summary，本次按无摘要导航”，再返回 `{ summary: { summary: "" } }`：宿主因此跳过原生 summarizer，继续无摘要导航且不创建 `branch_summary` entry。未选择 summary 时不改变导航。宿主升级若尚未通过该行为探针，则带 summary 的操作返回 `{ cancel: true }`，不得冒险放行原生摘要请求。
+
+`pi-session-protocol.ts` 发布 `treeSummarySuppressionVerified` 宿主能力；当前只对通过行为探针的 Pi `0.84.2` 为 true，无法确定版本或未验证版本一律为 false。
+
+Pi session 中已有 compaction 和 branch summary entry 的身份、顺序与分支关系仍用于路线解释；其 summary 文本一律从长时记忆、来源召回、工作上下文与 Provider 证明输入中排除。compaction 前的原始 message entry 仍按当前 branch 读取；branch summary 指向的废弃 branch 内容不回灌当前路线。
+
+## 6. 状态与诊断
+
+用户状态只由运行生命周期驱动：
+
+- `initializing` → “增强记忆 · 初始化中”；
+- `ready` → “增强记忆”；
+- `faulted` → “增强记忆 · 故障”。
+
+路线 pending、队列长度、镜像变化和 Working Memory task 不改变 ready 状态展示。故障诊断通过通知、`/memory-model` 和脱敏观测提供具体原因。
+
+配置文件变化只刷新目标配置诊断，不改变当前 ready 运行代际。重启和能力重新验证由显式命令触发。
+
+## 7. 来源与召回集成
+
+模块在 session、turn、tree、compaction 和 shutdown 生命周期提交当前权威路线归档。当前回合需要投影大工具结果时，授权流程等待对应来源屏障。
+
+`recall_session` 每次执行都重新取得当前 branch：
+
+- `search` 在当前路线来源中使用 OpenViking 排序；
+- `read_source` 展开当前 Pi 权威 entry；
+- 结果进入当前回合后仍受工作上下文预算约束。
+
+召回错误以工具错误返回；若错误表明必要记忆数据面已经失效，Session 记忆协调同时锁存运行故障。
+
+## 8. 生命周期与关闭
 
 ```text
 session_start
-  → 恢复来源与索引；记忆模型实际运行时可用时准备当前路线
-before_agent_start
-  → 当前路线进入“增强记忆 · 生效中”；异步准备当前 prompt 之前的历史路线
-context
-  → 精确命中就绪路线：增强历史 + 当前 Pi turn
-  → 未命中或错误：原样返回 Pi 消息
-turn_end
-  → 归档并索引完整路线；异步准备下一 prompt 可采用的路线
-session_before_tree / session_before_compact
-  → 记录操作边界；取消操作保持最近任务采用状态，overflow 自动重试另行锁定原生路径
-session_tree / session_compact
-  → 成功后显示“增强记忆 · 生效中”；操作后的 leaf 成为唯一范围，归档、索引并准备新路线
-recall_session
-  → 当前路线来源同步、候选排序或 Pi 权威 entry 展开
+  → 建立协调实例并进入初始化
+  → 检查受管代际和能力证明
+  → 从当前 branch 恢复来源与增强上下文
+
+before_agent_start / turn_end
+  → 提交当前路线和来源准备
+
+model_select
+  → 清除 pending 请求证明和模型预算缓存
+  → 核对新模型 API 的 PayloadProofAdapter
+
+context / before_provider_request
+  → 授权、应用并核验增强请求
+
+session_tree / session replacement / reload
+  → 以操作后的 session 和 leaf 重建
+
 session_shutdown
-  → 最多等待来源归档 5 秒；取消索引与 Working Memory 运行任务，并尽力删除扩展自建的派生 Session
+  → 停止接受请求
+  → 有界等待必要来源写入
+  → 取消运行任务并清理扩展资源
 ```
 
-## 5. 失败、降级与恢复
+关闭不自动发送消息或继续中断任务。清理结果进入观测。
 
-来源归档、来源索引和 Working Memory 状态彼此独立。启动、实际子进程重启与运行检查显示“增强记忆 · 初始化中”；OpenViking 正常准备、路线变化、结果过期重建和恢复显示“增强记忆 · 生效中”；精确匹配结果进入模型输入后显示“增强记忆”。待应用配置无效或不同不影响当前 ready 实例；只有运行实例停止、任务失败、超时或后端不可用导致增强不能交付时显示“Pi 原生”，恢复准备成功后再回到增强状态。
+## 9. 验证边界
 
-显式搜索不可用时工具抛出错误并由 Pi 保存为 `isError` tool result；`read_source` 仍可依赖当前 Pi 路线和本地来源。删除扩展或使用 `--no-extensions` 时，Pi session、tree、compaction 和原生模型路径保持可用。
+本模块必须证明：
 
-## 6. 验证与限制
+- 每个已发送 Provider payload 都与当前增强授权一致；
+- 声明支持的任务 Provider/模型/API 组合具有实际 Provider 响应证据，只有 controlled adapter 检查的组合保持未验证；
+- 配置、服务、模型、来源、路线、预算和 payload 失败时 Provider 请求数不增加；
+- 多工具和大输出 current turn 保持 Provider 协议合法；
+- Pi compaction 和 tree summary 均不产生摘要请求，tree 不新建 `branch_summary` entry；
+- 已有 compaction/branch summary 文本不进入任何下游内容；
+- tree、fork、clone、resume 和 reload 后只采用新路线；
+- 路线等待不进入用户状态；
+- 禁用扩展并重新启动后 Pi 原生行为不受扩展运行状态影响。
 
-来源归档、来源召回和自动上下文采用分别由对应 validation 文档证明。本地纵向 evidence 实际驱动 Pi `0.84.2` 的 tree 往返、fork/clone/resume/reload、手动/阈值/overflow compaction，并逐次核对 `context`、本地 Provider payload 和状态路径。统一验证配置选择的真实 OpenRouter 模型在 skipped、accepted 与成对质量实验中进一步证明增强请求保持当前决定与证据入口。
-
-当前 evidence 的宿主验证坐标是 Pi `0.84.2`，项目私有 OpenViking 依赖锁定为 `0.4.13`；二者分别表示已验证宿主和可复现依赖，不是要求上游永久保持的产品边界。兼容升级由扩展维护者承担；OpenRouter 记忆 token 已归属，最终 billed cost 的逐 generation 归集仍是下一产品价值验证。
+当前实现与设计之间的交付状态由 [`../DEVELOPMENT.md`](../DEVELOPMENT.md) 维护。

@@ -2,13 +2,15 @@
 
 ## 1. 当前责任
 
-本模块保存 Pi session 来源副本与完整工具输出，维护 OpenViking Session Working Memory，并生成、解析用户级记忆模型 JSONC 和运行配置。Pi session entry 仍是事实权威；来源文件由 `long-term-memory.ts` 管理，OpenViking Session 派生状态由 `session-working-memory.ts` 管理，配置由 `memory-model-configuration.ts` 管理。向量索引与候选排序仍属于召回模块。
+本模块保存 Pi session 来源副本和完整工具输出，维护 OpenViking Session Working Memory，管理用户记忆模型配置转换，并提供当前受管 OpenViking 代际的实际记忆模型能力证明。
 
-跨模块流程见 [`../system/source-archiving.md`](../system/source-archiving.md)、[`../system/source-recall.md`](../system/source-recall.md) 与 [`../system/context-enhancement.md`](../system/context-enhancement.md)。
+Pi session entry 仍是事实权威；来源文件由 `long-term-memory.ts` 管理，OpenViking Session 派生状态由 `session-working-memory.ts` 管理，配置由 `memory-model-configuration.ts` 管理。向量候选排序属于召回模块，请求采用属于 Session 记忆协调模块。
+
+跨模块流程见 [`../system/source-archiving.md`](../system/source-archiving.md)、[`../system/source-recall.md`](../system/source-recall.md)、[`../system/memory-model-runtime.md`](../system/memory-model-runtime.md) 和 [`../system/context-enhancement.md`](../system/context-enhancement.md)。
 
 ## 2. 持久化表示
 
-默认归档根位于 Pi session 目录的 `.pi-context-memory/`；验证可通过 `PCR_ARCHIVE_DIR` 指向仓库内隔离目录：
+默认归档根位于 Pi session 目录的 `.pi-context-memory/`：
 
 ```text
 .pi-context-memory/
@@ -20,32 +22,106 @@
         └── records/<entry-key>.json
 ```
 
-`session.json` 保存 session ID 与绝对 session file。来源记录保存 schema 版本、来源引用、原始 Pi 条目和内容哈希。完整结果在运行配置规定的有界期限内复制到内容寻址 blob，再由 entry 元数据原子发布；读取会重新核对字节数与 SHA-256。期限的默认值与配置入口见 [`../operations/source-archive.md`](../operations/source-archive.md)。
+`session.json` 保存 session ID 与绝对 session file。来源记录是 `message-source | control-boundary`：前者保存 schema 版本、来源引用、原始 Pi message entry 和内容哈希；后者只保存 compaction/branch summary 的 type、ID、parent 与边界引用，不保存 summary、retainedTail、details 或 usage。完整结果流式复制到内容寻址 blob，再由 entry 元数据原子发布；读取重新核对字节数与 SHA-256。
 
-目录键和文件键由身份哈希派生。目录权限为仅当前用户可访问，文件以仅当前用户可读写方式创建。
+目录键和文件键由身份哈希派生。目录仅当前用户可访问，文件仅当前用户可读写。验证可通过受控环境变量把数据写入仓库 `.artifacts/`。
 
-## 3. 能力与不变量
+## 3. 来源能力与不变量
 
-当前提供：
+本模块提供：
 
-- 按 session 写入、读取和列出来源条目；
-- 流式复制完整工具输出并记录完整性哈希；
-- 读取与来源 entry 关联的完整结果；
-- 通过 [`../contracts/openviking-adapter.md`](../contracts/openviking-adapter.md) 维护扩展明确支持的最小记忆模型配置面，并用 OpenViking 聚合配置入口验证生成结果；
-- 解析 JSONC、规范化 `provider`、`model`、`api_key`、`api_base` 和 `api_version` 的受控投影；`api_key` 接受直接值或 `$NAME` / `${NAME}` 环境引用，生成仅当前用户可读写的运行配置与稳定指纹；
-- 把已核验 Pi 路线按原生 compaction 边界投影到隔离的 OpenViking Session，线性路线只追加增量，分叉路线使用独立 session；
-- 达到固定待归档 token 阈值后 commit；`accepted` 响应携带 task ID 并进入 Working Memory 轮询，全部消息位于保留窗口时 OpenViking 合法返回 `skipped` 与空 task ID，此时保留来源已核验的 active history，而不是把无任务视为失败。Working Memory 任务在 180 秒有界终态期限内继续运行，完成后用包含 overview 的最终 assembly 更新同一路线结果，超出期限后仍按失败降级。
+- 按 session 写入、读取和列出来源 entry；
+- 流式复制完整工具输出并验证内容哈希；
+- 读取与当前 Pi entry 关联的完整结果；
+- 为工作上下文投影提供来源屏障；
+- 为 OpenViking 资源和索引重建提供输入。
 
-来源读写要求 session ID 和 session file 身份一致；不存在跨 session 搜索入口。来源写入使用同目录临时文件与原子重命名，相同 entry 使用稳定位置。记忆模型配置属于用户而非 session 或项目；模块只独占创建缺失模板，已有 JSONC 内容始终只读，文件权限在读取时收紧为 `0600`。用户配置与生成配置均以仅当前用户可读写权限保存；`api_key` 可为直接值或环境引用，但不得进入运行状态、诊断、日志、evidence 或 Pi session。
+来源操作必须满足：
 
-Session Working Memory 只接收 Session 记忆协调已经核验的完整路线身份和 Pi 集成规范化结果；`firstKeptEntryId`、`retainedTail`、消息 role 与内容 block 等 Pi 具体形态只由 `pi-session-protocol.ts` 解释。派生 session 只在有效投影序列保持前缀关系时追加；compaction 使旧 active history 退出有效投影时建立新镜像，避免被压缩内容继续进入 context assembly。同一路线准备共享任务；正在执行的任务之后只保留该 Pi session 最新的未启动路线，缓存和派生 session 数量有固定上限。派生状态不决定当前 branch，也不能覆盖 Pi 来源。
+1. session ID 和 session file 与目标归档一致；
+2. entry 来自当前 Pi branch；
+3. 同一 entry ID 的内容和哈希稳定一致；
+4. 完整结果元数据只有在 blob 完整写入后发布；
+5. 读取结果重新核对大小、哈希和 entry 身份；
+6. 损坏、缺失或身份不匹配的记录不作为可恢复来源；
+7. control-boundary 的序列化结果中不存在 summary 或 retainedTail 内容。
 
-## 4. 错误与恢复
+当前回合大工具结果被有界投影前，相关来源屏障必须完成。失败由 Session 记忆协调锁存为必要数据面故障。
 
-来源文件创建、序列化、复制、校验或读取失败均显式抛给调用者。已成功写入的其它 entry 保持可用；下一次提交当前路线会按稳定 entry ID 重试。JSONC 语法、未知字段、无效 Provider、缺失连接字段、凭据或 schema 错误均形成带配置路径的诊断，不修改用户配置内容；是否保留实例或冷启动降级由项目启动器负责。
+## 4. 记忆模型配置与能力
 
-损坏或身份不匹配的记录不返回为有效来源；后续当前路线提交按稳定 entry ID 重新保存来源，OpenViking resource 由有效来源重建。Session 创建、追加或初始 context assembly 失败时不返回结果；commit 运行期间只发布独立完成、来源已核验的 active history assembly，不发布未完成任务产物，任务轮询、终态或最终 assembly 失败会使该临时快照失效。适配层只接受 OpenViking `accepted + task ID` 与 `skipped + 空 task ID` 两种 commit 结果，缺失必要字段、矛盾或未知状态显式失败；标题语言和可选诊断不构成生产门槛，已知无任务信息的通用计数回退仍拒绝采用。失败、淘汰和 session 关闭会丢弃运行期镜像并尽力删除扩展自建的派生 Session。清理失败不阻断 Pi 关闭，后续路线可重新准备。
+模块维护扩展支持的最小用户配置面，并通过 [`../contracts/openviking-adapter.md`](../contracts/openviking-adapter.md) 转换为 OpenViking 运行配置。
 
-## 5. 验证与限制
+用户配置只读解析；缺失模板以 `0600` 原子创建。直接凭据和环境引用原样进入受限运行配置，凭据值不进入状态、日志、evidence 或 Pi session。
 
-来源归档、记忆模型运行时和上下文增强 runner 分别覆盖文件边界、配置编译，以及 OpenViking Session 增量、有效 compaction 投影、分支隔离、Working Memory 结构和 context assembly 协议。Session 派生映射保存在扩展运行内存中，重载后从 Pi 路线重建；真实记忆模型成对实验已覆盖当前决定与证据入口。跨机器同步、备份和保留策略不属于当前本地纵向交付。
+模块区分：
+
+- 配置能够解析；
+- OpenViking 能够加载配置；
+- 受管子进程和服务 ready；
+- 记忆模型实际完成 Working Memory；
+- 当前代际具备任务请求能力。
+
+实际能力证明来自隔离 Session 的生产协议探针，绑定 launchId、childPid、模型、配置指纹、协议版本、探针实现和 `validUntil`。同代际业务 accepted task 只有在完整 assembly 核验后续租；`health`、`ready`、模型对象存在或过期证明不能建立任务请求能力。
+
+## 5. OpenViking Session Working Memory
+
+Session Working Memory 只接收 Session 记忆协调核验过的完整路线身份和 Pi 集成规范化结果：
+
+- 线性后继在同一镜像追加新增 entry；
+- 分叉、session replacement 或有效前缀变化使用隔离镜像；
+- compaction 与 branch summary entry 只贡献路线边界身份，其 summary 文本不发送给 OpenViking task 或 context 接口；
+- 权威 message entry ID 通过来源字段进入 OpenViking；
+- batch append、commit、task polling 和 context assembly 统一经过适配契约；
+- 同一精确路线共享准备任务；
+- pending、ready 和镜像数量有固定上限；
+- 迟到结果只属于创建它的运行代际和路线。
+
+commit 接受 `accepted + task ID` 或 `skipped + 空 task ID`。`skipped` 只表示本次没有触发记忆提取，保留来源核验的 active history；它不能单独建立记忆模型能力证明。
+
+accepted Working Memory task 完成并通过 assembly 核验前不发布路线结果；`skipped` 可以使用既有 Working Memory 与来源核验 active history，但不能续租能力证明。每个已启动 task 必须观察终态；ready 运行中的失败、取消、超时或 assembly 失败使当前运行代际进入能力故障，stopping 期间由扩展发起的取消只完成清理。
+
+## 6. 对外能力
+
+本模块向相邻模块提供：
+
+- `archiveRoute`：幂等保存当前路线来源；
+- `ensureRecoverable`：确认指定 entry 和完整结果可恢复；
+- `prepareRoute`：为精确路线准备 OpenViking Session context；
+- `probeCapability`：验证当前受管模型实际 Working Memory 能力；
+- `runtimeCapability`：返回与当前 active 进程绑定的能力证明；
+- 来源列表、完整结果读取和 OpenViking 索引输入；
+- 受控 shutdown 与扩展创建 Session 清理。
+
+接口返回明确成功或错误，不以空内容表示故障。
+
+## 7. 错误与恢复
+
+错误按来源、配置、服务、能力和协议分类：
+
+- 来源创建、复制、校验或读取失败直接返回；
+- JSONC、schema、字段或凭据错误形成带路径的脱敏诊断；
+- Session create、append、commit 或首次 assembly 失败不发布路线；
+- 未知、矛盾、缺失来源或通用失败内容不进入上下文；
+- Working Memory task 非成功终态使能力证明失效；
+- 当前受管子进程停止或替换使旧代全部派生状态失效。
+
+重新提交同一有效来源可按稳定 entry ID 修复局部归档。运行代际故障的恢复由显式 OpenViking 重启或能力重新验证触发；新代际从当前 Pi branch 和已核验本地来源重建。
+
+清理失败不会改变 Pi session 事实，但进入运行观测。系统不因清理结果自动发送任务请求。
+
+## 8. 验证边界
+
+验证分别证明：
+
+- session、branch、文件权限、原子写入和内容完整性；
+- 当前回合投影前的来源屏障；
+- 配置转换、凭据保密和用户文件所有权；
+- 实际能力探针确实调用目标记忆模型；
+- OpenViking Session 增量、分支隔离、commit、task 和 assembly；
+- `skipped` 与能力证明具有不同语义；
+- task 失败使后续 Provider 请求被阻断；
+- 新运行代际不复用旧代 context；
+- session shutdown 和镜像淘汰保持有界清理。
+
+当前实现与设计之间的状态由 [`../DEVELOPMENT.md`](../DEVELOPMENT.md) 维护。
