@@ -2,7 +2,7 @@
 
 ## 1. 当前责任
 
-本模块是每个持久化 Pi session 内记忆生命周期、运行故障和任务模型请求授权的协调者。它接收 Pi 集成提供的会话事实，统一约束来源归档、OpenViking Working Memory、当前回合投影和最终工作上下文。
+本模块协调每个持久化 Pi session 的记忆生命周期、运行故障和本扩展增强输出授权。它约束来源、MemoryCheckpoint、VerifiedActiveDelta、CurrentTurn 投影与工作上下文。
 
 它不生成派生记忆、不执行 OpenViking IO、不构造 Provider payload，也不解析任务业务语义。跨模块流程见 [`../system/context-enhancement.md`](../system/context-enhancement.md)、[`../system/source-archiving.md`](../system/source-archiving.md) 和 [`../system/source-recall.md`](../system/source-recall.md)。
 
@@ -12,7 +12,7 @@
 
 - 运行状态：`initializing | ready | faulted | stopping`；
 - 当前 OpenViking 运行代际与能力证明；
-- 每条精确路线的 `preparing | ready | failed` 状态；
+- 每条当前路线可兼容的 MemoryCheckpoint 身份、来源后缀 watermark 与后台刷新状态；
 - 来源归档与完整结果屏障；
 - 有界 pending 请求授权和单次请求证明；
 - 故障错误码、脱敏原因、发生阶段和恢复入口。
@@ -26,12 +26,26 @@
 1. 快照身份与协调实例完全一致；
 2. entry ID 唯一，父链从根到 leaf 连续；
 3. 非空路线的末 entry 等于 leaf；
-4. message entry 的完整内容参与路线指纹；ControlBoundary 只以 type、ID、parent 和边界引用参与，summary、retainedTail、details 与 usage 不参与；
-5. CurrentTurn 实际消息具有稳定顺序和内容哈希；已持久化部分与 Pi entry 精确一致，投影内容必须具有权威 entry 与来源；
-6. 来源列出和展开只返回当前快照仍存在的权威 message entry；
-7. message 来源副本与同 ID 的 Pi entry 内容一致，ControlBoundary 与同 ID control entry 身份一致且不含 summary 文本；
-8. 派生结果的运行代际与当前未过期能力证明一致；
-9. 请求授权同时绑定实际 leaf、HistoricalRouteKey、CurrentTurnKey 和最终内容哈希。
+4. route item 由 MessageSource、ControlBoundary 与仅运行期存在的 OpaqueProviderSegment 组成；后者保持 Pi Provider 基线哈希，不进入来源或检查点；
+5. CurrentTurn 实际消息具有稳定顺序和内容哈希；已持久化部分与同版本 MessageSource 精确一致，投影内容必须具有权威 entry 与来源；
+6. 来源列出和展开只返回当前快照仍存在的 MessageSource；
+7. MessageSource 的 task-content、完成状态、task-content hash 与当前 Pi entry 重新规范化结果一致，authority hash 核对原始 entry；ControlBoundary 不含 summary 文本；
+8. MemoryCheckpoint 的 coveredRoutePrefixKey 必须是当前 HistoricalRoute 不跨越 OpaqueProviderSegment 的精确前缀，来源集合属于该前缀，检查点 generation 与当前代际一致；当前代际另有未过期能力证明，检查点的 producing proof 只作来源追溯；
+9. VerifiedActiveDelta 是该检查点覆盖 watermark 之后、当前 prompt 之前的有序 MessageSource/ControlBoundary 后缀，全部来源可恢复；
+10. 请求授权同时绑定实际 leaf、HistoricalRouteKey、CurrentTurnKey、检查点 identity、delta hash、OpaqueProviderSegment hash 和最终内容哈希。
+
+协调模块拥有后台任务身份：
+
+```text
+RefreshTarget = {
+  generation,
+  routePrefixKey,
+  watermark,
+  retentionBudgetIdentity
+}
+```
+
+`retentionBudgetIdentity` 由工作上下文优化返回，协调模块不解析其内部预算语义。只有四项完全相同的 target 可以共享等待和结果；长时记忆只执行该不可拆分目标。
 
 任一条件不成立时拒绝该输入，不用本地缓存或 OpenViking 数据修补 Pi 当前状态。
 
@@ -52,9 +66,9 @@ faulted
   → session shutdown → stopping
 ```
 
-`faulted` 是锁存状态。后台任务成功、文件变化或服务自行恢复不能直接回到 ready；恢复必须创建新代际并重新核验当前 branch。
+`faulted` 是本扩展锁存状态；后台成功或服务恢复不自动改写结论。只有用户选择重启/重新验证时，本模块才创建新代际并核验当前 branch；其它处理方式不由本模块决定。
 
-路线 pending 是 ready 运行状态内的内部状态，不改变用户展示。路线失败或操作期限结束使运行状态进入 faulted。
+后台刷新是 ready 运行状态中的派生任务，不形成独立用户状态，也不等同于路线不可用。每次授权根据兼容检查点、VerifiedActiveDelta、来源与预算计算 `available | refresh-required`：前者直接继续，后者加入唯一必要刷新屏障。刷新失败或等待达到当前 `MemoryRuntimeProfile` 的操作边界时进入 faulted。
 
 ## 5. 对外能力
 
@@ -63,11 +77,12 @@ faulted
 - 验证并归档当前路线；
 - 计算完整路线身份；
 - `awaitGenerationReady`：让初始化期间的请求等待当前代际能力屏障；
-- `ensureRouteReady`：创建、复用或等待精确路线准备；
+- `scheduleCheckpointRefresh`：在稳定 agent settlement、路线预热或后缀高水位为完整 RefreshTarget 安排可合并后台刷新；
+- `resolveHistoricalContext`：选择兼容 MemoryCheckpoint、形成 VerifiedActiveDelta，并在必要时按当前 retentionBudgetIdentity 创建或加入 checkpoint 刷新屏障；
 - `awaitAuthorityEntry`：把需要投影的实际 CurrentTurn 消息核对到已持久化 Pi entry；
 - `ensureSourceBarrier`：确认被投影内容具有可恢复来源；
 - `authorizeRequest`：组合运行、路线、来源和上下文构造结果，返回允许或阻断；
-- `verifyRequestProof`：在最终 Provider 边界原子复核并消费单次请求证明；
+- `verifyRequestProof`：在本扩展 Provider handler 时点原子复核并消费单次请求证明；
 - `latchFault`：原子锁存首个当前代际故障和后续相关证据；
 - `beginGeneration`：显式恢复时清理旧代派生状态并进入初始化；
 - 当前路线来源列表和权威展开；
@@ -85,15 +100,15 @@ block { faultCode, diagnostic }
 ## 6. 并发与期限
 
 - 同一运行代际共享一个能力初始化或续租任务；
-- 同一运行代际和路线共享一个准备任务；
 - 同一 session 的来源写入保持 entry 顺序；
-- 新线性路线可以复用已完成前缀；
-- 分叉路线拥有独立派生状态；
-- 未启动的过期路线可以被更新路线替代；
-- 已运行任务保留自己的身份，迟到结果不能进入当前路线；
-- pending、ready、索引和清理任务都有固定上限；
-- 操作期限结束形成明确失败，不选择另一条请求路径；
-- 调用取消只移除对应等待者；最后一个消费者离开时可取消未发布任务并恢复 absent，不改变已经发布的其它路线事实或锁存服务故障。
+- generation、精确 route prefix、watermark 与 retentionBudgetIdentity 全部相同才共享 checkpoint refresh；
+- 后台刷新运行期间，已发布的兼容检查点继续可读，新 entry 留在 VerifiedActiveDelta；
+- 尚未启动的线性后继刷新只在 retentionBudgetIdentity 相同时合并到最新 watermark；已运行任务不改变目标，ProviderPayloadProfile/预算变化后的请求重新评估；
+- 分叉路线只复用仍是当前路线精确前缀的检查点，并拥有独立刷新；
+- 已运行任务保留自己的完整 RefreshTarget，迟到结果不能进入其它路线或预算身份；
+- source、checkpoint、refresh、proof、索引和清理状态都有固定上限；
+- 请求等待只绑定必要刷新，不设置比当前 profile 记忆调用更短的任意超时；达到已验证操作边界形成明确失败，不选择另一条路径；
+- 调用取消只移除对应等待者；后台仍需要的刷新继续运行，无当前路线或消费者需要且尚未发布的任务可以取消，不改变已发布检查点或锁存伪故障。
 
 ## 7. 故障语义
 
@@ -106,22 +121,22 @@ block { faultCode, diagnostic }
 - `route`：session、leaf、父链、指纹、迟到结果或期限；
 - `protocol`：OpenViking 响应未知、矛盾或缺失；
 - `context`：工具批次、预算、内容形态或来源投影；
-- `provider-proof`：最终 payload 与授权决定不一致；
+- `provider-proof`：本扩展 handler 时点的 payload 与授权决定不一致；
 - `shutdown`：关闭和资源清理。
 
 故障记录不包含凭据或完整 payload。当前代际已经锁存故障后，后续请求直接返回同一主故障，并可追加不改变主归因的观测。
 
 ## 8. 恢复与 session 生命周期
 
-显式重启或能力重新验证成功后，Pi 集成调用 `beginGeneration`：
+用户请求重启或能力重新验证且验证成功后，Pi 集成调用 `beginGeneration`：
 
 1. 取消旧代 pending；
 2. 清除旧代 ready 和请求证明；
 3. 保留 Pi 权威 session 与已核验本地来源；
 4. 绑定新 OpenViking 代际和能力证明；
 5. 重新验证当前 branch；
-6. 准备合法空路线或当前历史路线；
-7. ready 后允许新的任务模型请求。
+6. 为新代际建立本地合法空检查点，从当前 Pi branch 的已核验来源形成 VerifiedActiveDelta，并安排当前代际第一次刷新；旧代非空检查点不重新绑定；
+7. 只有运行能力和当前检查点/后缀成立时，才返回本扩展 `allow(enhancedContext, proof)`。
 
 session replacement、fork、clone、resume 和 reload 创建与新 session 身份绑定的协调实例。shutdown 进入 stopping，拒绝新授权并有界等待必要来源写入。
 
@@ -130,11 +145,12 @@ session replacement、fork、clone、resume 和 reload 创建与新 session 身�
 验证必须覆盖：
 
 - 跨 session、损坏父链、相同 entry ID 不同内容和错误 leaf 拒绝；
-- 路线 pending 对用户状态不可见；
-- 慢路线等待、取消、超时、替代和迟到结果隔离；
-- 来源屏障失败阻断 Provider；
-- 当前代际任一必要故障锁存并阻断后续请求；
-- 显式恢复创建新代际且不复用旧结果；
-- allow 请求具有唯一证明，block 请求不增加 Provider 调用；
+- 后台刷新与必要等待对用户状态不可见；
+- 慢刷新期间兼容检查点与 VerifiedActiveDelta 继续授权，只有后缀超预算或缺少兼容检查点时等待；
+- RefreshTarget 共享、同预算线性合并、ProviderPayloadProfile 变化、取消、profile 期限、分支替代和迟到结果保持隔离；
+- 来源屏障失败只返回本扩展 block；
+- 当前代际必要故障锁存并停止确认后续增强输出；
+- 用户选择重新验证时创建新代际且不复用旧结果；
+- allow 输出具有唯一 proof；block/abort 与 transport 实际结果分别记录；
 - 并行工具与快速路线变化不产生无界队列；
 - shutdown 不泄漏任务或污染替换 session。

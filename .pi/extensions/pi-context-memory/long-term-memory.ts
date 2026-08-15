@@ -6,6 +6,7 @@ import { Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 
 const SCHEMA_VERSION = 1;
+export const DEFAULT_ARCHIVE_COPY_TIMEOUT_MS = 5_000;
 
 export interface SessionIdentity {
   sessionId: string;
@@ -95,7 +96,7 @@ export class FileLongTermMemory {
   private readonly root: string;
   private readonly copyTimeoutMs: number;
 
-  constructor(root: string, copyTimeoutMs = 5_000) {
+  constructor(root: string, copyTimeoutMs = DEFAULT_ARCHIVE_COPY_TIMEOUT_MS) {
     this.root = root;
     this.copyTimeoutMs = copyTimeoutMs;
   }

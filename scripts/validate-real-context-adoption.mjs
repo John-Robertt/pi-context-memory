@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { execFileSync, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
@@ -11,10 +11,11 @@ import {
   readMemoryModelSetting,
   readRuntimeState,
 } from "../.pi/extensions/pi-context-memory/memory-model-configuration.ts";
-import { readValidationModels } from "./validation-model-config.mjs";
+import { assertValidationPiVersion, readValidationModels } from "./validation-suite.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 if (process.argv.length !== 2) throw new Error("Usage: node scripts/validate-real-context-adoption.mjs");
+const piVersion = assertValidationPiVersion(root);
 const { task: taskModel, memory: expectedMemoryModel } = readValidationModels(root);
 const interTurnDelayMs = Number.parseInt(process.env.PCR_REAL_ADOPTION_INTER_TURN_DELAY_MS ?? "0", 10);
 if (!Number.isSafeInteger(interTurnDelayMs) || interTurnDelayMs < 0) {
@@ -266,7 +267,8 @@ try {
   summary = {
     schemaVersion: 1,
     runId,
-    piVersion: execFileSync("pi", ["--version"], { cwd: root, encoding: "utf8" }).trim(),
+    piVersion,
+    nodeVersion: process.versions.node,
     taskModel,
     memoryModel: expectedMemoryModel,
     scenario,

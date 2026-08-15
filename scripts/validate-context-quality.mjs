@@ -10,11 +10,15 @@ import { compileOpenVikingConfig } from "../.pi/extensions/pi-context-memory/mem
 import {
   assertImplementationEvidenceUnchanged,
   captureImplementationEvidence,
+  STABLE_EVIDENCE_SCHEMA_VERSION,
 } from "./validation-evidence.mjs";
 import {
+  assertValidationPiVersion,
   createIsolatedPiProviderCredential,
+  readProjectOpenVikingVersion,
   readValidationModels,
-} from "./validation-model-config.mjs";
+  readValidationSuite,
+} from "./validation-suite.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const QUALITY_CREDENTIAL_ENV = "PCR_CONTEXT_QUALITY_OPENROUTER_API_KEY";
@@ -24,15 +28,23 @@ const runId = process.env.PCR_RUN_ID ?? `context-quality-${new Date().toISOStrin
 const artifactRoot = join(root, ".artifacts/context-quality", runId);
 const fixturePath = join(root, "validation/fixtures/context-enhancement-long-task.json");
 const evidencePath = join(root, "validation/evidence/context-quality.json");
+const suite = readValidationSuite(root);
+if (suite.diagnostics.pairedQualityRepetitions !== 1) {
+  throw new Error("The paired quality diagnostic runner currently supports exactly one repetition");
+}
 const { task: taskModel, memory: memoryModel } = readValidationModels(root);
 const fixture = JSON.parse(readFileSync(fixturePath, "utf8"));
 const implementation = captureImplementationEvidence(root, "context-quality");
 const startedAt = new Date().toISOString();
 mkdirSync(artifactRoot, { recursive: true });
-const piVersion = commandOutput("pi", ["--version"]);
-const openVikingVersion = commandOutput(join(root, ".venv/bin/python"), ["-c", "import openviking; print(openviking.__version__)"]);
-if (piVersion !== "0.84.2" || openVikingVersion !== "0.4.13") {
-  throw new Error(`Quality validation requires Pi 0.84.2 and OpenViking 0.4.13 (found ${piVersion}/${openVikingVersion})`);
+const piVersion = assertValidationPiVersion(root);
+const expectedOpenVikingVersion = readProjectOpenVikingVersion(root);
+const pythonCommand = process.platform === "win32"
+  ? join(root, ".venv/Scripts/python.exe")
+  : join(root, ".venv/bin/python");
+const openVikingVersion = commandOutput(pythonCommand, ["-c", "import openviking; print(openviking.__version__)"]);
+if (openVikingVersion !== expectedOpenVikingVersion) {
+  throw new Error(`Quality validation requires locked OpenViking ${expectedOpenVikingVersion}; found ${openVikingVersion}`);
 }
 
 function assert(condition, message) {
@@ -254,7 +266,7 @@ async function runArm(name, model, openViking) {
     "--mode", "rpc",
     "--session", sessionPath,
     "--model", `${model.provider}/${model.model}`,
-    "--thinking", "off",
+    "--thinking", suite.models.taskThinking,
     "--no-context-files",
     "--no-skills",
     "--no-prompt-templates",
@@ -366,11 +378,11 @@ const memory = {
   api_key: isolatedOpenRouterCredential.reference,
 };
 const adapterProbe = JSON.parse(commandOutput(
-  join(root, ".venv/bin/python"),
+  pythonCommand,
   [join(root, "scripts/validate-openviking-vlm-adapters.py"), memory.model],
 ));
-const memoryRequestSemantics = memory.provider === "litellm"
-  && memory.model === taskModel
+const memoryRequestSemantics = memory.provider === suite.models.memoryProvider
+  && memory.model === suite.models.memoryRoute
   && adapterProbe.passed === true
   ? {
     adapter: "LiteLLM OpenRouter",
@@ -454,7 +466,7 @@ try {
   const enhanced = await runArm("enhanced", task, openViking);
   const usageDatabase = join(baseConfig.storage.workspace, "_system/usage_audit/usage_audit.sqlite3");
   const openVikingTokenUsage = JSON.parse(commandOutput(
-    join(root, ".venv/bin/python"),
+    pythonCommand,
     [
       "-c",
       "import json, sqlite3, sys; connection = sqlite3.connect(sys.argv[1]); connection.row_factory = sqlite3.Row; print(json.dumps([dict(row) for row in connection.execute('SELECT source, token_type, provider, model_name, token_count FROM usage_token_hourly ORDER BY source, token_type, provider, model_name')]))",
@@ -462,8 +474,8 @@ try {
     ],
   ));
   const memoryTokenUsage = openVikingTokenUsage.filter((row) => row.source === "vlm"
-    && row.provider === "litellm"
-    && row.model_name === taskModel);
+    && row.provider === suite.models.memoryProvider
+    && row.model_name === suite.models.memoryRoute);
   const memoryTotalTokens = memoryTokenUsage.reduce((total, row) => total + row.token_count, 0);
   const nativePassed = Object.values(native.checker).every(Boolean);
   const enhancedPassed = Object.values(enhanced.checker).every(Boolean);
@@ -501,13 +513,14 @@ try {
   };
   const passed = Object.values(checks).every(Boolean);
   result = {
-    schemaVersion: 1,
+    schemaVersion: STABLE_EVIDENCE_SCHEMA_VERSION,
     generatedBy: "scripts/validate-context-quality.mjs",
     scope: "real-provider-quality",
     runId,
     startedAt,
     completedAt: new Date().toISOString(),
     piVersion,
+    nodeVersion: process.versions.node,
     openVikingVersion,
     models: { task: taskModel, memory: memoryModel },
     openVikingUsage: { tokenRows: openVikingTokenUsage, memoryTotalTokens },
@@ -525,7 +538,10 @@ try {
       name: fixture.name,
       sha256: sha256(readFileSync(fixturePath)),
     },
-    execution: { order: ["native", "enhanced"], repetitions: 1 },
+    execution: {
+      order: ["native", "enhanced"],
+      repetitions: suite.diagnostics.pairedQualityRepetitions,
+    },
     implementation,
     passed,
     checks,
@@ -544,7 +560,7 @@ try {
   if (!passed) process.exitCode = 1;
 } catch (error) {
   result = {
-    schemaVersion: 1,
+    schemaVersion: STABLE_EVIDENCE_SCHEMA_VERSION,
     generatedBy: "scripts/validate-context-quality.mjs",
     scope: "real-provider-quality",
     runId,

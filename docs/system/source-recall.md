@@ -24,7 +24,7 @@ Pi 当前路线
 
 外部布局为 `<namespace>/<session-hash>/<entry-hash>/source.md`。每个 entry 使用独立资源子树；`no_split` 保持稳定 leaf URI。已有 URI 内容与同一 Pi entry 不一致时拒绝覆盖。
 
-Pi 集成规范化边界决定哪些 entry 具有可检索任务文本。用户、assistant、工具、bash 和允许的自定义内容可以形成来源；compaction 与 branch summary 只提供当前路线边界身份，其 summary 文本以及 `fromId` 指向的废弃 branch 内容不进入事实索引。模型切换、thinking、label 等控制 entry 也不进入索引。
+Pi 集成按 [`../modules/pi-integration.md`](../modules/pi-integration.md) 发布可检索 MessageSource。只有全-text 单元有正文；mixed/image/unsupported public block 整单元 opaque，当前 unknown role 按 Pi drop。thinking/private metadata、excluded bash、扩展私有内容、ControlBoundary、summary 与废弃 branch 也不建立候选。
 
 索引在本地来源归档之后运行。普通生命周期可以合并尚未开始的重复路线；显式搜索具有当前调用专属的完整同步屏障。
 
@@ -41,7 +41,7 @@ recall_session(search)
 
 recall_session(read_source)
   → Session 记忆协调验证当前 branch
-  → 按 entry ID 读取 message 来源并核对 Pi 权威 message entry；control entry 返回 not-found
+  → 按 entry ID 重新规范化当前 Pi 权威 message entry，并在 task-content、完成状态与 authority hash 一致后读取 MessageSource；若存在已核验完整结果 blob，可按同一来源身份读取有界切片；control entry 返回 not-found
   → 返回有界内容和截断状态
 ```
 
@@ -60,7 +60,7 @@ OpenViking 只在当前 branch 精确 URI 范围内排序。候选必须具有�
 - `backend`：OpenViking 连接、资源、索引或搜索失败；
 - `protocol`：候选或 envelope 不可信。
 
-input 与 not-found 作为工具结果返回，不改变运行能力。source、backend 和 protocol 表示必要召回数据面失效：当前工具返回错误，Session 记忆协调锁存故障，下一次任务模型请求在 Provider 前被阻断。
+input 与 not-found 作为工具结果返回，不改变运行能力。source、backend 和 protocol 表示本扩展召回数据面失效：当前工具返回错误、协调器锁存故障，后续增强构造不被确认并调用 `ctx.abort()`；宿主/transport 实际结果另行观测。
 
 正常空结果只在当前路线来源同步成功且后端真实返回零有效候选时成立。任何故障都不能转换为空结果。
 
@@ -82,4 +82,4 @@ input 与 not-found 作为工具结果返回，不改变运行能力。source、
 
 [`../validation/source-recall.md`](../validation/source-recall.md) 证明稳定 URI、资源读回、并发同步、session 隔离、branch 过滤、候选错误、权威展开和运行故障集成。
 
-[`../validation/context-enhancement-state.md`](../validation/context-enhancement-state.md) 证明必要召回数据面错误使下一 Provider 请求被阻断，并在显式恢复后重新进入增强路径。
+[`../validation/context-enhancement-state.md`](../validation/context-enhancement-state.md) 分别证明召回错误时本扩展的 block/abort、transport 实际结果，以及用户选择重新验证后的新代际行为。

@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 
 import type { SourceEntry } from "./long-term-memory.ts";
 import {
+  DEFAULT_OPENVIKING_REQUEST_TIMEOUT_MS,
   OpenVikingHttpClient,
   normalizeBatchPendingTokens,
   normalizeCommitResult,
@@ -162,9 +163,9 @@ export class OpenVikingSessionMemory {
   private touchSequence = 0;
 
   constructor(
-    baseUrl = "http://127.0.0.1:1933",
+    baseUrl: string,
     apiKey?: string,
-    requestTimeoutMs = 30_000,
+    requestTimeoutMs = DEFAULT_OPENVIKING_REQUEST_TIMEOUT_MS,
     options: SessionWorkingMemoryOptions = {},
   ) {
     this.client = new OpenVikingHttpClient(baseUrl, apiKey, requestTimeoutMs);

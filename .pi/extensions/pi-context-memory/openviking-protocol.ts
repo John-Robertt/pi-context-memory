@@ -2,6 +2,7 @@ import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
 import { isIP } from "node:net";
 
+export const DEFAULT_OPENVIKING_REQUEST_TIMEOUT_MS = 30_000;
 const MAX_RESPONSE_BYTES = 10 * 1024 * 1024;
 
 export interface OpenVikingResponse<T = unknown> {
@@ -50,7 +51,7 @@ export class OpenVikingHttpClient {
   private readonly apiKey: string | undefined;
   private readonly timeoutMs: number;
 
-  constructor(baseUrl: string, apiKey?: string, timeoutMs = 30_000) {
+  constructor(baseUrl: string, apiKey?: string, timeoutMs = DEFAULT_OPENVIKING_REQUEST_TIMEOUT_MS) {
     this.baseUrl = normalizeOpenVikingBaseUrl(baseUrl);
     this.apiKey = apiKey;
     if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) throw new Error("OpenViking request timeout must be a positive integer");

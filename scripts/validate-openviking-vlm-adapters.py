@@ -2,6 +2,7 @@
 import json
 import os
 import sys
+from pathlib import Path
 from types import SimpleNamespace
 
 from openviking.models.vlm import VLMFactory
@@ -16,14 +17,13 @@ from openviking.models.vlm.backends.codex_responses_adapter import (
 if len(sys.argv) > 2:
     raise SystemExit("Usage: validate-openviking-vlm-adapters.py [openrouter-model]")
 OPENROUTER_MODEL = sys.argv[1] if len(sys.argv) == 2 else "openrouter/validation/model"
+ADAPTER_CONTRACT_PATH = Path(__file__).resolve().parents[1] / "config" / "openviking-adapter-contract.json"
+ADAPTER_CONTRACT = json.loads(ADAPTER_CONTRACT_PATH.read_text(encoding="utf-8"))
+if ADAPTER_CONTRACT.get("schemaVersion") != 1:
+    raise AssertionError("OpenViking adapter contract schemaVersion is unsupported")
 PROVIDERS = {
-    "volcengine": "VolcEngineVLM",
-    "openai": "OpenAIVLM",
-    "azure": "OpenAIVLM",
-    "kimi": "KimiVLM",
-    "glm": "GLMVLM",
-    "litellm": "LiteLLMVLMProvider",
-    "openai-codex": "CodexVLM",
+    descriptor["name"]: descriptor["expectedClass"]
+    for descriptor in ADAPTER_CONTRACT["providers"]
 }
 MESSAGES = [
     {"role": "system", "content": "system"},

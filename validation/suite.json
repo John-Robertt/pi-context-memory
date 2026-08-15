@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "host": {
+    "pi": {
+      "version": "0.84.2",
+      "protocolProfile": "pi-provider-protocol-v1"
+    }
+  },
+  "modelSelection": {
+    "route": "openai/gpt-5.6-luna",
+    "task": {
+      "provider": "openrouter",
+      "thinking": "off"
+    },
+    "memory": {
+      "provider": "litellm",
+      "routePrefix": "openrouter"
+    }
+  },
+  "diagnostics": {
+    "pairedQualityRepetitions": 1
+  },
+  "policy": {
+    "longTaskFixtureKinds": [
+      "tool-output-pressure",
+      "route-and-fact-update",
+      "continuous-long-task"
+    ],
+    "eligibleTarget": 10,
+    "deterministicTimingSamples": 100
+  }
+}

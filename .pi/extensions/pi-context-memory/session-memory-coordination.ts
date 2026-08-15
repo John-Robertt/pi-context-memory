@@ -8,6 +8,7 @@ import {
 } from "./long-term-memory.ts";
 import { isSourceEntry, largeResultOf } from "./pi-session-protocol.ts";
 
+export const DEFAULT_REQUIRED_SOURCE_INDEX_TIMEOUT_MS = 5_000;
 export interface SessionRouteSnapshot extends SessionIdentity {
   leafId: string | null;
   entries: readonly SourceEntry[];
@@ -107,7 +108,7 @@ export class SessionSourceIndexCoordinator {
     coordinator: SessionMemoryCoordinator,
     snapshot: SessionRouteSnapshot,
     signal: AbortSignal,
-    timeoutMs = 5_000,
+    timeoutMs = DEFAULT_REQUIRED_SOURCE_INDEX_TIMEOUT_MS,
   ): Promise<void> {
     if (this.shutdownController.signal.aborted) {
       return Promise.reject(new Error("Session source indexing has stopped"));

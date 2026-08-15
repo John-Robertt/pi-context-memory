@@ -1,14 +1,25 @@
 #!/usr/bin/env node
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  truncateSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
   assertImplementationEvidenceUnchanged,
   captureImplementationEvidence,
+  STABLE_EVIDENCE_SCHEMA_VERSION,
 } from "./validation-evidence.mjs";
+import { assertValidationPiVersion } from "./validation-suite.mjs";
 
 import { FileLongTermMemory } from "../.pi/extensions/pi-context-memory/long-term-memory.ts";
 import { SessionMemoryCoordinator } from "../.pi/extensions/pi-context-memory/session-memory-coordination.ts";
@@ -17,11 +28,7 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 if (process.argv.length !== 2) throw new Error("Usage: node scripts/validate-source-archive.mjs");
 const scope = "local";
 const implementation = captureImplementationEvidence(root, "source-archive");
-const expectedPiVersion = "0.84.2";
-const piVersion = spawnSync("pi", ["--version"], { encoding: "utf8" }).stdout.trim();
-if (piVersion !== expectedPiVersion) {
-  throw new Error(`Source archive validation requires Pi ${expectedPiVersion}; found ${piVersion || "unavailable"}`);
-}
+const piVersion = assertValidationPiVersion(root);
 
 const runId = process.env.PCR_RUN_ID ?? `source-archive-${new Date().toISOString().replaceAll(/[:.]/g, "-")}`;
 const artifactRoot = join(root, ".artifacts/source-archive", runId);
@@ -84,7 +91,11 @@ async function consume(stream) {
 }
 
 function locatePiDist() {
-  const located = spawnSync("which", ["pi"], { encoding: "utf8" }).stdout.trim();
+  const command = process.platform === "win32" ? "where" : "which";
+  const located = spawnSync(command, ["pi"], { encoding: "utf8" }).stdout
+    .split(/\r?\n/u)
+    .map((value) => value.trim())
+    .find(Boolean);
   if (!located) throw new Error("Cannot locate the Pi executable");
   return dirname(realpathSync(located));
 }
@@ -263,12 +274,19 @@ async function validateStorageAndCoordination() {
   const corruptedBlobRejected = await expectFailure(() => memory.openLargeResult(firstIdentity, toolResultId));
   writeFileSync(blobPath, originalBlob);
 
-  const readOnlyRecords = join(archiveRoot, sha256(firstIdentity.sessionId), "large-results", "records");
-  chmodSync(readOnlyRecords, 0o500);
-  const metadataPublishFailurePreservesPublishedResult = await expectFailure(() =>
-    memory.archiveLargeResult(firstIdentity, first.getEntry(toolResultId), toolCallId, largeOutputPath),
-  );
-  chmodSync(readOnlyRecords, 0o700);
+  const recordsPath = join(archiveRoot, sha256(firstIdentity.sessionId), "large-results", "records");
+  const recordsBackup = `${recordsPath}.validation-backup`;
+  renameSync(recordsPath, recordsBackup);
+  writeFileSync(recordsPath, "blocked");
+  let metadataPublishFailurePreservesPublishedResult;
+  try {
+    metadataPublishFailurePreservesPublishedResult = await expectFailure(() =>
+      memory.archiveLargeResult(firstIdentity, first.getEntry(toolResultId), toolCallId, largeOutputPath),
+    );
+  } finally {
+    rmSync(recordsPath, { force: true });
+    renameSync(recordsBackup, recordsPath);
+  }
   const reopened = await memory.openLargeResult(firstIdentity, toolResultId);
   const reopenedContent = reopened ? await consume(reopened.stream) : Buffer.alloc(0);
   const largeResultPublicationAtomic = (
@@ -277,12 +295,16 @@ async function validateStorageAndCoordination() {
     && reopenedContent.equals(largeOutput)
   );
 
-  const timeoutMemory = new FileLongTermMemory(join(caseDir, "timeout-archive"), 10);
+  const timeoutSource = join(caseDir, "timeout-source.bin");
+  writeFileSync(timeoutSource, "");
+  truncateSync(timeoutSource, 64 * 1024 * 1024);
+  const timeoutMemory = new FileLongTermMemory(join(caseDir, "timeout-archive"), 1);
   const timeoutCoordinator = new SessionMemoryCoordinator(firstIdentity, timeoutMemory);
   await timeoutCoordinator.archiveCurrentRoute(largeSnapshot);
   const largeResultCopyTimeoutEnforced = await expectFailure(() =>
-    timeoutMemory.archiveLargeResult(firstIdentity, first.getEntry(toolResultId), toolCallId, "/dev/zero"),
+    timeoutMemory.archiveLargeResult(firstIdentity, first.getEntry(toolResultId), toolCallId, timeoutSource),
   );
+  rmSync(timeoutSource, { force: true });
 
   const broken = {
     ...largeSnapshot,
@@ -334,13 +356,14 @@ const coordination = await validateStorageAndCoordination();
 const checks = { ...unpersisted.checks, ...coordination.checks };
 assertImplementationEvidenceUnchanged(root, "source-archive", implementation);
 const summary = {
-  schemaVersion: 1,
+  schemaVersion: STABLE_EVIDENCE_SCHEMA_VERSION,
   generatedBy: "scripts/validate-source-archive.mjs",
   scope,
   runId,
   startedAt,
   completedAt: new Date().toISOString(),
   piVersion,
+  nodeVersion: process.versions.node,
   implementation,
   passed: unpersisted.passed && coordination.passed && Object.values(checks).every(Boolean),
   checks,
@@ -358,9 +381,11 @@ if (scope === "local") {
   const stableEvidence = {
     schemaVersion: summary.schemaVersion,
     generatedBy: summary.generatedBy,
+    scope: summary.scope,
     runId: summary.runId,
     recordedAt: summary.completedAt,
     piVersion,
+    nodeVersion: summary.nodeVersion,
     implementation,
     passed: summary.passed,
     checks,

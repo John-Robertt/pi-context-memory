@@ -16,7 +16,12 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   assertImplementationEvidenceUnchanged,
   captureImplementationEvidence,
+  STABLE_EVIDENCE_SCHEMA_VERSION,
 } from "./validation-evidence.mjs";
+import {
+  assertValidationPiVersion,
+  readProjectOpenVikingVersion,
+} from "./validation-suite.mjs";
 
 import { FileLongTermMemory } from "../.pi/extensions/pi-context-memory/long-term-memory.ts";
 import {
@@ -32,21 +37,18 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 if (process.argv.length !== 2) throw new Error("Usage: node scripts/validate-source-recall.mjs");
 const scope = "local";
 const implementation = captureImplementationEvidence(root, "source-recall");
-const expectedPiVersion = "0.84.2";
-const expectedOpenVikingVersion = "0.4.13";
-const piVersion = spawnSync("pi", ["--version"], { encoding: "utf8" }).stdout.trim();
-if (piVersion !== expectedPiVersion) {
-  throw new Error(`Source recall validation requires Pi ${expectedPiVersion}; found ${piVersion || "unavailable"}`);
-}
+const expectedOpenVikingVersion = readProjectOpenVikingVersion(root);
+const piVersion = assertValidationPiVersion(root);
 
-const openVikingConfigPath = join(root, "validation/fixtures/openviking-source-recall.json");
-const openVikingConfig = JSON.parse(readFileSync(openVikingConfigPath, "utf8"));
-const openVikingConfigKeys = ["default_account", "default_user", "embedding"];
-if (JSON.stringify(Object.keys(openVikingConfig).sort()) !== JSON.stringify(openVikingConfigKeys)) {
-  throw new Error("Source recall validation OpenViking fixture contains unsupported fields");
-}
+const openVikingConfigPath = join(root, "config/openviking.json");
+const baseOpenVikingConfig = JSON.parse(readFileSync(openVikingConfigPath, "utf8"));
+const openVikingConfig = {
+  default_account: baseOpenVikingConfig.default_account,
+  default_user: baseOpenVikingConfig.default_user,
+  embedding: baseOpenVikingConfig.embedding,
+};
 if (typeof openVikingConfig.default_account !== "string" || typeof openVikingConfig.default_user !== "string") {
-  throw new Error("Source recall validation OpenViking fixture requires account and user identities");
+  throw new Error("Source recall validation base config requires account and user identities");
 }
 const denseEmbedding = openVikingConfig.embedding?.dense;
 if (denseEmbedding?.provider !== "local") {
@@ -54,7 +56,7 @@ if (denseEmbedding?.provider !== "local") {
 }
 const denseEmbeddingKeys = ["cache_dir", "dimension", "input", "model", "provider"];
 if (JSON.stringify(Object.keys(denseEmbedding).sort()) !== JSON.stringify(denseEmbeddingKeys)) {
-  throw new Error("Source recall validation dense embedding fixture contains unsupported fields");
+  throw new Error("Source recall validation base dense embedding contains unsupported fields");
 }
 const effectiveDenseEmbedding = Object.fromEntries(
   denseEmbeddingKeys.map((key) => [key, denseEmbedding[key]]),
@@ -122,7 +124,11 @@ function parseJsonl(path) {
 }
 
 function locatePiDist() {
-  const located = spawnSync("which", ["pi"], { encoding: "utf8" }).stdout.trim();
+  const command = process.platform === "win32" ? "where" : "which";
+  const located = spawnSync(command, ["pi"], { encoding: "utf8" }).stdout
+    .split(/\r?\n/u)
+    .map((value) => value.trim())
+    .find(Boolean);
   if (!located) throw new Error("Cannot locate the Pi executable");
   return dirname(realpathSync(located));
 }
@@ -782,13 +788,14 @@ try {
 assertImplementationEvidenceUnchanged(root, "source-recall", implementation);
 const checks = { ...coordination.checks, ...core.checks };
 const summary = {
-  schemaVersion: 1,
+  schemaVersion: STABLE_EVIDENCE_SCHEMA_VERSION,
   generatedBy: "scripts/validate-source-recall.mjs",
   scope,
   runId,
   startedAt,
   completedAt: new Date().toISOString(),
   piVersion,
+  nodeVersion: process.versions.node,
   openVikingVersion: health.version,
   openVikingConfig: {
     templatePath: openVikingConfigPath.startsWith(`${root}/`) ? openVikingConfigPath.slice(root.length + 1) : openVikingConfigPath,
@@ -814,9 +821,11 @@ writeJson(join(artifactRoot, "summary.json"), summary);
 const stableEvidence = {
   schemaVersion: summary.schemaVersion,
   generatedBy: summary.generatedBy,
+  scope: summary.scope,
   runId: summary.runId,
   recordedAt: summary.completedAt,
   piVersion,
+  nodeVersion: summary.nodeVersion,
   openVikingVersion: health.version,
   openVikingConfig: summary.openVikingConfig,
   implementation,

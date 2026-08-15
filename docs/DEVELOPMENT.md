@@ -6,9 +6,15 @@
 
 ## 2. 当前目标设计
 
-扩展启用期间，增强记忆独占任务模型工作上下文与自动压缩。每个任务模型请求必须具有当前 OpenViking 运行代际、实际记忆模型能力、精确 Pi 路线、可恢复来源和最终增强 payload 证明；条件不成立时在 Provider 前阻断。
+扩展只负责自己的上下文、记忆生命周期和 hook 事实。constructed 输出绑定代际、能力、路线与来源；到达 `before_provider_request` 时只能发布 verified 或 rejected，未到达则记 unobserved。最终 Provider 采用由 transport 观测。
 
-内部路线准备不形成用户状态。状态栏只展示“增强记忆 · 初始化中”“增强记忆”和“增强记忆 · 故障”。用户需要 Pi 原生行为时退出当前实例、禁用扩展并重新启动。
+后台记忆刷新、必要等待和队列不形成用户状态。状态栏只展示“增强记忆 · 初始化中”“增强记忆”和“增强记忆 · 故障”。诊断不自动修改 Pi、其它扩展、加载顺序或 Provider/模型；处理方式由用户决定。
+
+Pi 集成先建立 Provider 基线，再按结构/元数据/所有者/协议关系投影；不读正文，不维护 customType allowlist/blacklist。全-text 单元可形成来源；含 image/unsupported public block 的完整 message/ToolBatch opaque 保留；当前未知 role 按 Pi drop；thinking/private metadata 不进长期记忆。
+
+跨轮历史由兼容 MemoryCheckpoint、来源可恢复 VerifiedActiveDelta 和未被检查点覆盖的 OpaqueProviderSegment 组成。后台 refresh 不自动阻塞请求，只有结构化历史无法形成可信有界输入时才等待必要刷新；opaque 内容必须原样保留，预算不足时报告本扩展表示能力边界。
+
+用户配置仍只选择记忆 Provider/模型、凭据和必要连接字段。运行配置匹配带 actual 证据的内部 MemoryRuntimeProfile；任务上下文预算只使用 ProviderPayloadProfile，Pi footer 在交互模式以 `(增强)` 标识任务模型用量而不参与授权。
 
 产品第一验收门槛是真实复杂长任务可靠完成：声明范围内没有独立外部阻塞证据的运行必须全部通过任务 checker。快速、并行和大输出工具结果、内部等待、队列和上下文换代均属于系统责任。
 
@@ -16,8 +22,12 @@
 
 ## 3. 当前可运行实现
 
-当前实现坐标为 Pi `0.84.2` 与项目私有 OpenViking `0.4.13`。以下能力可以运行：
+当前验证坐标由 [`../validation/suite.json`](../validation/suite.json) 选择 Pi protocol profile 与任务/记忆模型，由 [`../pyproject.toml`](../pyproject.toml) 和 `uv.lock` 锁定项目私有 OpenViking。以下能力可以运行：
 
+- `config/toolchain.json`、`.python-version` 与依赖锁形成项目内安装链，uv bootstrap 先校验摘要且不创建用户级 Python 入口；
+- `validation/suite.json` 是 Pi profile、任务/记忆模型和验证政策的机器入口，runner 实际观测版本；
+- `config/openviking-adapter-contract.json` 统一配置桥、TypeScript 校验和适配器 runner 的受审查字段/凭据/schema 契约；
+- 扩展与启动器从同一 OpenViking 基础配置解析 endpoint；stable evidence 绑定实现、验证规格、suite 和工具链后，上一代 evidence 已正确失效；
 - 持久化 Pi session 当前 branch 的本地来源归档；
 - `fullOutputPath` 完整工具结果的内容寻址副本；
 - OpenViking `vectors_only` 来源索引；
@@ -26,11 +36,11 @@
 - OpenViking Session append、commit、task polling 和 context assembly；
 - 当前 prompt 之前历史的有界增强消息。
 
-当前自动上下文实现仍允许未准备、超时、服务或模型失败的请求使用原始 Pi messages；当前回合工具结果保持原始形态，overflow 使用 Pi compaction，`session_before_tree` 也尚未抑制 Pi 原生 summary；用户状态仍包含准备和原生路径语义。当前实现因此不满足目标设计的增强独占、自动压缩接管、tree summary 隔离和复杂长任务可靠性。
+当前自动上下文实现仍允许未准备、超时、服务或模型失败时返回原始 Pi messages；尚未建立 Provider 基线/记忆投影双边界，也没有区分本扩展 hook 时点证明与 transport 最终采用。当前回合工具结果、overflow、compaction 和 tree summary 仍沿用现有实现，因此不满足新的责任边界、复杂长任务可靠性和可验证性目标。
 
 ## 4. 当前证据边界
 
-以下 evidence 仍能证明各自的局部实现事实：
+以下文件保留上一实现坐标的局部运行结果；新增的规格/suite 绑定已使 checker 正确报告它们为 stale，因此它们只能作为重新验证前的调查基线，不能作为当前稳定结论：
 
 - [`validation/evidence/source-archive.json`](../validation/evidence/source-archive.json)：现有本地来源隔离、恢复和完整结果；
 - [`validation/evidence/source-recall.json`](../validation/evidence/source-recall.json)：现有来源索引、当前路线过滤和权威展开；
@@ -40,63 +50,54 @@
 
 这些 evidence 尚未证明：
 
-- 实际记忆模型能力是任务请求前置条件；
+- 本扩展只在实际记忆能力成立时确认增强输出；
 - 声明支持的任务与记忆 Provider/模型/API 组合均具有对应 actual 证据；
-- 失败请求在 Provider 前被阻断；
-- 全部已发送任务请求具有增强证明；
+- 本扩展内部失败能够停止自己的增强输出并形成准确诊断；
+- hook verified/rejected/unobserved 与 transport 结果分别证明，不以本扩展日志替代最终事实；
 - current turn 多工具与大输出保持有界；
-- Pi compaction/tree summary 摘要请求和新 `branch_summary` entry 均为零，已有 summary 文本不污染 VLM；
-- 三类真实复杂长任务分别达到至少 10 个 eligible 且全部完成；
+- Provider 基线与 Pi 一致：全-text foreign custom 可投影，mixed/image 整单元 opaque，当前 unknown role drop；thinking/private metadata 不进长期记忆，fullOutputRef 可恢复；
+- 慢速后台 refresh 与任务并行，只有必要 refresh 形成等待；RefreshTarget 绑定 generation、路线前缀、watermark 与 retentionBudgetIdentity，检查点/后缀在预算变化、branch 与迟到结果下保持隔离；
+- MemoryRuntimeProfile 字段由实际记忆请求采用，ProviderPayloadProfile 预算与 `(增强)` footer 语义成立；
+- compaction/tree hook 返回值、实际宿主结果和兼容性结论被分别证明，已有 summary 文本不污染本扩展记忆；
+- 三类真实复杂长任务分别达到 suite policy 的 `eligibleTarget` 且全部完成；
 - 完整 API 成本优势。
 
-`node scripts/check-validation-evidence.mjs` 只能确认现有 evidence 与现有实现输入一致；现有受控替身或固定答案证据不能替代各核心节点的实际纵向验证，也不能满足新验证规格。
+`node scripts/check-validation-evidence.mjs` 现在同时核对 schema、实现、对应验证规格、suite 和运行坐标；在目标实现与 runner 重写并重新生成 evidence 前，它应报告 stale。旧受控替身或固定答案结果不能替代各核心节点的实际纵向验证。
 
 ## 5. 当前主导约束
 
-当前主导约束是**任务模型请求没有单一、可执行的增强授权边界**。
+当前主导约束是**当前实现与旧设计都没有把本扩展可证明的事实和宿主最终事实分开**。
 
-运行 readiness、路线准备、上下文构造和 Provider payload 目前由多个布尔状态及隐式空值表达；失败结果可以返回原始消息，扩展异常也不能阻止 Pi 继续请求。只要该边界未改为 `allow(enhancedContext, proof) | block(fault)`，服务故障、快速请求和后续 ToolBatch 设计都无法形成可靠保证。
+现有实现会在增强未准备时返回原始消息，也没有区分 Provider 基线、记忆投影、本扩展 handler 时点与 transport 最终采用。下一实现必须让内部增强构造采用明确 `allow | block`，同时让其它扩展内容和最终采用遵循 Pi 权威边界，只发布准确的时点与外部观测结论。
 
-成本归属不是当前执行入口。可靠完成、事实可信和增强独占成立前，不进入成本优势实现。
+成本归属不是当前执行入口。可靠完成、事实可信和增强采用证据成立前，不进入成本优势实现。
 
 ## 6. 当前交付边界
 
-**目标**：建立扩展启用期间的增强请求硬闸门，使实际记忆模型能力、精确路线和最终 payload 证明成为任务 Provider 请求的必要条件。
+**目标**：建立本扩展职责内可执行的增强构造边界，并把 Provider 基线、hook 时点证明、transport 最终采用和宿主 compaction/tree 结果分别观测，不越权合并为一个“最终闸门”。
 
 **需要完成**：
 
 - Session 记忆协调拥有 `initializing | ready | faulted | stopping` 运行状态；
-- 长时记忆通过隔离 OpenViking Session 执行实际模型能力探针，发布并续租有界代际证明；
+- 长时记忆把用户目标匹配到实际验证的 MemoryRuntimeProfile，通过隔离 Session 建立并提前续租有界代际证明；
 - 请求授权只返回 `allow` 或 `block`，不返回原始 Pi messages；
-- `context` 在 initializing 时加入能力屏障，在 ready 时创建或加入精确路线准备，并在失败时使用 `ctx.abort()`；
-- `before_provider_request` 通过 PayloadProofAdapter 核对 system prompt、tool schema、消息、nonce、代际与路线身份；
-- `session_before_compact` 在增强运行期间确定性取消 Pi compaction；
-- `session_before_tree` 抑制原生与扩展 summary，导航不建立 `branch_summary` entry；
+- Pi 集成复用 `convertToLlm` 建立 Provider 基线，从结构证据产生 MessageSource、ControlBoundary 与 OpaqueProviderSegment；text/image/foreign custom 不按正文或黑名单猜测；
+- 长时记忆发布绑定路线前缀的 MemoryCheckpoint，Session 记忆协调形成 VerifiedActiveDelta，并仅为缺少可信有界历史的请求等待必要 refresh；
+- 工作上下文优化使用 ProviderPayloadProfile 统一预算历史、CurrentTurn、system、tools、输出和传输余量；Pi 集成以 `(增强)` footer 展示任务上下文用量；
+- `context` 在 initializing 时加入能力屏障，在 ready 时执行授权，并在失败时使用 `ctx.abort()`；
+- `before_provider_request` 将 constructed 输出分为 verified/rejected，未到达记 unobserved；不声称控制后续 transport；
+- `session_before_compact` 和 `session_before_tree` 只返回本扩展处理意见，并把 handler 返回、实际请求/entry 结果与兼容性结论分别记录；
 - 用户状态收敛为初始化、增强记忆和故障；
-- 本地 runner 实际证明初始化、配置、服务、能力、路线和 payload 失败时 Provider 接收数不增加；
-- 慢但成功的路线准备最终只发送增强 payload；
-- 禁用扩展并重新启动后 Pi 原生行为独立可用。
+- 本地 runner 证明 block 后本扩展未继续构造/确认，并独立观测 transport；
+- 慢 refresh 不影响兼容检查点+后缀构造；必要 refresh 后重新构造并分别记录 hook/transport 结果；
+- 诊断只说明本扩展责任阶段和宿主兼容性事实，不自动禁用、重排或修改其它组件。
 
-**完成条件**：
+**完成条件**：[`validation/README.md`](validation/README.md) §6 的责任边界指标全部成立，且本节目标的实际运行 evidence 可复核。
 
-```text
-sentTaskRequests == enhancedVerifiedRequests
-unverifiedSentTaskRequests == 0
-blockedRequestsProviderDelta == 0
-nativeCompactionRequests == 0
-nativeBranchSummaryRequests == 0
-createdBranchSummaryEntries == 0
-summaryContaminationHits == 0
-```
+特定验证 manifest 可以要求 transport 最终采用增强 payload、compaction 取消和无摘要 tree 实际成立；这些是该 Pi/扩展组合的兼容性证据，不是本扩展对任意宿主或其它扩展的控制权。
 
-同时，故障诊断准确、当前 Pi session 不变、显式恢复创建新代际且不自动重放 prompt。
+故障诊断准确、当前 Pi session 不变；只有用户选择重新验证时创建新代际，且不自动重放 prompt。
 
 ## 7. 唯一下一执行入口
 
-1. 在 Session 记忆协调中定义运行状态、故障数据和 `allow | block` 请求授权结果；
-2. 在 OpenViking 适配与长时记忆中实现能力探针、代际租约和续租，并立即用当前实际记忆 Provider/模型闭合探针、accepted task、assembly 和租约证据；
-3. 将 Pi `context`、受支持 Provider 的 PayloadProofAdapter 与 `before_provider_request` 接入授权结果：用隔离传输证明 block 后零增量，并用当前实际任务 Provider/模型证明 allow payload 被采用；
-4. 接管 `session_before_compact`、抑制 `session_before_tree` summary，并用真实 Pi session 验证零摘要请求、零新 entry 和污染隔离；
-5. 重写 `validate-memory-model-runtime.mjs` 与 `validate-context-enhancement.mjs`，使 stable evidence 区分 controlled/actual，绑定 `ValidationCoordinates`、响应 ID、usage、fixture、checker、实现和规格哈希；
-6. 重新调查 CurrentTurn 持久化时序，实现 ToolBatch 纵向交付，并以真实 Pi 工具、大输出来源和当前任务 Provider/模型证明 raw/projected 后续行动；
-7. 以三个真实任务 manifest 和独立 checker 替换当前固定答案 fixture，完成每类至少 10 个 eligible 运行；前述门槛全部成立后，再以相同 Provider/模型执行原生/增强成对完整账单实验。
+1. 只实现并验证当前主导约束：在 `pi-session-protocol.ts` 建立当前 suite 所选 PiProtocolProfile 的 Provider 基线、全-text MessageSource、无文本 ControlBoundary 与整单元 OpaqueProviderSegment；在最小协调契约中返回本扩展 allow/block，并让 runner 覆盖 text/image/mixed、unknown-role drop、foreign custom、thinking/private metadata、locator，以及 hook verified/rejected/unobserved 与独立 transport 结果。该闭环通过后重新调查下一主导约束，不在本入口并行推进 profile、checkpoint、footer、summary 或成本实验。

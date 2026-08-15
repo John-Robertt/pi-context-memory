@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "vlmSchemaSha256": "ae867bbe4e9067170c18feb29db53c2e683dcabfef90a0f8a819bc92477acaae",
+  "settingFields": [
+    "provider",
+    "model",
+    "api_key",
+    "api_base",
+    "api_version"
+  ],
+  "providers": [
+    {
+      "name": "volcengine",
+      "required": [],
+      "optional": ["api_base"],
+      "credential": "api-key",
+      "apiKeyRequiredModelPrefixes": [],
+      "expectedClass": "VolcEngineVLM"
+    },
+    {
+      "name": "openai",
+      "required": [],
+      "optional": ["api_base"],
+      "credential": "api-key",
+      "apiKeyRequiredModelPrefixes": [],
+      "expectedClass": "OpenAIVLM"
+    },
+    {
+      "name": "azure",
+      "required": ["api_base"],
+      "optional": ["api_version"],
+      "credential": "api-key",
+      "apiKeyRequiredModelPrefixes": [],
+      "expectedClass": "OpenAIVLM"
+    },
+    {
+      "name": "kimi",
+      "required": [],
+      "optional": ["api_base"],
+      "credential": "api-key",
+      "apiKeyRequiredModelPrefixes": [],
+      "expectedClass": "KimiVLM"
+    },
+    {
+      "name": "glm",
+      "required": [],
+      "optional": ["api_base"],
+      "credential": "api-key",
+      "apiKeyRequiredModelPrefixes": [],
+      "expectedClass": "GLMVLM"
+    },
+    {
+      "name": "litellm",
+      "required": [],
+      "optional": ["api_base"],
+      "credential": "optional-api-key-or-native",
+      "apiKeyRequiredModelPrefixes": ["openrouter/"],
+      "expectedClass": "LiteLLMVLMProvider"
+    },
+    {
+      "name": "openai-codex",
+      "required": [],
+      "optional": ["api_base"],
+      "credential": "api-key-or-native",
+      "apiKeyRequiredModelPrefixes": [],
+      "expectedClass": "CodexVLM"
+    }
+  ],
+  "litellmCatalogUrl": "https://docs.litellm.ai/docs/providers"
+}

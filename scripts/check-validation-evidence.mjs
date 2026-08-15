@@ -13,11 +13,12 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const keys = currentValidationEvidenceKeys();
 let failed = false;
 for (const key of keys) {
-  const relativePath = validationEvidenceDefinition(key).evidencePath;
+  const definition = validationEvidenceDefinition(key);
+  const relativePath = definition.evidencePath;
   const evidence = JSON.parse(readFileSync(join(root, relativePath), "utf8"));
   const mismatches = stableEvidenceMismatches(root, key, evidence);
   if (mismatches.length === 0) {
-    console.log(`${relativePath}: current`);
+    console.log(`${relativePath}: input-current (${definition.evidenceClass})`);
     continue;
   }
   failed = true;

@@ -2,14 +2,21 @@ import { createHash } from "node:crypto";
 import { appendFileSync, mkdirSync, realpathSync, watch, type FSWatcher } from "node:fs";
 import { open } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
-import { FileLongTermMemory, type SessionIdentity, type SourceEntry } from "./long-term-memory.ts";
+import {
+  DEFAULT_ARCHIVE_COPY_TIMEOUT_MS,
+  FileLongTermMemory,
+  type SessionIdentity,
+  type SourceEntry,
+} from "./long-term-memory.ts";
 import {
   expandSource,
   formatSearchResult,
   OpenVikingSourceRecall,
+  RECALL_LIMITS,
 } from "./recall-and-provenance.ts";
 import {
   SessionMemoryCoordinator,
@@ -23,6 +30,7 @@ import {
   WorkingContextOptimizer,
 } from "./working-context-optimization.ts";
 import {
+  configuredOpenVikingBaseUrl,
   memoryModelConfigPath,
   locateProjectRoot,
   memoryModelSettingsFingerprint,
@@ -34,9 +42,11 @@ import {
   type MemoryModelSetting,
   type OpenVikingRuntimeState,
 } from "./memory-model-configuration.ts";
+import { DEFAULT_OPENVIKING_REQUEST_TIMEOUT_MS } from "./openviking-protocol.ts";
 import { effectivePiProjectionEntries, entriesBeforeCurrentPrompt } from "./pi-session-protocol.ts";
 
 const SCHEMA_VERSION = 1;
+const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 const observationPath = process.env.PCR_OBSERVATION_LOG
   ? resolve(process.cwd(), process.env.PCR_OBSERVATION_LOG)
   : undefined;
@@ -45,24 +55,34 @@ const failureEvent = process.env.PCR_PROBE_FAIL_EVENT;
 const archiveDelayMs = Number.parseInt(process.env.PCR_ARCHIVE_DELAY_MS ?? "0", 10) || 0;
 const archiveCopyTimeoutMs = (() => {
   const configured = process.env.PCR_ARCHIVE_COPY_TIMEOUT_MS;
-  if (configured === undefined) return 5_000;
+  if (configured === undefined) return DEFAULT_ARCHIVE_COPY_TIMEOUT_MS;
   const value = Number(configured);
   if (!Number.isSafeInteger(value) || value <= 0) {
     throw new Error("PCR_ARCHIVE_COPY_TIMEOUT_MS must be a positive integer");
   }
   return value;
 })();
-const openVikingUrl = process.env.PCR_OPENVIKING_URL ?? "http://127.0.0.1:1933";
 const openVikingApiKey = process.env.PCR_OPENVIKING_API_KEY;
-const openVikingTimeoutMs = Number.parseInt(process.env.PCR_OPENVIKING_TIMEOUT_MS ?? "30000", 10) || 30_000;
+const openVikingTimeoutMs = (() => {
+  const configured = process.env.PCR_OPENVIKING_TIMEOUT_MS;
+  if (configured === undefined) return DEFAULT_OPENVIKING_REQUEST_TIMEOUT_MS;
+  const value = Number(configured);
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new Error("PCR_OPENVIKING_TIMEOUT_MS must be a positive integer");
+  }
+  return value;
+})();
 const recallParameters = Type.Object({
   action: StringEnum(["search", "read_source"] as const, {
     description: "search for current-session sources or expand one current-branch source",
   }),
-  query: Type.Optional(Type.String({ minLength: 1, maxLength: 2_000 })),
-  entry_id: Type.Optional(Type.String({ minLength: 1, maxLength: 256 })),
-  limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 10 })),
-  max_chars: Type.Optional(Type.Integer({ minimum: 1_000, maximum: 20_000 })),
+  query: Type.Optional(Type.String({ minLength: 1, maxLength: RECALL_LIMITS.queryChars })),
+  entry_id: Type.Optional(Type.String({ minLength: 1, maxLength: RECALL_LIMITS.entryIdChars })),
+  limit: Type.Optional(Type.Integer({ minimum: RECALL_LIMITS.resultMin, maximum: RECALL_LIMITS.resultMax })),
+  max_chars: Type.Optional(Type.Integer({
+    minimum: RECALL_LIMITS.expansionMinChars,
+    maximum: RECALL_LIMITS.expansionMaxChars,
+  })),
 }, { additionalProperties: false });
 let sequence = 0;
 let failureInjected = false;
@@ -268,11 +288,22 @@ function formatMemoryModelState(
 
 
 export default function piContextMemoryProbe(pi: ExtensionAPI): void {
-  let sourceRecall: OpenVikingSourceRecall | undefined;
+  let openVikingUrl: string | undefined;
+  let openVikingEndpointError: string | undefined;
   try {
-    sourceRecall = new OpenVikingSourceRecall(openVikingUrl, openVikingApiKey, openVikingTimeoutMs);
+    openVikingUrl = configuredOpenVikingBaseUrl(projectRoot);
   } catch (error) {
-    writeRecord("source_index_config_error", { error: error instanceof Error ? error.message : String(error) });
+    openVikingEndpointError = error instanceof Error ? error.message : String(error);
+    writeRecord("source_index_config_error", { error: openVikingEndpointError });
+  }
+  let sourceRecall: OpenVikingSourceRecall | undefined;
+  if (openVikingUrl) {
+    try {
+      sourceRecall = new OpenVikingSourceRecall(openVikingUrl, openVikingApiKey, openVikingTimeoutMs);
+    } catch (error) {
+      openVikingEndpointError = error instanceof Error ? error.message : String(error);
+      writeRecord("source_index_config_error", { error: openVikingEndpointError });
+    }
   }
   let workingContextOptimizer: WorkingContextOptimizer | undefined;
   let workingContextGeneration: string | undefined;
@@ -388,6 +419,12 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
       workingContextGeneration = undefined;
       if (previous) await previous.shutdown(new Error("Working context runtime generation changed"));
       if (!nextGeneration || shuttingDown) return false;
+      if (!openVikingUrl) {
+        writeRecord("working_context_config_error", {
+          error: openVikingEndpointError ?? "OpenViking endpoint is unavailable",
+        });
+        return false;
+      }
       try {
         workingContextOptimizer = new WorkingContextOptimizer(openVikingUrl, openVikingApiKey, openVikingTimeoutMs);
         workingContextGeneration = nextGeneration;
@@ -786,7 +823,10 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
             details: { action: params.action, entryId, available: false },
           };
         }
-        const expansion = expandSource(resolved.authoritativeEntry, params.max_chars ?? 8_000);
+        const expansion = expandSource(
+          resolved.authoritativeEntry,
+          params.max_chars ?? RECALL_LIMITS.expansionDefaultChars,
+        );
         writeRecord("source_recall_expand", {
           sessionId: snapshot.sessionId,
           entryId,
@@ -824,7 +864,7 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
           searchSnapshot,
           sources,
           query,
-          params.limit ?? 5,
+          params.limit ?? RECALL_LIMITS.resultDefault,
           signal,
         );
         writeRecord("source_recall_search", {

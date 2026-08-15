@@ -15,13 +15,13 @@
 
 ## 安装与命令入口
 
-所有命令都从仓库根目录执行。开发运行要求 Node.js `>=22.19.0`；当前可复现 evidence 使用 Pi `0.84.2`，宿主升级兼容由维护者负责验证。项目安装脚本依据锁文件统一管理私有依赖：
+所有命令都从仓库根目录执行。开发运行的 Node.js 门槛由 [`config/toolchain.json`](config/toolchain.json) 统一定义并由安装入口检查；当前可复现 evidence 的 Pi 坐标由 [`validation/suite.json`](validation/suite.json) 选择，宿主升级兼容由维护者重新验证。项目安装脚本依据锁文件统一管理私有依赖：
 
 ```bash
 node scripts/install-dependencies.mjs
 ```
 
-该脚本按 `uv.lock` 把固定 uv、Python 3.12、OpenViking 和本地 embedding 依赖安装到项目内 `.tools/`、`.venv/` 与 `.cache/`。安装和运行细节以 [`docs/operations/session-recall.md`](docs/operations/session-recall.md) 为准。
+该脚本固定 uv bootstrap，读取项目的 Python 版本入口，并按 `uv.lock` 安装 OpenViking 与本地 embedding 的精确依赖闭包到项目内 `.tools/`、`.venv/` 与 `.cache/`。安装和运行细节以 [`docs/operations/session-recall.md`](docs/operations/session-recall.md) 为准。
 
 正常使用时，在一个终端启动 OpenViking，在另一个终端启动 Pi：
 
@@ -33,6 +33,7 @@ pi
 验证先运行与改动范围最接近的免费入口，尽早发现本地错误，再按 [`docs/validation/README.md`](docs/validation/README.md) 完成对应核心节点的实际纵向验证：
 
 ```bash
+node scripts/check-maintenance-sources.mjs
 node scripts/check-validation-evidence.mjs
 node scripts/validate-source-archive.mjs
 node scripts/validate-source-recall.mjs

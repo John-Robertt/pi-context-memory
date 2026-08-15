@@ -1,11 +1,20 @@
 import { createHash, randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import { request as httpRequest } from "node:http";
+import { readFileSync } from "node:fs";
 import { chmod, link, mkdir, open, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 
 export const OPENVIKING_CONFIG_BRIDGE_TIMEOUT_MS = 15_000;
+export const DEFAULT_OPENVIKING_READINESS_TIMEOUT_MS = 30_000;
+export const DEFAULT_OPENVIKING_STOP_TIMEOUT_MS = 5_000;
+export const OPENVIKING_CONTROL_REQUEST_GRACE_MS = 5_000;
+export const DEFAULT_OPENVIKING_OPERATION_TIMEOUT_MS = OPENVIKING_CONFIG_BRIDGE_TIMEOUT_MS
+  + (4 * DEFAULT_OPENVIKING_STOP_TIMEOUT_MS)
+  + DEFAULT_OPENVIKING_READINESS_TIMEOUT_MS
+  + OPENVIKING_CONTROL_REQUEST_GRACE_MS;
+export const OPENVIKING_RUNTIME_SCHEMA_VERSION = 1 as const;
 export const MEMORY_MODEL_CONFIG_FILENAME = "pi-context-memory.jsonc";
 
 export interface MemoryModelSetting {
@@ -21,6 +30,7 @@ export interface ProviderCapability {
   required: string[];
   optional: string[];
   credential: "api-key" | "api-key-or-native" | "optional-api-key-or-native";
+  apiKeyRequiredModelPrefixes: string[];
 }
 
 export interface MemoryModelCapabilities {
@@ -28,6 +38,7 @@ export interface MemoryModelCapabilities {
   providers: ProviderCapability[];
   settingFields: Record<string, unknown>;
   vlmSchemaSha256: string;
+  adapterContractSha256: string;
   litellmCatalogUrl: string;
 }
 
@@ -44,7 +55,7 @@ export interface ValidatedMemoryModelConfiguration {
 }
 
 export interface OpenVikingLauncherInfo {
-  schemaVersion: 1;
+  schemaVersion: typeof OPENVIKING_RUNTIME_SCHEMA_VERSION;
   launchId: string;
   launcherPid: number;
   controlUrl: string;
@@ -52,7 +63,7 @@ export interface OpenVikingLauncherInfo {
 }
 
 export interface OpenVikingRuntimeState {
-  schemaVersion: 1;
+  schemaVersion: typeof OPENVIKING_RUNTIME_SCHEMA_VERSION;
   launchId: string;
   launcherPid: number;
   operationId?: string;
@@ -144,6 +155,34 @@ export function runtimePaths(root: string, env: NodeJS.ProcessEnv = process.env)
     state: runtimePath(env.PCR_OPENVIKING_STATE, "state.json"),
     lifecycleLock: runtimePath(env.PCR_OPENVIKING_LIFECYCLE_LOCK, "launcher.lock"),
   };
+}
+
+export function openVikingServerAddress(config: unknown): { host: string; port: number } {
+  const server = config && typeof config === "object" && !Array.isArray(config)
+    ? (config as Record<string, unknown>).server
+    : undefined;
+  if (!server || typeof server !== "object" || Array.isArray(server)) {
+    throw new Error("OpenViking configuration requires a server section");
+  }
+  const { host, port } = server as Record<string, unknown>;
+  if (host !== "127.0.0.1" && host !== "localhost" && host !== "::1") {
+    throw new Error("The project launcher only manages a loopback OpenViking server");
+  }
+  if (typeof port !== "number" || !Number.isSafeInteger(port) || port <= 0 || port > 65_535) {
+    throw new Error("OpenViking server.port must be an integer between 1 and 65535");
+  }
+  return { host, port: port as number };
+}
+
+export function configuredOpenVikingBaseUrl(
+  root: string,
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  const override = env.PCR_OPENVIKING_URL?.trim();
+  if (override) return override;
+  const config = JSON.parse(readFileSync(runtimePaths(root, env).baseConfig, "utf8")) as unknown;
+  const { host, port } = openVikingServerAddress(config);
+  return `http://${host.includes(":") ? `[${host}]` : host}:${port}`;
 }
 
 async function readJson(path: string): Promise<unknown> {
@@ -246,7 +285,7 @@ function memoryModelTemplate(capabilities: MemoryModelCapabilities): string {
     "  // 保存有效配置后，在 Pi 中执行 /restart-viking 应用。",
     "  \"memoryModel\": null,",
     "",
-    `  // 扩展在 OpenViking ${capabilities.openVikingVersion} 上验证的记忆模型 Provider：`,
+    `  // 当前 OpenViking ${capabilities.openVikingVersion} 配置适配器识别的 Provider；示例不等于 actual 支持：`,
   ];
   for (const provider of capabilities.providers) {
     const model = provider.name === "azure" ? "<deployment-name>" : provider.name === "litellm" ? "<litellm-provider>/<model-id>" : "<model-id>";
@@ -332,11 +371,10 @@ export async function normalizeMemoryModelSetting(
     throw new Error("Memory model setting must be a JSON object");
   }
   const value = setting as Record<string, unknown>;
-  const knownFields = new Set(["provider", "model", "api_key", "api_base", "api_version"]);
+  const capabilities = await describeMemoryModelCapabilities(root, env);
+  const knownFields = new Set(Object.keys(capabilities.settingFields));
   const unknown = Object.keys(value).filter((field) => !knownFields.has(field)).sort();
   if (unknown.length > 0) throw new Error(`Unknown memory model setting fields: ${unknown.join(", ")}`);
-
-  const capabilities = await describeMemoryModelCapabilities(root, env);
   const provider = typeof value.provider === "string" ? value.provider.trim().toLowerCase() : "";
   const descriptor = capabilities.providers.find((item) => item.name === provider);
   if (!descriptor) throw new Error(provider ? "Unsupported OpenViking VLM provider" : "Memory model provider is required");
@@ -349,8 +387,9 @@ export async function normalizeMemoryModelSetting(
     if (typeof apiKey !== "string" || !apiKey.trim()) throw new Error("api_key must be a non-empty string");
     normalized.api_key = apiKey.trim();
   }
+  const normalizedModel = model.toLowerCase();
   const apiKeyRequired = descriptor.credential === "api-key"
-    || (provider === "litellm" && model.toLowerCase().startsWith("openrouter/"));
+    || descriptor.apiKeyRequiredModelPrefixes.some((prefix) => normalizedModel.startsWith(prefix.toLowerCase()));
   if (apiKeyRequired && !normalized.api_key) {
     throw new Error(`api_key is required for OpenViking provider ${provider}`);
   }
@@ -549,8 +588,10 @@ export async function readLauncherInfo(
   const paths = runtimePaths(root, env);
   const launcher = await readOptionalJson(paths.launcherInfo) as OpenVikingLauncherInfo | undefined;
   if (!launcher) return undefined;
-  const lock = await readOptionalJson(paths.lifecycleLock) as { launchId?: string; launcherPid?: number } | undefined;
+  const lock = await readOptionalJson(paths.lifecycleLock) as { schemaVersion?: number; launchId?: string; launcherPid?: number } | undefined;
   if (!lock) return undefined;
+  if (launcher.schemaVersion !== OPENVIKING_RUNTIME_SCHEMA_VERSION
+    || lock.schemaVersion !== OPENVIKING_RUNTIME_SCHEMA_VERSION) return undefined;
   if (launcher.launchId !== lock.launchId || launcher.launcherPid !== lock.launcherPid) return undefined;
   return processAlive(launcher.launcherPid) ? launcher : undefined;
 }
@@ -574,9 +615,12 @@ export async function readRuntimeState(
   if (!launcher) return undefined;
   const [state, lock] = await Promise.all([
     readOptionalJson(paths.state) as Promise<OpenVikingRuntimeState | undefined>,
-    readOptionalJson(paths.lifecycleLock) as Promise<{ launchId?: string; launcherPid?: number } | undefined>,
+    readOptionalJson(paths.lifecycleLock) as Promise<{ schemaVersion?: number; launchId?: string; launcherPid?: number } | undefined>,
   ]);
   if (!state || !lock) return undefined;
+  if (launcher.schemaVersion !== OPENVIKING_RUNTIME_SCHEMA_VERSION
+    || state.schemaVersion !== OPENVIKING_RUNTIME_SCHEMA_VERSION
+    || lock.schemaVersion !== OPENVIKING_RUNTIME_SCHEMA_VERSION) return undefined;
   if (launcher.launchId !== state.launchId || launcher.launchId !== lock.launchId) return undefined;
   if (launcher.launcherPid !== state.launcherPid || launcher.launcherPid !== lock.launcherPid) return undefined;
   if (!processAlive(launcher.launcherPid)) return undefined;
@@ -633,14 +677,14 @@ export async function requestOpenVikingRestart(
   }
   const operationTimeoutMs = Number.isSafeInteger(launcher.operationTimeoutMs) && launcher.operationTimeoutMs > 0
     ? launcher.operationTimeoutMs
-    : 70_000;
+    : DEFAULT_OPENVIKING_OPERATION_TIMEOUT_MS;
   const operationId = randomUUID();
   let response: { status: number; body: string };
   try {
     response = await postLoopbackJson(
       new URL("/restart", controlUrl),
       { launchId: launcher.launchId, operationId },
-      operationTimeoutMs + 5_000,
+      operationTimeoutMs + OPENVIKING_CONTROL_REQUEST_GRACE_MS,
     );
   } catch (error) {
     const state = await readRuntimeState(root, env);

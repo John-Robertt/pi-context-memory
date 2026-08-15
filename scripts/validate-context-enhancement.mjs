@@ -9,9 +9,18 @@ import { fileURLToPath } from "node:url";
 import {
   assertImplementationEvidenceUnchanged,
   captureImplementationEvidence,
+  STABLE_EVIDENCE_SCHEMA_VERSION,
 } from "./validation-evidence.mjs";
+import {
+  assertValidationPiVersion,
+  readProjectOpenVikingVersion,
+  readValidationSuite,
+} from "./validation-suite.mjs";
 import { FileLongTermMemory } from "../.pi/extensions/pi-context-memory/long-term-memory.ts";
-import { compileOpenVikingConfig } from "../.pi/extensions/pi-context-memory/memory-model-configuration.ts";
+import {
+  compileOpenVikingConfig,
+  OPENVIKING_RUNTIME_SCHEMA_VERSION,
+} from "../.pi/extensions/pi-context-memory/memory-model-configuration.ts";
 import { SessionMemoryCoordinator } from "../.pi/extensions/pi-context-memory/session-memory-coordination.ts";
 import { normalizeCommitResult, normalizeSessionContext } from "../.pi/extensions/pi-context-memory/openviking-protocol.ts";
 import {
@@ -27,6 +36,9 @@ import {
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 if (process.argv.length !== 2) throw new Error("Usage: node scripts/validate-context-enhancement.mjs");
+const suite = readValidationSuite(root);
+const piVersion = assertValidationPiVersion(root);
+const openVikingCompatibilityTarget = readProjectOpenVikingVersion(root);
 const runId = process.env.PCR_RUN_ID ?? `context-enhancement-${new Date().toISOString().replaceAll(/[:.]/g, "-")}`;
 const artifactRoot = join(root, ".artifacts/context-enhancement", runId);
 const fixturePath = join(root, "validation/fixtures/context-enhancement-long-task.json");
@@ -480,9 +492,13 @@ async function runPiAdoptionCase(openViking) {
   symlinkSync(settingsTargetPath, settingsPath);
 
   const launchId = `context-enhancement-${process.pid}`;
-  writeJson(join(runtimeDir, "launcher.lock"), { launchId, launcherPid: process.pid });
+  writeJson(join(runtimeDir, "launcher.lock"), {
+    schemaVersion: OPENVIKING_RUNTIME_SCHEMA_VERSION,
+    launchId,
+    launcherPid: process.pid,
+  });
   writeJson(join(runtimeDir, "launcher.json"), {
-    schemaVersion: 1,
+    schemaVersion: OPENVIKING_RUNTIME_SCHEMA_VERSION,
     launchId,
     launcherPid: process.pid,
     controlUrl: "http://127.0.0.1:1",
@@ -492,7 +508,7 @@ async function runPiAdoptionCase(openViking) {
     activeSettingsFingerprint,
     activeConfigFingerprint = compiledMemoryConfig.configFingerprint,
   ) => writeJson(join(runtimeDir, "state.json"), {
-    schemaVersion: 1,
+    schemaVersion: OPENVIKING_RUNTIME_SCHEMA_VERSION,
     launchId,
     launcherPid: process.pid,
     childPid: process.pid,
@@ -1531,14 +1547,19 @@ try {
 
   assertImplementationEvidenceUnchanged(root, "context-enhancement", implementation);
   const evidence = {
-    schemaVersion: 1,
+    schemaVersion: STABLE_EVIDENCE_SCHEMA_VERSION,
     generatedBy: "scripts/validate-context-enhancement.mjs",
     scope: "local",
     runId,
     startedAt,
     completedAt: new Date().toISOString(),
-    piVersion: "0.84.2",
-    openVikingVersion: "0.4.13-protocol",
+    piVersion,
+    nodeVersion: process.versions.node,
+    piProtocolProfile: suite.host.pi.protocolProfile,
+    openViking: {
+      kind: "controlled-protocol",
+      compatibilityTarget: openVikingCompatibilityTarget,
+    },
     fixture: {
       path: "validation/fixtures/context-enhancement-long-task.json",
       name: fixture.name,

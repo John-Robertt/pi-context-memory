@@ -1,12 +1,25 @@
 import { createHash, randomUUID } from "node:crypto";
 
 import type { SessionIdentity, SourceEntry, SourceRecord } from "./long-term-memory.ts";
-import { OpenVikingHttpClient } from "./openviking-protocol.ts";
+import {
+  DEFAULT_OPENVIKING_REQUEST_TIMEOUT_MS,
+  OpenVikingHttpClient,
+} from "./openviking-protocol.ts";
 import { normalizePiEntry } from "./pi-session-protocol.ts";
 const DEFAULT_NAMESPACE = "viking://resources/pi-context-memory";
-const MAX_INDEX_CHARS = 64_000;
-const SEARCH_PREVIEW_CHARS = 1_200;
-const MAX_BACKEND_CANDIDATES = 100;
+export const RECALL_LIMITS = {
+  queryChars: 2_000,
+  entryIdChars: 256,
+  resultMin: 1,
+  resultMax: 10,
+  resultDefault: 5,
+  expansionMinChars: 1_000,
+  expansionMaxChars: 20_000,
+  expansionDefaultChars: 8_000,
+  sourceIndexChars: 64_000,
+  previewChars: 1_200,
+  backendCandidates: 100,
+} as const;
 
 interface OpenVikingResource {
   uri: string;
@@ -54,7 +67,7 @@ function bounded(value: string, maxChars: number): { content: string; truncated:
 }
 
 function indexedContent(record: SourceRecord): string {
-  const body = bounded(sourceText(record.entry), MAX_INDEX_CHARS);
+  const body = bounded(sourceText(record.entry), RECALL_LIMITS.sourceIndexChars);
   return [
     "# Pi session source",
     `entry_type: ${record.entry.type}`,
@@ -71,9 +84,9 @@ export class OpenVikingSourceRecall {
   private readonly inFlight = new Map<string, { contentSha256: string; promise: Promise<void> }>();
 
   constructor(
-    baseUrl = "http://127.0.0.1:1933",
+    baseUrl: string,
     apiKey?: string,
-    timeoutMs = 30_000,
+    timeoutMs = DEFAULT_OPENVIKING_REQUEST_TIMEOUT_MS,
     namespace = DEFAULT_NAMESPACE,
   ) {
     this.client = new OpenVikingHttpClient(baseUrl, apiKey, timeoutMs);
@@ -253,7 +266,10 @@ export class OpenVikingSourceRecall {
     if (currentByUri.size === 0) {
       return { hits: [], backendCandidates: 0, currentRouteCandidates: 0 };
     }
-    const backendLimit = Math.min(MAX_BACKEND_CANDIDATES, Math.max(20, limit * 5));
+    const backendLimit = Math.min(
+      RECALL_LIMITS.backendCandidates,
+      Math.max(RECALL_LIMITS.resultMax * 2, limit * 5),
+    );
     const response = await this.client.request("POST", "/api/v1/search/find", {
       query,
       target_uri: [...currentByUri.keys()],
@@ -282,7 +298,7 @@ export class OpenVikingSourceRecall {
       seen.add(candidate.uri);
       currentRouteCandidates += 1;
       if (hits.length >= limit) continue;
-      const preview = bounded(sourceText(source.entry), SEARCH_PREVIEW_CHARS);
+      const preview = bounded(sourceText(source.entry), RECALL_LIMITS.previewChars);
       hits.push({
         entryId: source.source.entryId,
         score: candidate.score,

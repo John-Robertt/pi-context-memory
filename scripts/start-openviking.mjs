@@ -10,9 +10,14 @@ import { dirname, join, resolve } from "node:path";
 
 import {
   atomicWriteJson,
+  DEFAULT_OPENVIKING_READINESS_TIMEOUT_MS,
+  DEFAULT_OPENVIKING_STOP_TIMEOUT_MS,
   compileOpenVikingConfig,
   MemoryModelConfigurationError,
   OPENVIKING_CONFIG_BRIDGE_TIMEOUT_MS,
+  OPENVIKING_CONTROL_REQUEST_GRACE_MS,
+  OPENVIKING_RUNTIME_SCHEMA_VERSION,
+  openVikingServerAddress,
   readMemoryModelSetting,
   readOptionalJson,
   runtimePaths,
@@ -23,9 +28,18 @@ const paths = runtimePaths(root);
 const serverExecutable = process.env.PCR_OPENVIKING_SERVER ?? (process.platform === "win32"
   ? join(root, ".venv", "Scripts", "openviking-server.exe")
   : join(root, ".venv", "bin", "openviking-server"));
-const readinessTimeoutMs = positiveInteger(process.env.PCR_OPENVIKING_READINESS_TIMEOUT_MS, 30_000);
-const stopTimeoutMs = positiveInteger(process.env.PCR_OPENVIKING_STOP_TIMEOUT_MS, 5_000);
-const operationTimeoutMs = OPENVIKING_CONFIG_BRIDGE_TIMEOUT_MS + (4 * stopTimeoutMs) + readinessTimeoutMs + 5_000;
+const readinessTimeoutMs = positiveInteger(
+  process.env.PCR_OPENVIKING_READINESS_TIMEOUT_MS,
+  DEFAULT_OPENVIKING_READINESS_TIMEOUT_MS,
+);
+const stopTimeoutMs = positiveInteger(
+  process.env.PCR_OPENVIKING_STOP_TIMEOUT_MS,
+  DEFAULT_OPENVIKING_STOP_TIMEOUT_MS,
+);
+const operationTimeoutMs = OPENVIKING_CONFIG_BRIDGE_TIMEOUT_MS
+  + (4 * stopTimeoutMs)
+  + readinessTimeoutMs
+  + OPENVIKING_CONTROL_REQUEST_GRACE_MS;
 const launchId = randomUUID();
 const intentionalStops = new WeakSet();
 let child;
@@ -68,7 +82,7 @@ function pidAlive(pid) {
 async function acquireLifecycleLock() {
   try {
     lifecycleLockHandle = await open(paths.lifecycleLock, "wx", 0o600);
-    await lifecycleLockHandle.writeFile(`${JSON.stringify({ schemaVersion: 1, launchId, launcherPid: process.pid })}\n`, "utf8");
+    await lifecycleLockHandle.writeFile(`${JSON.stringify({ schemaVersion: OPENVIKING_RUNTIME_SCHEMA_VERSION, launchId, launcherPid: process.pid })}\n`, "utf8");
     await lifecycleLockHandle.sync();
   } catch (error) {
     if (lifecycleLockHandle) {
@@ -112,25 +126,10 @@ async function portIsOpen(host, port) {
   });
 }
 
-function serverAddress(config) {
-  const server = config.server;
-  if (!server || typeof server !== "object" || Array.isArray(server)) {
-    throw new Error("OpenViking configuration requires a server section");
-  }
-  const host = server.host;
-  const port = server.port;
-  if (host !== "127.0.0.1" && host !== "localhost" && host !== "::1") {
-    throw new Error("The project launcher only manages a loopback OpenViking server");
-  }
-  if (!Number.isSafeInteger(port) || port <= 0 || port > 65535) {
-    throw new Error("OpenViking server.port must be an integer between 1 and 65535");
-  }
-  return { host, port };
-}
 
 async function publishState(update) {
   const state = {
-    schemaVersion: 1,
+    schemaVersion: OPENVIKING_RUNTIME_SCHEMA_VERSION,
     launchId,
     launcherPid: process.pid,
     ...update,
@@ -273,7 +272,7 @@ async function waitUntilReady(target, address) {
 async function applyCandidate(candidate, initial, operationId) {
   let address;
   try {
-    address = serverAddress(candidate.config);
+    address = openVikingServerAddress(candidate.config);
     if (initial) {
       if (await portIsOpen(address.host, address.port)) {
         throw new Error(`OpenViking port ${address.host}:${address.port} is occupied by an unowned process`);
@@ -503,7 +502,7 @@ async function main() {
   const address = controlServer.address();
   if (!address || typeof address === "string") throw new Error("OpenViking launcher did not obtain a control port");
   await atomicWriteJson(paths.launcherInfo, {
-    schemaVersion: 1,
+    schemaVersion: OPENVIKING_RUNTIME_SCHEMA_VERSION,
     launchId,
     launcherPid: process.pid,
     controlUrl: `http://127.0.0.1:${address.port}`,

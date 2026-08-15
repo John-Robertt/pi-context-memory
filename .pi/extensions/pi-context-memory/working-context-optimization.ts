@@ -1,5 +1,8 @@
 import type { SourceEntry } from "./long-term-memory.ts";
-import type { NormalizedOpenVikingMessage } from "./openviking-protocol.ts";
+import {
+  DEFAULT_OPENVIKING_REQUEST_TIMEOUT_MS,
+  type NormalizedOpenVikingMessage,
+} from "./openviking-protocol.ts";
 import { currentUserMessageIndex } from "./pi-session-protocol.ts";
 import {
   OpenVikingSessionMemory,
@@ -100,9 +103,9 @@ export class WorkingContextOptimizer {
   private readonly maxContextChars: number;
 
   constructor(
-    baseUrl = "http://127.0.0.1:1933",
+    baseUrl: string,
     apiKey?: string,
-    requestTimeoutMs = 30_000,
+    requestTimeoutMs = DEFAULT_OPENVIKING_REQUEST_TIMEOUT_MS,
     options: WorkingContextOptions = {},
   ) {
     this.maxContextChars = positiveInteger(options.maxContextChars, DEFAULT_MAX_CONTEXT_CHARS, "Context character limit");

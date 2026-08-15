@@ -4,7 +4,7 @@ version = "0.0.0"
 requires-python = ">=3.12,<3.13"
 dependencies = [
   "openviking[local-embed]==0.4.13",
-  "xxhash<4", # OpenViking 0.4.13 passes text values to the xxhash 3.x API.
+  "xxhash<4", # Keep until the locked OpenViking passes adapter/runtime validation with xxhash 4.
 ]
 
 [tool.uv]

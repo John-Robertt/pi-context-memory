@@ -9,6 +9,7 @@ import {
   atomicWriteJson,
   compileOpenVikingConfig,
   OPENVIKING_CONFIG_BRIDGE_TIMEOUT_MS,
+  OPENVIKING_RUNTIME_SCHEMA_VERSION,
   describeMemoryModelCapabilities,
   ensureMemoryModelConfig,
   memoryModelConfigContentFingerprint,
@@ -21,14 +22,26 @@ import {
 import {
   assertImplementationEvidenceUnchanged,
   captureImplementationEvidence,
+  STABLE_EVIDENCE_SCHEMA_VERSION,
 } from "./validation-evidence.mjs";
-import { createIsolatedPiProviderCredential } from "./validation-model-config.mjs";
+import {
+  assertValidationPiVersion,
+  createIsolatedPiProviderCredential,
+  readProjectOpenVikingVersion,
+} from "./validation-suite.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 if (process.argv.length !== 2) throw new Error("Usage: node scripts/validate-memory-model-runtime.mjs");
-const expectedPiVersion = "0.84.2";
-const piVersion = spawnSync("pi", ["--version"], { encoding: "utf8" }).stdout.trim();
-if (piVersion !== expectedPiVersion) throw new Error(`Memory model validation requires Pi ${expectedPiVersion}; found ${piVersion || "unavailable"}`);
+const piVersion = assertValidationPiVersion(root);
+const expectedOpenVikingVersion = readProjectOpenVikingVersion(root);
+const adapterContract = JSON.parse(readFileSync(join(root, "config/openviking-adapter-contract.json"), "utf8"));
+if (adapterContract?.schemaVersion !== 1 || !Array.isArray(adapterContract.providers)) {
+  throw new Error("OpenViking adapter contract is invalid");
+}
+const expectedProviders = adapterContract.providers.map((descriptor) => descriptor.name);
+const pythonCommand = process.platform === "win32"
+  ? join(root, ".venv/Scripts/python.exe")
+  : join(root, ".venv/bin/python");
 const runId = process.env.PCR_RUN_ID ?? `memory-model-runtime-${new Date().toISOString().replaceAll(/[:.]/g, "-")}`;
 const artifactRoot = join(root, ".artifacts/memory-model-runtime", runId);
 const evidencePath = join(root, "validation/evidence/memory-model-runtime.json");
@@ -149,7 +162,7 @@ const server = createServer((request, response) => {
   const delayed = model === "slow-ready" && Date.now() - started < 500;
   const unavailable = model.startsWith("never-ready") || delayed;
   response.writeHead(unavailable ? 503 : 200, { "content-type": "application/json" });
-  response.end(JSON.stringify({ status: unavailable ? "starting" : "ok", healthy: !unavailable, version: "0.4.13" }));
+  response.end(JSON.stringify({ status: unavailable ? "starting" : "ok", healthy: !unavailable, version: ${JSON.stringify(expectedOpenVikingVersion)} }));
 });
 server.listen(config.server.port, config.server.host);
 if (model.includes("ignore-term")) process.on("SIGTERM", () => undefined);
@@ -316,18 +329,14 @@ async function validateConfiguration() {
     && unavailableCredentialError?.includes("authenticate with /login openrouter")
     && !unavailableCredentialError.includes("unavailable-secret-output");
   const providers = capabilities.providers.map((item) => item.name);
-  const expectedProviders = ["volcengine", "openai", "azure", "kimi", "glm", "litellm", "openai-codex"];
-  const supportedProviderSurface = JSON.stringify(providers) === JSON.stringify(expectedProviders);
-  const schemaObserved = capabilities.openVikingVersion === "0.4.13"
-    && typeof capabilities.vlmSchemaSha256 === "string"
-    && Object.keys(capabilities.settingFields).sort().join(",") === "api_base,api_key,api_version,model,provider";
-  const bridgeSource = readFileSync(join(root, "scripts/openviking-config.py"), "utf8");
-  const upstreamProviderAdditionsTolerated = !bridgeSource.includes("get_all_provider_names")
-    && !bridgeSource.includes("PROVIDER_CONFIGS")
-    && !bridgeSource.includes("EXPLICIT_LITELLM_PREFIXES");
-  const litellmCatalogObserved = capabilities.litellmCatalogUrl === "https://docs.litellm.ai/docs/providers";
+  const reviewedConfigurationAdapterSurface = JSON.stringify(providers) === JSON.stringify(expectedProviders);
+  const schemaObserved = capabilities.openVikingVersion === expectedOpenVikingVersion
+    && capabilities.vlmSchemaSha256 === adapterContract.vlmSchemaSha256
+    && typeof capabilities.adapterContractSha256 === "string"
+    && Object.keys(capabilities.settingFields).sort().join(",") === [...adapterContract.settingFields].sort().join(",");
+  const litellmCatalogObserved = capabilities.litellmCatalogUrl === adapterContract.litellmCatalogUrl;
   const adapterProbe = spawnSync(
-    process.platform === "win32" ? join(root, ".venv/Scripts/python.exe") : join(root, ".venv/bin/python"),
+    pythonCommand,
     [join(root, "scripts/validate-openviking-vlm-adapters.py")],
     { cwd: root, encoding: "utf8", env: process.env },
   );
@@ -366,6 +375,11 @@ async function validateConfiguration() {
     PCR_OPENVIKING_BASE_CONFIG: basePath,
     [VALIDATION_API_KEY_ENV]: VALIDATION_API_KEY,
   };
+  const unreviewedProviderRejected = Boolean(await expectFailure(() => compileOpenVikingConfig(
+    root,
+    { provider: "unreviewed-provider", model: "validation", api_key: VALIDATION_API_KEY_REFERENCE },
+    env,
+  )));
   const compiled = [];
   for (const descriptor of capabilities.providers) {
     const setting = { provider: descriptor.name, model: descriptor.name === "litellm" ? "bedrock/validation" : "validation-model" };
@@ -421,7 +435,7 @@ async function validateConfiguration() {
   writeJson(referenceConfigPath, referencedApiKey.config);
   writeJson(bracedReferenceConfigPath, bracedReferencedApiKey.config);
   const loaderProbe = spawnSync(
-    process.platform === "win32" ? join(root, ".venv/Scripts/python.exe") : join(root, ".venv/bin/python"),
+    pythonCommand,
     [
       "-c",
       "import json,sys; from pathlib import Path; from openviking_cli.utils.config.config_loader import load_json_config; print(json.dumps([load_json_config(Path(path))['vlm']['api_key'] for path in sys.argv[1:]]))",
@@ -578,8 +592,8 @@ async function validateConfiguration() {
   return {
     checks: {
       adapterProtocolsCovered,
-      supportedProviderSurface,
-      upstreamProviderAdditionsTolerated,
+      reviewedConfigurationAdapterSurface,
+      unreviewedProviderRejected,
       schemaObserved,
       litellmCatalogObserved,
       generatedConfigParsed,
@@ -976,7 +990,7 @@ async function validateOwnershipBoundaries() {
     writeJson(staleBase, baseConfig(await freePort(), join(staleDir, "data")));
     const staleEnv = validationEnvironment(staleDir, staleBase, fakeServer);
     await atomicWriteJson(staleEnv.PCR_OPENVIKING_LAUNCHER_INFO, {
-      schemaVersion: 1,
+      schemaVersion: OPENVIKING_RUNTIME_SCHEMA_VERSION,
       launchId: "not-this-launch",
       launcherPid: process.pid,
       controlUrl: "http://127.0.0.1:1",
@@ -992,7 +1006,7 @@ async function validateOwnershipBoundaries() {
     writeJson(staleLockBase, baseConfig(await freePort(), join(staleLockDir, "data")));
     const staleLockEnv = validationEnvironment(staleLockDir, staleLockBase, fakeServer);
     const staleLockPath = join(staleLockEnv.PCR_OPENVIKING_RUNTIME_DIR, "launcher.lock");
-    await atomicWriteJson(staleLockPath, { schemaVersion: 1, launchId: "dead-launch", launcherPid: 999_999_999 });
+    await atomicWriteJson(staleLockPath, { schemaVersion: OPENVIKING_RUNTIME_SCHEMA_VERSION, launchId: "dead-launch", launcherPid: 999_999_999 });
     const staleLockLauncher = startLauncher(staleLockEnv);
     staleLockLauncher.stdout.resume();
     staleLockLauncher.stderr.resume();
@@ -1036,19 +1050,19 @@ async function validateOwnershipBoundaries() {
     if (!resetAddress || typeof resetAddress === "string") throw new Error("Reconciliation server did not obtain a port");
     const reconciliationLaunchId = "reconciliation-launch";
     await atomicWriteJson(join(reconciliationEnv.PCR_OPENVIKING_RUNTIME_DIR, "launcher.lock"), {
-      schemaVersion: 1,
+      schemaVersion: OPENVIKING_RUNTIME_SCHEMA_VERSION,
       launchId: reconciliationLaunchId,
       launcherPid: process.pid,
     });
     await atomicWriteJson(reconciliationEnv.PCR_OPENVIKING_LAUNCHER_INFO, {
-      schemaVersion: 1,
+      schemaVersion: OPENVIKING_RUNTIME_SCHEMA_VERSION,
       launchId: reconciliationLaunchId,
       launcherPid: process.pid,
       controlUrl: `http://127.0.0.1:${resetAddress.port}`,
       operationTimeoutMs: 100,
     });
     await atomicWriteJson(reconciliationEnv.PCR_OPENVIKING_STATE, {
-      schemaVersion: 1,
+      schemaVersion: OPENVIKING_RUNTIME_SCHEMA_VERSION,
       launchId: reconciliationLaunchId,
       launcherPid: process.pid,
       childPid: process.pid,
@@ -1082,14 +1096,17 @@ const checks = { ...configuration.checks, ...launcher.checks, ...ownership.check
 const passed = Object.values(checks).every(Boolean);
 const completedAt = new Date().toISOString();
 const rawEvidence = {
-  schemaVersion: 1,
+  schemaVersion: STABLE_EVIDENCE_SCHEMA_VERSION,
   generatedBy: "scripts/validate-memory-model-runtime.mjs",
   scope: "local",
   runId,
   startedAt,
   completedAt,
   piVersion,
+  nodeVersion: process.versions.node,
   openVikingVersion: configuration.capabilities.openVikingVersion,
+  vlmSchemaSha256: configuration.capabilities.vlmSchemaSha256,
+  adapterContractSha256: configuration.capabilities.adapterContractSha256,
   implementation,
   passed,
   checks,
@@ -1103,10 +1120,14 @@ assertImplementationEvidenceUnchanged(root, "memory-model-runtime", implementati
 replaceJson(evidencePath, {
   schemaVersion: rawEvidence.schemaVersion,
   generatedBy: rawEvidence.generatedBy,
+  scope: rawEvidence.scope,
   runId,
   recordedAt: completedAt,
   piVersion,
+  nodeVersion: rawEvidence.nodeVersion,
   openVikingVersion: rawEvidence.openVikingVersion,
+  vlmSchemaSha256: rawEvidence.vlmSchemaSha256,
+  adapterContractSha256: rawEvidence.adapterContractSha256,
   implementation,
   passed,
   checks,

@@ -17,13 +17,28 @@
 
 文件缺失时，长时记忆模块原子独占创建 `0600` JSONC 模板；已有文件只读解析，不自动覆盖，并在读取时收紧为 `0600`。语法和语义诊断保留定位信息，凭据值不进入诊断。
 
-运行配置由项目基础配置和有效用户配置编译为可重建的项目内 `0600` 文件。运行状态区分目标配置、实际子进程、服务 readiness、模型能力证明和任务请求能力；这些生成文件不承担业务事实权威。
+运行配置由项目基础配置、有效用户目标和匹配的内部 `MemoryRuntimeProfile` 编译为可重建的项目内 `0600` 文件。运行状态区分目标配置、profile、实际子进程、服务 readiness、模型能力证明和任务请求能力；这些生成文件不承担业务事实权威。
 
-## 3. 配置转换规则
+## 3. 用户配置与内部运行 profile
 
-扩展维护稳定、最小的用户配置面，并通过 [`../contracts/openviking-adapter.md`](../contracts/openviking-adapter.md) 转换为当前 OpenViking 配置。转换只依赖 OpenViking 聚合配置校验入口，不复制上游完整 Provider registry 或 backend 内部路由表。
+用户配置只选择记忆 Provider、模型、凭据引用和无法推导的必要连接字段。扩展通过 [`../contracts/openviking-adapter.md`](../contracts/openviking-adapter.md) 把精确 Provider/模型/API 映射到项目内置的 `MemoryRuntimeProfile`，再生成 OpenViking 配置；不复制上游完整 registry，也不允许任意字段透传。
 
-用户模型 ID 按所选 Provider 语义进入生成配置。LiteLLM 使用其来源路由；`thinking`、reasoning、temperature 等参数只有在目标适配器最终请求得到验证后才形成契约。
+```text
+MemoryRuntimeProfile = {
+  profileVersion,
+  provider, model, api,
+  thinking, temperature, stream, maxInput, maxOutput,
+  requestTimeout, maxRetries, maxConcurrency,
+  capabilityLeaseTtl, renewalLead,
+  adapterVersion
+}
+```
+
+每个字段都有当前运行责任：请求参数和 input/output 界限约束记忆生成的确定性与单次模型边界；timeout、retry 与 concurrency 约束同一模型坐标内的失败和排队；租约及提前续租使能力证明在慢模型下仍可连续。profile 不含凭据、存储路径、任务模型预算、来源策略或 Provider fallback。retry 只能重试相同 Provider/模型/API，不得切换备选模型。
+
+只有目标 adapter 的最终实际请求和 Working Memory 纵向链路已证明 profile 全部字段生效时，该精确组合才能进入支持矩阵。无法可靠施加的参数不能写入 profile 承诺；OpenViking 隐式默认值不构成产品配置。用户目标无法匹配已验证 profile 时，配置诊断为 unsupported，不启动伪兼容运行。
+
+运行配置指纹同时绑定用户目标、profile 指纹和 adapter 版本。profile 代码变化属于待应用运行目标，只有显式重启和实际能力探针成功后进入 active 代际；当前 ready 实例继续使用自己的已绑定 profile。
 
 配置 schema 成功只证明 OpenViking 能够加载目标设置，不证明具体模型能够完成 Working Memory。任务请求能力需要独立的实际能力探针。
 
@@ -34,6 +49,9 @@
 ```text
 targetConfig
   用户请求应用的配置指纹
+
+targetProfile
+  目标 Provider/模型/API 对应的 MemoryRuntimeProfile 指纹
 
 activeProcess
   启动器实际拥有的 launchId + childPid
@@ -48,9 +66,9 @@ requestReady
   activeProcess、serviceReady 和未过期 memoryCapability 同时代际一致
 ```
 
-用户配置与长时记忆模块拥有 targetConfig；项目启动器拥有 activeProcess 和 serviceReady；长时记忆模块拥有 memoryCapability；Session 记忆协调只有在四项绑定一致且证明未过期时发布 requestReady。
+用户配置与长时记忆模块拥有 targetConfig/targetProfile；项目启动器拥有 activeProcess、其实际配置/profile 指纹和 serviceReady；长时记忆模块拥有 memoryCapability；Session 记忆协调只有在 active 进程、active profile、服务和未过期能力证明绑定一致时发布 requestReady。
 
-运行代际由启动器身份、子进程身份、active 配置指纹和能力证明共同构成。任何字段变化都创建新代际；旧代 pending、ready context 和请求证明不得进入新代际。
+运行代际由启动器身份、子进程身份、active 配置指纹、active profile 指纹和 adapter 版本共同构成。memoryCapability 是该代际内可续租证明；续租只更新 proof ID 与 `validUntil`，不创建新代际。启动器、子进程、active 配置/profile 或 adapter 变化才创建新代际，旧代 checkpoint、refresh、请求证明和能力租约不得进入新代际。
 
 Pi 集成只消费 Session 记忆协调发布的 `requestReady` 代际。用户配置文件变化本身不改变 active 代际。
 
@@ -65,13 +83,13 @@ Pi 集成只消费 Session 记忆协调发布的 `requestReady` 代际。用户�
 5. 取得 context assembly；
 6. 核对非空、可识别、来源完整且不含通用失败内容的结果；
 7. 删除探针 Session；
-8. 发布模型、配置、子进程、协议版本、探针实现和 `validUntil` 共同绑定的能力证明。
+8. 发布 Provider、模型、API、配置、`MemoryRuntimeProfile`、子进程、协议版本、探针实现、实际请求证据和 `validUntil` 共同绑定的能力证明。
 
-能力证明按有界租约维护。当前代际中实际完成并通过 assembly 核验的业务 Working Memory task 可以续租；没有此类结果时，在租约到期前执行隔离续租探针。任务请求遇到临近或已到期证明时等待续租结果，不使用过期证明。
+能力证明按 profile 定义的有界租约维护。进入 `renewalLead` 时立即在后台续租：同代际中实际完成、通过 assembly 核验并发布 MemoryCheckpoint 的业务 accepted task 可以续租；没有此类结果时执行隔离探针。旧证明在 `validUntil` 前保持有效，因此临近到期不会阻断任务；只有证明已经到期且续租仍未完成时，请求才等待同一个续租屏障。续租成功原子延长当前代际证明，失败或达到 profile request timeout 时锁存能力故障。
 
 `/health`、`/ready`、配置加载、模型对象创建或 `skipped` no-op 不能单独证明记忆模型能力。探针必须确认实际模型调用成功，并把 token 与费用归入运行观测。
 
-探针使用有界输入、期限和清理流程。探针失败形成脱敏、可归因的故障，不发布 `requestReady`。
+探针使用固定有界输入、MemoryRuntimeProfile 的请求与重试边界和有界清理流程。慢但在 profile 支持边界内成功的实际调用必须完成；失败形成脱敏、可归因的故障，不发布 `requestReady`。
 
 ## 6. 正常控制流
 
@@ -79,13 +97,13 @@ Pi 集成只消费 Session 记忆协调发布的 `requestReady` 代际。用户�
 /memory-model
   → 确保用户模板存在
   → 解析并校验 memoryModel
-  → 读取目标配置、active 进程、服务和能力状态
+  → 读取目标配置/profile、active 进程/profile、服务和能力状态
   → 显示配置、运行实例、能力证明与故障诊断
 
 /restart-viking
   → 启动器串行接受应用请求
-  → 重新读取并预检用户配置
-  → 生成受限权限运行配置
+  → 重新读取用户目标，匹配受支持 MemoryRuntimeProfile 并完成预检
+  → 生成绑定 profile 指纹的受限权限运行配置
   → 确认目标端口和实例所有权
   → 停止当前启动器拥有的旧子进程
   → 启动新子进程并等待服务 readiness
@@ -117,38 +135,40 @@ Pi 集成只消费 Session 记忆协调发布的 `requestReady` 代际。用户�
 
 以下情况不发布任务请求能力：
 
-- 配置解析、schema 或必要字段失败；
+- 配置解析、schema、必要字段或受支持 MemoryRuntimeProfile 匹配失败；
 - 凭据引用未设置或认证失败；
 - Launcher 所有权、锁或目标端口不满足条件；
 - 子进程停止、启动失败或 readiness 超时；
 - 实际记忆模型能力探针失败；
-- 当前 active 进程与能力证明代际不一致；
+- 当前 active 进程、配置/profile 指纹、adapter 与能力证明代际不一致；
 - 能力证明到期且续租探针未成功。
 
-启动器可以为诊断、来源恢复或重新配置保留不含任务请求能力的基础服务，但 Pi 集成必须将该状态视为初始化或故障，不能发送任务模型请求。
+启动器可为诊断、来源恢复或重新配置保留不含任务请求能力的基础服务；Pi 集成在该状态不确认增强输出并调用 abort，handler 返回与 transport 实际结果分别观测。
 
 运行中的 OpenViking 请求在重启时以受控失败结束。Session 记忆协调锁存旧代故障，新代验证通过后从当前 Pi branch 重建；系统不复用旧代结果或自动发送用户 prompt。
 
 ## 9. 观测与安全
 
-运行状态和日志可以保存：Provider、模型、配置指纹、launchId、childPid、阶段、错误码、期限、探针 token、任务 ID 和内容哈希。
+运行状态和日志可以保存：Provider、模型、API、配置与 profile 指纹、adapter 版本、launchId、childPid、阶段、错误码、期限、探针 token、任务 ID 和内容哈希。
 
 以下内容不得保存或回显：API key、OAuth token、云凭据、认证响应、完整任务 payload 和完整探针响应。
 
-配置加载、服务 readiness、模型能力、运行代际、请求授权和最终 Provider 采用分别观测。任何一项不能由其它状态推断。
+配置加载、readiness、记忆模型能力、运行代际、本扩展授权、hook 时点证明和 transport 最终采用分别观测，不能相互推断。
 
 ## 10. 验证与校准
 
 设计成立需要证明：
 
-- 所有受支持配置均能通过当前 OpenViking 配置入口；
+- 所有受支持用户配置都能精确匹配具有 actual 证据的 MemoryRuntimeProfile，并由当前 OpenViking 配置入口加载；
+- profile 的 thinking、temperature、stream、输出、timeout、retry、concurrency 与租约字段在最终实际记忆请求中生效，且不存在 Provider/model fallback；
 - 用户文件权限、内容所有权和凭据保密边界成立；
 - `/memory-model` 准确展示相互独立的运行事实；
 - `/restart-viking` 保持实例所有权、并发和失败清理不变量；
 - 服务 readiness 成功但模型能力失败时不发布请求能力；
 - 能力探针确实触发目标记忆模型并验证 Working Memory 结果；
+- 租约进入 renewalLead 后后台续租且旧证明继续授权，到期后才建立续租屏障；业务检查点续租与隔离探针语义一致；
 - 当前 ready 实例不受未应用配置变化影响；
-- 配置、服务、能力和代际失败时任务 Provider 请求数不增加；
+- 配置、服务、能力和代际失败时，本扩展不确认增强输出并调用 abort；transport 结果独立观测；
 - 新代际只采用从当前 Pi branch 重建的结果；
 - 能力探针与正常记忆调用的 token 和成本可归属。
 

@@ -17,12 +17,10 @@ Pi session entry 仍是事实权威；来源文件由 `long-term-memory.ts` 管�
 └── <session-key>/
     ├── session.json
     ├── sources/<entry-key>.json
-    └── large-results/
-        ├── blobs/<content-sha256>.bin
-        └── records/<entry-key>.json
+    └── large-results/blobs/<content-sha256>.bin
 ```
 
-`session.json` 保存 session ID 与绝对 session file。来源记录是 `message-source | control-boundary`：前者保存 schema 版本、来源引用、原始 Pi message entry 和内容哈希；后者只保存 compaction/branch summary 的 type、ID、parent 与边界引用，不保存 summary、retainedTail、details 或 usage。完整结果流式复制到内容寻址 blob，再由 entry 元数据原子发布；读取重新核对字节数与 SHA-256。
+`session.json` 保存 session ID 与绝对 session file。`sources/<entry-key>.json` 是唯一来源元数据：message-source 保存 schema/规范化版本、来源引用、Provider role、taskContent、completion、taskContent/authority hash 与可选 fullOutputRef；control-boundary 只存 summary entry 身份。仅全-text 单元可归档，mixed/image 整单元 opaque；thinking/private metadata/locator、excluded bash、扩展私有内容和 summary 不复制。FullOutputCandidate 只在流式复制时存在；blob 完成后才原子发布 fullOutputRef，读取重验大小和 SHA-256。
 
 目录键和文件键由身份哈希派生。目录仅当前用户可访问，文件仅当前用户可读写。验证可通过受控环境变量把数据写入仓库 `.artifacts/`。
 
@@ -40,8 +38,8 @@ Pi session entry 仍是事实权威；来源文件由 `long-term-memory.ts` 管�
 
 1. session ID 和 session file 与目标归档一致；
 2. entry 来自当前 Pi branch；
-3. 同一 entry ID 的内容和哈希稳定一致；
-4. 完整结果元数据只有在 blob 完整写入后发布；
+3. 同一 entry ID 的规范化版本、task-content、完成状态、task-content hash、authority hash 和 fullOutputRef 稳定一致；
+4. 含 fullOutputRef 的 source record 只有在 blob 完整写入后发布，不存在第二份 entry metadata；
 5. 读取结果重新核对大小、哈希和 entry 身份；
 6. 损坏、缺失或身份不匹配的记录不作为可恢复来源；
 7. control-boundary 的序列化结果中不存在 summary 或 retainedTail 内容。
@@ -54,6 +52,8 @@ Pi session entry 仍是事实权威；来源文件由 `long-term-memory.ts` 管�
 
 用户配置只读解析；缺失模板以 `0600` 原子创建。直接凭据和环境引用原样进入受限运行配置，凭据值不进入状态、日志、evidence 或 Pi session。
 
+用户配置只选择 Provider、模型、凭据引用和必要连接字段。模块按 [`../system/memory-model-runtime.md`](../system/memory-model-runtime.md) 的唯一 `MemoryRuntimeProfile` 定义匹配精确 Provider/模型/API，再编译 OpenViking 运行配置；用户不能用任意透传字段改变 profile，无法匹配的配置不进入支持范围。
+
 模块区分：
 
 - 配置能够解析；
@@ -62,24 +62,44 @@ Pi session entry 仍是事实权威；来源文件由 `long-term-memory.ts` 管�
 - 记忆模型实际完成 Working Memory；
 - 当前代际具备任务请求能力。
 
-实际能力证明来自隔离 Session 的生产协议探针，绑定 launchId、childPid、模型、配置指纹、协议版本、探针实现和 `validUntil`。同代际业务 accepted task 只有在完整 assembly 核验后续租；`health`、`ready`、模型对象存在或过期证明不能建立任务请求能力。
+实际能力证明来自隔离 Session 的生产协议探针，绑定 launchId、childPid、模型、配置指纹、`MemoryRuntimeProfile` 指纹、协议版本、探针实现和 `validUntil`。同代际业务 accepted task 只有在完整 assembly 核验并发布新检查点后续租；`health`、`ready`、模型对象存在或过期证明不能建立任务请求能力。
 
-## 5. OpenViking Session Working Memory
+## 5. OpenViking Session 与派生记忆检查点
 
-Session Working Memory 只接收 Session 记忆协调核验过的完整路线身份和 Pi 集成规范化结果：
+OpenViking Session 只接收 Session 记忆协调核验过的完整路线身份和 Pi 集成发布的 MessageSource/ControlBoundary。线性后继在同一镜像追加增量；分叉、session replacement 或有效前缀变化使用隔离镜像；ControlBoundary 只贡献无文本路线身份。
 
-- 线性后继在同一镜像追加新增 entry；
-- 分叉、session replacement 或有效前缀变化使用隔离镜像；
-- compaction 与 branch summary entry 只贡献路线边界身份，其 summary 文本不发送给 OpenViking task 或 context 接口；
-- 权威 message entry ID 通过来源字段进入 OpenViking；
-- batch append、commit、task polling 和 context assembly 统一经过适配契约；
-- 同一精确路线共享准备任务；
-- pending、ready 和镜像数量有固定上限；
-- 迟到结果只属于创建它的运行代际和路线。
+本模块发布的 `MemoryCheckpoint` 是可重建派生结果：
 
-commit 接受 `accepted + task ID` 或 `skipped + 空 task ID`。`skipped` 只表示本次没有触发记忆提取，保留来源核验的 active history；它不能单独建立记忆模型能力证明。
+```text
+MemoryCheckpoint = {
+  generation,
+  coveredRoutePrefixKey,
+  coveredThroughEntryId,
+  retentionBudgetIdentity,
+  sourceIds,
+  workingMemory,
+  activeHistory,
+  assemblyHash,
+  producedUnderCapabilityProofId
+}
+```
 
-accepted Working Memory task 完成并通过 assembly 核验前不发布路线结果；`skipped` 可以使用既有 Working Memory 与来源核验 active history，但不能续租能力证明。每个已启动 task 必须观察终态；ready 运行中的失败、取消、超时或 assembly 失败使当前运行代际进入能力故障，stopping 期间由扩展发起的取消只完成清理。
+`RefreshTarget` 由 [`session-memory-coordination.md`](session-memory-coordination.md) 拥有，其中 `retentionBudgetIdentity` 由工作上下文优化的预算算法产生。本模块把 target 视为不可拆分身份，只执行或复用完全相同的目标，并把该 identity 写入发布的检查点。
+
+检查点只能覆盖与 assembly 请求完全一致、且不跨越 OpaqueProviderSegment 的路线前缀；其中 Working Memory 与 active history 均通过 OpenViking 适配器限界并回到当前 MessageSource。合法空历史使用扩展本地空检查点。检查点内容由本模块拥有，Session 记忆协调只持有身份、兼容关系和刷新状态。
+
+OpenViking append 只使用 MessageSource 的 taskContent、完成状态、source ID，以及同 entry 来源记录中 fullOutputRef 的有界存在性/哈希标记；不读取 thinking、私有 metadata、OpaqueProviderSegment、FullOutputCandidate、本机路径或完整结果 blob。刷新 retention 依据 `MemoryRuntimeProfile.maxInput` 与预算版本分段，adapter 在 commit 前验证单次模型输入有界；Pi 已截断结果的完整正文继续留在来源 blob。任一不可拆分 MessageSource 仍超过支持 profile 时返回输入预算错误，不截断未知语义。
+
+后台刷新遵守：
+
+1. 在 `agent_settled` 的完整用户回合边界、路线切换预热，或来源后缀达到任务上下文预算/MemoryRuntimeProfile.maxInput 高水位时，为确定的路线 watermark 安排刷新；中间 `turn_end` 与单个工具结果只归档已最终化来源，不单独触发 Working Memory；
+2. 完整 RefreshTarget 相同的调用共享；尚未启动的线性后继只有 retentionBudgetIdentity 相同才合并到最新 watermark；运行中的目标不可升级或换绑，新预算请求在其完成后重新评估并按需创建自己的目标；
+3. commit `accepted` 必须观察 task 终态；只有 completed 且最终 assembly、来源和预算核验成功时才原子发布新检查点；
+4. 机会性 commit `skipped` 保留现有检查点与来源后缀，不发布伪检查点，也不续租能力；`refresh-required` 使用与预算版本绑定的显式 retention 边界，仍返回 skipped 时报告契约/策略错误，不重复形成无界任务；
+5. accepted task 失败、取消、达到 profile 期限或 assembly 不可信时报告当前代际能力故障；stopping 中由扩展发起的取消只完成清理；
+6. 检查点缓存、镜像、pending 和完成结果均有固定上限；迟到结果只属于创建它的完整 RefreshTarget。
+
+任务请求不以“刷新完成”作为普遍前置条件。Session 记忆协调可以组合与当前路线前缀兼容的最近检查点和其后的来源可恢复后缀；只有该组合无法满足内容完整性或任务模型预算时，才等待一个能够推进覆盖 watermark 的必要刷新。分支路线只能复用覆盖前缀仍是当前 branch 精确前缀的检查点，不能采用分叉后的旧路线记忆。
 
 ## 6. 对外能力
 
@@ -87,7 +107,8 @@ accepted Working Memory task 完成并通过 assembly 核验前不发布路线�
 
 - `archiveRoute`：幂等保存当前路线来源；
 - `ensureRecoverable`：确认指定 entry 和完整结果可恢复；
-- `prepareRoute`：为精确路线准备 OpenViking Session context；
+- `findCompatibleCheckpoint`：返回覆盖前缀仍是当前路线精确前缀的最近检查点；
+- `refreshCheckpoint`：为完整 RefreshTarget 创建或复用后台 OpenViking 刷新；
 - `probeCapability`：验证当前受管模型实际 Working Memory 能力；
 - `runtimeCapability`：返回与当前 active 进程绑定的能力证明；
 - 来源列表、完整结果读取和 OpenViking 索引输入；
@@ -101,9 +122,9 @@ accepted Working Memory task 完成并通过 assembly 核验前不发布路线�
 
 - 来源创建、复制、校验或读取失败直接返回；
 - JSONC、schema、字段或凭据错误形成带路径的脱敏诊断；
-- Session create、append、commit 或首次 assembly 失败不发布路线；
+- Session create、append、commit 或 assembly 失败不发布 MemoryCheckpoint；
 - 未知、矛盾、缺失来源或通用失败内容不进入上下文；
-- Working Memory task 非成功终态使能力证明失效；
+- ready 代际中的 accepted refresh 非成功终态使能力证明失效；
 - 当前受管子进程停止或替换使旧代全部派生状态失效。
 
 重新提交同一有效来源可按稳定 entry ID 修复局部归档。运行代际故障的恢复由显式 OpenViking 重启或能力重新验证触发；新代际从当前 Pi branch 和已核验本地来源重建。
@@ -116,11 +137,12 @@ accepted Working Memory task 完成并通过 assembly 核验前不发布路线�
 
 - session、branch、文件权限、原子写入和内容完整性；
 - 当前回合投影前的来源屏障；
-- 配置转换、凭据保密和用户文件所有权；
+- 用户配置保持最小，生成配置精确绑定实际验证的 `MemoryRuntimeProfile` 且凭据不泄漏；
 - 实际能力探针确实调用目标记忆模型；
-- OpenViking Session 增量、分支隔离、commit、task 和 assembly；
+- OpenViking Session 增量、分支隔离、commit、task、assembly 与检查点原子发布；
+- 慢速后台刷新期间兼容检查点与来源后缀仍可用，只有必要刷新形成增强构造屏障；
 - `skipped` 与能力证明具有不同语义；
-- task 失败使后续 Provider 请求被阻断；
+- task 失败使本扩展停止确认依赖结果的输出，transport 另行观测；
 - 新运行代际不复用旧代 context；
 - session shutdown 和镜像淘汰保持有界清理。
 

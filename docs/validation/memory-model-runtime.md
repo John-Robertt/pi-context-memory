@@ -24,14 +24,16 @@
 - 必要凭据缺失或引用变量未设置时在停止旧实例前失败；
 - 无需 API key 的来源使用其原生认证；
 - key、OAuth token、云凭据和认证响应不进入状态、日志、evidence 或 Pi session；
-- `thinking`、reasoning、temperature 等参数只有在最终适配请求验证后进入契约。
+- 每个已支持 Provider/模型/API 精确匹配一个带版本与指纹的 MemoryRuntimeProfile；用户配置不接受 profile 内部字段或任意请求体透传；
+- profile 的 thinking、temperature、stream、maxInput、maxOutput、requestTimeout、maxRetries、maxConcurrency、capabilityLeaseTtl、renewalLead 和 adapterVersion 都在目标 Provider 最终请求与运行观测中得到实际验证；
+- 配置不依赖 OpenViking 隐式默认值，不配置 backup Provider/model，retry 保持同一坐标。
 
 ## 3. 命令语义
 
 使用隔离 Pi 和本地任务 Provider 验证：
 
 - `/memory-model` 只创建缺失模板、检查和展示，不接受写入参数；
-- 命令准确区分目标配置、active 进程、service readiness、memory capability 和 requestReady；
+- 命令准确区分目标配置、目标/active profile、active 进程、service readiness、memory capability 和 requestReady；
 - `memoryModel: null` 明确表示没有任务请求能力；
 - 配置检查和应用不改变任务模型、Pi session 或 branch；
 - 命令自身不产生任务 Provider 请求；
@@ -64,7 +66,7 @@
 4. task 达到 completed；
 5. context assembly 具有有效 Working Memory 和当前来源；
 6. 探针 Session 被删除；
-7. 能力证明绑定 launchId、childPid、模型、配置、协议、探针版本和 `validUntil`。
+7. 能力证明绑定 launchId、childPid、Provider、模型、API、配置、MemoryRuntimeProfile、adapter、探针版本和 `validUntil`。
 
 以下状态不能通过：
 
@@ -76,8 +78,7 @@
 - 探针证明与 active 子进程或配置指纹不一致。
 
 真实模型探针保存 Provider、模型、task、token、响应 ID 和内容哈希，不保存完整响应或凭据。探针费用进入完整成本归属。
-
-实际证据还必须覆盖一次业务 Session accepted task 对能力租约的续租、一次租约到期后的实际重新探针，以及一次实际进程中断后 `/restart-viking` 创建新代际并恢复。协议替身只能补充失败矩阵。
+实际证据还必须覆盖一次业务 Session accepted task 完成 assembly、发布 MemoryCheckpoint 并续租，一次进入 renewalLead 后旧证明仍授权且后台续租，一次 `validUntil` 到期后的实际请求屏障与重新探针，以及一次实际进程中断后 `/restart-viking` 创建新代际并恢复。协议替身只能补充失败矩阵。
 
 ## 6. 运行代际与请求能力
 
@@ -86,11 +87,12 @@
 - 用户文件变化不改变当前 ready 代际；
 - 重启预检失败保持当前 ready 实例；
 - active 子进程停止立即撤销旧代 requestReady；
-- 新子进程 service ready 但能力未通过时任务 Provider 请求数为零；
-- 同代际业务 accepted task 只有在完整 assembly 核验后续租；
-- 能力证明到期且续租 pending 或失败时任务 Provider 请求数为零；
-- 能力证明只对绑定的子进程、配置和适配版本有效；
-- 新代际不复用旧代 pending、ready context 或请求证明；
+- 新子进程 service ready 但能力未通过时，本扩展不确认增强输出；abort 与 transport 结果分别记录；
+- 同代际业务 accepted task 只有在完整 assembly 核验并发布 MemoryCheckpoint 后续租；
+- 进入 renewalLead 后旧证明在 `validUntil` 前继续授权，后台续租不会制造请求停顿；
+- 能力证明到期且续租 pending/失败时，本扩展不确认增强输出；不从内部状态推断最终 Provider 零请求；
+- 能力证明只对绑定的子进程、配置、MemoryRuntimeProfile 和 adapter 版本有效；
+- 新代际不复用旧代 checkpoint、refresh、能力租约或请求证明；
 - 新代际只从当前 Pi branch 重建；
 - 运行实例与配置目标不一致时诊断准确但不影响有效旧代。
 
@@ -98,15 +100,15 @@
 
 分别注入配置、凭据、Launcher、锁、端口、进程、readiness、模型能力、task 和 assembly 故障。每个场景必须证明：
 
-- 新任务模型请求在 Provider 前被阻断；
-- Provider 接收数不增加；
+- 本扩展不确认增强输出并调用 `ctx.abort()`；
+- handler 返回和 transport 实际结果分别记录；
 - 状态为“增强记忆 · 故障”或仍处于初始化；
 - `/memory-model` 显示准确、脱敏的责任阶段；
 - 当前 Pi session 和来源保持不变；
 - 系统不自动发送或重放用户 prompt；
-- 用户修复并执行 `/restart-viking` 后创建新代际；
-- 新代际能力探针通过后恢复“增强记忆”；
-- 用户重新提交的任务使用增强 Provider payload。
+- 扩展不自动修改 Pi、其它扩展、Provider 或模型；
+- 用户选择修复并重新验证时创建新代际，探针通过后恢复“增强记忆”；
+- 用户重新提交的任务由新的增强输出处理。
 
 ## 8. 当前 ready 实例与待应用配置
 
@@ -130,6 +132,6 @@ node scripts/validate-context-quality.mjs
 node scripts/check-validation-evidence.mjs
 ```
 
-`memory-model-runtime` evidence 分别保存 controlled 与 actual 检查：配置、权限、所有权和协议故障可以由受控证据覆盖；能力探针、业务续租、租约到期、实际重启与恢复必须关联固定 `ValidationCoordinates`、真实 Provider 响应 ID/usage 和原始 artifact。`context-enhancement` evidence 保存故障后的 Provider 零增量和恢复采用；真实质量 evidence 保存实际模型与账单归属。
+`memory-model-runtime` evidence 分别保存 controlled/actual：配置、权限、所有权和协议故障可由受控证据覆盖；profile 采用、能力探针、租约、重启与恢复关联固定 ValidationCoordinates、真实响应 ID/usage 和 artifact。`context-enhancement` evidence 分别记录本扩展 block/abort 与 transport 实际结果，不从内部状态推断最终采用。
 
 runner 和 stable evidence 必须随实现更新后才能证明本文目标。当前有效证据范围由 [`../DEVELOPMENT.md`](../DEVELOPMENT.md) 维护。
