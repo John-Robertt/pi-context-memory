@@ -2,9 +2,9 @@
   "schemaVersion": 1,
   "generatedBy": "scripts/validate-context-enhancement.mjs",
   "scope": "local",
-  "runId": "context-enhancement-2026-08-14T21-05-20-526Z",
-  "startedAt": "2026-08-14T21:05:20.538Z",
-  "completedAt": "2026-08-14T21:05:28.857Z",
+  "runId": "context-enhancement-2026-08-14T22-10-15-914Z",
+  "startedAt": "2026-08-14T22:10:15.927Z",
+  "completedAt": "2026-08-14T22:10:24.301Z",
   "piVersion": "0.84.2",
   "openVikingVersion": "0.4.13-protocol",
   "fixture": {
@@ -12,7 +12,7 @@
     "name": "bounded-context-route-continuity"
   },
   "implementation": {
-    "sourceManifestSha256": "236eda150a094c093792e3367f589f35cb1009cdd277e63b559dbc260fb22431",
+    "sourceManifestSha256": "9b4c0873ecc7a86a10ea4c509ca197e4d0403c4b8dfe5ac064d70736663a542d",
     "files": [
       {
         "path": ".pi/extensions/pi-context-memory/index.ts",
@@ -40,7 +40,7 @@
       },
       {
         "path": ".pi/extensions/pi-context-memory/session-working-memory.ts",
-        "sha256": "a76d58c57bdf943cafd74d191f20a54ddce61bb84b7b0177a63838cca3f2eae5"
+        "sha256": "56c1bbcd04a3920f47fd2c296d75ef747ff3f84a0322d2d0bd8a25b994f371b2"
       },
       {
         "path": ".pi/extensions/pi-context-memory/working-context-optimization.ts",
@@ -52,11 +52,11 @@
       },
       {
         "path": "scripts/validate-context-enhancement.mjs",
-        "sha256": "43cddceb16e8c5c10521cba3ca543dd81ff5edd99c54519f689d261f7da5e2b6"
+        "sha256": "998acd06d945e22e8d7f0cc293507d935efdeeed59516cdafe9a7fd08d5b5639"
       },
       {
         "path": "scripts/validation-evidence.mjs",
-        "sha256": "771c13dc85ac4642ad07cbabd7b140ae66161fd3c6ccd8899b173c77edaa1c16"
+        "sha256": "ff83b7d6551fc369f1fb516f838e40e2cf71f0143cacb8da769c77ba276f4434"
       },
       {
         "path": "scripts/validation-model-config.mjs",
@@ -67,7 +67,7 @@
         "sha256": "8aed19f4611f47d8d000b89e6901727cd213282849e6faf5a5d1a4adda724694"
       }
     ],
-    "gitCommit": "b8108fedef8127ca20687471cda1d88aed22a6eb",
+    "gitCommit": "9468031d9b8787bc611bf2c2eccae86499cb77a5",
     "workingTreeDirty": true
   },
   "passed": true,
@@ -90,8 +90,13 @@
     "skippedCommitRetainsActiveHistory": true,
     "inFlightReadyWaitBounded": true,
     "activeHistoryAvailableDuringWorkingMemory": true,
+    "routesPrepareDuringWorkingMemory": true,
+    "singleCommitFlightPerMirror": true,
+    "latestRoutePromotedAfterCommit": true,
+    "pendingTokensPreservedAcrossCommit": true,
     "slowWorkingMemoryCompletesWithinDeadline": true,
-    "workingMemoryTimeoutFallsBack": true,
+    "workingMemoryTimeoutRetainsActiveHistory": true,
+    "inFlightCommitShutdownCleaned": true,
     "backendFailureFallsBack": true,
     "pendingRoutesCollapsed": true,
     "inFlightShutdownCleaned": true,
@@ -113,22 +118,22 @@
   },
   "details": {
     "routes": {
-      "common": "e1c3fa59d67e48fe4b6623e921b9d329550bd0896ea28e4c741b6f2f08b6f05f",
-      "branchA": "ffb90ac7e74de1744175e2dcabf1643c339c81b369e8c4e8f8cb0c7f776829d5",
-      "branchB": "7f0a244a82131f56e7ddab2b73e01d4deeadfa37ee90e6a3d3f7070de03fadbf",
-      "afterCompaction": "710bfe5c04c62606075bc0a37ae1fe1d782842ff6e8ffd90c7e8fee342afdc81"
+      "common": "5541162871d090803a1ca3a8644296268ec12b372a2e37ec92da25a0cdb9a031",
+      "branchA": "6f9d433a9a9cf6b00ec10fe76778605e0084aa247ef0fe36d4b165a3e4a66925",
+      "branchB": "eb481a9977ccc173cd7f1ea488b4e8bc97c25413831ec8c39bd17d6a660b099f",
+      "afterCompaction": "28d9b15d26369ba6e7f6a69126eee210665af2e571d64b1c36f9bcbc7a4e3299"
     },
     "openViking": {
-      "sessionsCreated": 22,
-      "sessionsDeleted": 22,
-      "tasks": 9,
-      "requests": 1284
+      "sessionsCreated": 25,
+      "sessionsDeleted": 25,
+      "tasks": 13,
+      "requests": 1314
     },
     "context": {
-      "branchAChars": 1162,
+      "branchAChars": 1205,
       "branchBChars": 1319,
-      "compactedChars": 1255,
-      "branchBEstimatedTokens": 553
+      "compactedChars": 1086,
+      "branchBEstimatedTokens": 472
     },
     "pi": {
       "providerRequests": 36,

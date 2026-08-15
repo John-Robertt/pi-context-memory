@@ -32,9 +32,10 @@ session_start / turn_end / session_tree / session_compact / before_agent_start
   → 长时记忆模块按路线准备 OpenViking Session
       → 同一路线去重
       → 线性后继只追加新增 entry
-      → 分叉路线使用隔离的 OpenViking Session
-      → batch append 后立即以固定 token budget 请求 context assembly，来源核验后发布精确路线 active history 快照
-      → 达到归档阈值时 commit；`accepted` 轮询 Working Memory 后台任务并以最终 assembly 更新同一路线，`skipped` 保留 active history 且不轮询空 task ID
+      → OpenViking 镜像绑定 Pi session 与 session file；不同所有权或分叉路线使用隔离 Session
+      → batch append 与必要的 commit Phase 1 在镜像快速队列内串行；Phase 1 返回后立即以固定 token budget assembly，来源核验后发布该精确路线 active history
+      → `accepted` 的慢速 Phase 2 在队列外轮询；期间同一镜像继续追加线性后继，任务完成后按镜像最新 revision 重新 assembly，只提升仍匹配的最新精确路线
+      → 每个镜像同时至多一个 commit task；期间新增 token 独立累计，旧任务完成后达到阈值才启动下一次 commit；`skipped` 保留 active history 且不轮询空 task ID
   → 工作上下文优化格式化有界增强历史
   → 就绪结果按完整路线身份和当前受管 OpenViking 子进程代际缓存
 
@@ -45,7 +46,7 @@ context
   → 无精确 pending、等待超时、过期或错误：保持全部 Pi 原生消息并记为增强降级
 ```
 
-准备在 Provider 请求之外异步执行；`context` hook 不读取配置、不创建任务，也不为无精确 pending 的路线访问 OpenViking。为避免零间隔下一轮早于 active assembly，它只可在同代际、同精确路线已有在途任务时等待最多 1000 ms；到期立即原生降级。同一路线共享准备任务，运行任务之后只保留同一 Pi session 最新的未启动路线，防止旧分支形成无界积压；每个派生 session 的追加和 commit 保持串行。缓存与派生 session 数量有固定上限，淘汰只损失增强就绪度，不影响 Pi 历史。
+准备在 Provider 请求之外异步执行；`context` hook 不读取配置、不创建任务，也不为无精确 pending 的路线访问 OpenViking。为避免零间隔下一轮早于 active assembly，它只可在同代际、同精确路线已有在途任务时等待最多 1000 ms；到期立即原生降级。同一路线共享准备任务，快速队列只串行创建、追加、commit Phase 1、assembly 和提升等镜像状态变更；慢速 Phase 2 轮询独立运行，不阻塞后续路线。运行中的快速操作之后只保留同一 Pi session 最新的未启动路线，防止旧分支形成无界积压。缓存与活跃派生 session 数量有固定上限；有 commit 在途的淘汰镜像先标记 retired，任务终态后再删除，淘汰只损失增强就绪度，不影响 Pi 历史。
 
 ## 5. 内容投影与预算
 
@@ -56,7 +57,7 @@ OpenViking 返回 Working Memory overview 与预算后的活跃消息，具体�
 ## 6. 失败、分支与恢复
 
 - 路线切换立即使旧指纹结果不可采用；迟到结果只能进入自己的路线缓存。
-- OpenViking 创建、追加、`accepted` commit 的任务轮询或 context assembly 任一步失败时，本轮保持 Pi 原生消息并记为增强降级；合法 `skipped` commit 保留 active history。commit 运行期间发布的 active history 快照在任务失败或超时后立即失效，不采用未完成任务产物。失败、淘汰与关闭会尽力删除扩展自建的派生 Session，清理失败不阻断 Pi。
+- OpenViking 创建、追加、commit Phase 1 或首次 context assembly 失败时，该精确路线不发布并按 Pi 原生接续；合法 `skipped` commit 保留 active history。Phase 2 失败、超时或最终 assembly 失败时，不采用未核验的 Working Memory，但保留 Phase 1 后已经来源核验的 active history；后续路线仍可继续追加和重试。迟到任务只能提升完成时镜像最新 revision 对应的精确路线，不能删除或覆盖更新路线。失败、淘汰与关闭会尽力删除扩展自建的派生 Session，清理失败不阻断 Pi。
 - 没有已配置且实际运行的记忆模型时不准备自动增强上下文，模型调用保持 Pi 原生；显式来源召回继续可用。
 - 配置校验失败或配置目标改变时，当前 ready 的受管实例继续提供增强，直到用户执行重启；重启预检失败同样保留旧实例。只有 runtime state 表明旧子进程已停止时才取消旧代缓存；新子进程 ready 后按新的进程代际重建。
 - tree、compaction、session replacement 与 reload 使新实例或新路线只从 Pi 当前 leaf 重建；重建期间显示“增强记忆 · 初始化中”或“增强记忆 · 生效中”，准备结果实际进入 Provider 请求后显示“增强记忆”。只有服务不可用并强制回退时显示“Pi 原生”。

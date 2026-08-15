@@ -25,19 +25,19 @@ node scripts/check-validation-evidence.mjs
 
 runner 使用协议兼容的 OpenViking 与本地任务 Provider 替身，不访问外部 Provider。它验证：
 
-- session、session file、leaf、有序 entry 和完整内容形成唯一采用身份；
+- session、session file、leaf、有序 entry 和完整内容形成唯一采用身份；即使历史投影完全相同，不同 session 或 session file 也不得复用 OpenViking 镜像；
 - 线性路线复用同一 OpenViking Session，冲突 branch 使用隔离 session；
 - 旧路线任务完成时不能被当前路线取得；
 - 正在执行的路线之后只保留最新未启动路线，旧排队路线被明确替代；
 - Pi entry ID 通过 `source_message_ids` 进入 Working Memory；
-- OpenViking Session create、batch append、commit、task polling 和 context assembly 协议完整执行；`accepted` 携带 task ID 并轮询，`skipped` 携带空 task ID、保留来源核验 active history 且不访问 tasks API；生产默认终态期限为 180 秒，期限内完成的慢任务以 Working Memory 最终 assembly 更新该路线，超过期限的任务仍有界降级；
+- OpenViking Session create、batch append、commit、task polling 和 context assembly 协议完整执行；`accepted` 的 Phase 1 返回后立即发布 active history，Phase 2 在快速路线队列外轮询，运行期间连续线性路线均在 1000 ms 内得到精确 active context；每个镜像至多一个 commit task，期间新增 token 不被旧任务清零，完成时只按最新 revision 提升最新精确路线；`skipped` 携带空 task ID、保留来源核验 active history 且不访问 tasks API；生产默认终态期限为 180 秒，期限内完成的慢任务以 Working Memory 最终 assembly 更新最新路线，超过期限时保留已核验 active history；
 - Pi compaction 投影保留 `firstKeptEntryId` 范围、压缩后条目，并兼容自包含 `retainedTail`；
 - Working Memory overview 的标题、语言和可选 token 统计不构成生产协议；本地归一化拒绝缺失来源 ID、未知内容形态、空 active tail、通用失败回退和其它 malformed 响应；
 - `context` hook 在当前运行实例或精确路线没有在途准备时立即发送 Pi 原生请求；精确路线已有在途任务时只等待最多 1000 ms，来源核验 active history 一旦发布便不等待 Working Memory commit 即可采用，超时仍按原生降级；待应用配置变化不使当前实例失效，runtime state 确认子进程停止或替换后才取消旧代并恢复；实际采用路径与用户状态分别观测；
 - 当前 prompt 及其后的 assistant/tool 消息保持原对象和顺序；
 - Pi `context` hook 的当前受管子进程代际在真实本地 Provider payload 中采用增强历史；启动首轮和故障路径可保持 Pi 原生，待应用配置与 active 设置不同、配置目标变为 null 或核验进程不持有 Launcher 凭据时，当前 ready 实例仍持续准备并采用增强；
 - 用户文本包含增强标题时仍不能伪造 Provider 采用状态；
-- 初始 assembly 故障期间实际请求与 UI 保持 Pi 原生，同路线重建成功后恢复增强；commit 运行期间可采用的 active history 快照在任务失败、超时或最终 assembly 失败后失效，不留下可采用结果，扩展自建 Session 在正常关闭和创建响应仍在途时均得到清理；
+- 初始 assembly 故障期间实际请求与 UI 保持 Pi 原生，同路线重建成功后恢复增强；Phase 2 失败、超时或最终 assembly 失败时不采用未核验 Working Memory，但保留 Phase 1 后来源核验的 active history；慢任务在途的镜像淘汰和 shutdown 不污染更新路线，扩展自建 Session 在正常关闭、commit 在途和创建响应在途时均得到清理；
 - `/tree` A→B→A、回到根、带与不带 branch summary 的选择均按操作后 leaf 重建，并在关键路线实际发送 Provider 请求核对采用与分支隔离；
 - `/fork`、`/clone`、每次 `/resume` 与 reload 均等待对应 session/file/leaf 重建后实际发送 Provider 请求；
 - 手动、阈值和 overflow compaction 均先保持 Pi 原生路径、只采用操作后的有效投影，并在精确 ready 后由下一次任务 Provider 请求恢复增强；overflow 自动重试对增强超限 payload 持续失败，必须改用不同的 Pi 原生 payload；

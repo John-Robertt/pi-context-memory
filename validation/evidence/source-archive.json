@@ -1,11 +1,11 @@
 {
   "schemaVersion": 1,
   "generatedBy": "scripts/validate-source-archive.mjs",
-  "runId": "source-archive-2026-08-14T21-04-54-355Z",
-  "recordedAt": "2026-08-14T21:04:55.089Z",
+  "runId": "source-archive-2026-08-14T22-08-29-755Z",
+  "recordedAt": "2026-08-14T22:08:30.528Z",
   "piVersion": "0.84.2",
   "implementation": {
-    "sourceManifestSha256": "74fe7b1aa2d205c59f0db884b7b797b63a59d9e07276782e7ee7b990b23365c1",
+    "sourceManifestSha256": "4392c30ccb21ced0de5fb93f6815a93bc8387a2e073aa120273c6e309acb7fbf",
     "files": [
       {
         "path": ".pi/extensions/pi-context-memory/index.ts",
@@ -37,7 +37,7 @@
       },
       {
         "path": ".pi/extensions/pi-context-memory/session-working-memory.ts",
-        "sha256": "a76d58c57bdf943cafd74d191f20a54ddce61bb84b7b0177a63838cca3f2eae5"
+        "sha256": "56c1bbcd04a3920f47fd2c296d75ef747ff3f84a0322d2d0bd8a25b994f371b2"
       },
       {
         "path": ".pi/extensions/pi-context-memory/working-context-optimization.ts",
@@ -53,14 +53,14 @@
       },
       {
         "path": "scripts/validation-evidence.mjs",
-        "sha256": "771c13dc85ac4642ad07cbabd7b140ae66161fd3c6ccd8899b173c77edaa1c16"
+        "sha256": "ff83b7d6551fc369f1fb516f838e40e2cf71f0143cacb8da769c77ba276f4434"
       },
       {
         "path": "scripts/validation-model-config.mjs",
         "sha256": "30b9c777779612593eba4e5fff5679cc2d91434286261964465d115d067702d5"
       }
     ],
-    "gitCommit": "b8108fedef8127ca20687471cda1d88aed22a6eb",
+    "gitCommit": "9468031d9b8787bc611bf2c2eccae86499cb77a5",
     "workingTreeDirty": true
   },
   "passed": true,

@@ -45,19 +45,45 @@ export interface PreparedSessionMemory {
   context: AssembledSessionContext;
 }
 
+interface CommitFlight {
+  taskId: string;
+  done: Promise<void>;
+}
+
 interface RouteMirror {
+  sessionId: string;
+  sessionFile: string;
   openVikingSessionId: string;
   projections: readonly OpenVikingProjection[];
   pendingTokens: number;
+  revision: number;
+  latestRoute?: SessionRouteIdentity;
+  commitFlight?: CommitFlight;
+  retired: boolean;
   touched: number;
 }
 interface PrepareJob {
+  kind: "prepare";
   key: string;
   route: SessionRouteIdentity;
   entries: readonly SourceEntry[];
   signal?: AbortSignal;
   resolve: (prepared: PreparedSessionMemory) => void;
   reject: (error: unknown) => void;
+}
+interface PromotionJob {
+  kind: "promotion";
+  mirror: RouteMirror;
+  flight: CommitFlight;
+  completed: boolean;
+  resolve: () => void;
+  reject: (error: unknown) => void;
+}
+type QueueJob = PrepareJob | PromotionJob;
+
+interface FastPreparation {
+  active: PreparedSessionMemory;
+  flight?: CommitFlight;
 }
 
 function sha256(value: string): string {
@@ -129,8 +155,9 @@ export class OpenVikingSessionMemory {
   private readonly pending = new Map<string, Promise<PreparedSessionMemory>>();
   private readonly ready = new Map<string, PreparedSessionMemory>();
   private readonly mirrors: RouteMirror[] = [];
-  private readonly queue: PrepareJob[] = [];
+  private readonly queue: QueueJob[] = [];
   private activeDrain: Promise<void> | undefined;
+  private readonly backgroundTasks = new Set<Promise<void>>();
   private readonly cleanupTasks = new Set<Promise<void>>();
   private touchSequence = 0;
 
@@ -200,12 +227,13 @@ export class OpenVikingSessionMemory {
     });
     for (let index = this.queue.length - 1; index >= 0; index -= 1) {
       const queued = this.queue[index];
-      if (queued.route.sessionId !== route.sessionId) continue;
+      if (queued.kind !== "prepare" || queued.route.sessionId !== route.sessionId) continue;
       this.queue.splice(index, 1);
       this.pending.delete(queued.key);
       queued.reject(new Error("Session Working Memory preparation was superseded by a newer route"));
     }
     this.queue.push({
+      kind: "prepare",
       key: route.fingerprint,
       route: structuredClone(route),
       entries: entries.map((entry) => structuredClone(entry)),
@@ -221,7 +249,9 @@ export class OpenVikingSessionMemory {
   private startDrain(): void {
     if (this.activeDrain) return;
     const operation = this.drainQueue().finally(() => {
-      if (this.activeDrain === operation) this.activeDrain = undefined;
+      if (this.activeDrain !== operation) return;
+      this.activeDrain = undefined;
+      if (this.queue.length > 0 && !this.shutdownController.signal.aborted) this.startDrain();
     });
     this.activeDrain = operation;
   }
@@ -230,17 +260,29 @@ export class OpenVikingSessionMemory {
     while (true) {
       const job = this.queue.shift();
       if (!job) return;
+      if (job.kind === "promotion") {
+        try {
+          await this.promoteSerial(job.mirror, job.flight, job.completed);
+          job.resolve();
+        } catch (error) {
+          job.reject(error);
+        }
+        continue;
+      }
       try {
-        const prepared = await this.prepareSerial(job.route, job.entries, job.signal);
-        this.ready.set(job.key, prepared);
+        const prepared = await this.prepareFast(job.route, job.entries, job.signal);
+        this.ready.set(job.key, prepared.active);
         this.trimReady();
-        job.resolve(prepared);
+        if (prepared.flight) this.settleAfterFlight(job, prepared);
+        else {
+          this.pending.delete(job.key);
+          job.resolve(prepared.active);
+        }
       } catch (error) {
         this.ready.delete(job.key);
-        this.discardMirrorsForRoute(job.entries);
-        job.reject(error);
-      } finally {
+        this.discardMirrorsForRoute(job.route, job.entries);
         this.pending.delete(job.key);
+        job.reject(error);
       }
     }
   }
@@ -248,19 +290,20 @@ export class OpenVikingSessionMemory {
   async shutdown(reason: unknown = new Error("Session Working Memory stopped")): Promise<void> {
     if (!this.shutdownController.signal.aborted) this.shutdownController.abort(reason);
     for (const job of this.queue.splice(0)) job.reject(reason);
-    this.pending.clear();
     if (this.activeDrain) await this.activeDrain.catch(() => undefined);
+    while (this.backgroundTasks.size > 0) await Promise.allSettled([...this.backgroundTasks]);
+    this.pending.clear();
     this.ready.clear();
     const sessionIds = this.mirrors.splice(0).map((mirror) => mirror.openVikingSessionId);
     for (const sessionId of sessionIds) this.scheduleSessionDeletion(sessionId);
     while (this.cleanupTasks.size > 0) await Promise.allSettled([...this.cleanupTasks]);
   }
 
-  private async prepareSerial(
+  private async prepareFast(
     route: SessionRouteIdentity,
     entries: readonly SourceEntry[],
     signal?: AbortSignal,
-  ): Promise<PreparedSessionMemory> {
+  ): Promise<FastPreparation> {
     const operationSignal = signal
       ? AbortSignal.any([this.shutdownController.signal, signal])
       : this.shutdownController.signal;
@@ -268,13 +311,20 @@ export class OpenVikingSessionMemory {
 
     const routeProjections = projectRouteEntries(entries);
     let mirror = this.mirrors
-      .filter((candidate) => isProjectionPrefix(candidate.projections, routeProjections))
+      .filter((candidate) => candidate.sessionId === route.sessionId
+        && candidate.sessionFile === route.sessionFile
+        && !candidate.retired
+        && isProjectionPrefix(candidate.projections, routeProjections))
       .sort((left, right) => right.projections.length - left.projections.length)[0];
     if (!mirror) {
       mirror = {
+        sessionId: route.sessionId,
+        sessionFile: route.sessionFile,
         openVikingSessionId: `pcm-${sha256(`${route.sessionId}\0${route.fingerprint}`).slice(0, 16)}-${randomUUID()}`,
         projections: [],
         pendingTokens: 0,
+        revision: 0,
+        retired: false,
         touched: ++this.touchSequence,
       };
       this.mirrors.push(mirror);
@@ -301,31 +351,130 @@ export class OpenVikingSessionMemory {
       mirror.pendingTokens = normalizeBatchPendingTokens(result) ?? mirror.pendingTokens;
     }
     mirror.projections = routeProjections.map((projection) => structuredClone(projection));
+    mirror.latestRoute = structuredClone(route);
+    mirror.revision += 1;
     mirror.touched = ++this.touchSequence;
 
-    if (mirror.pendingTokens >= this.commitPendingTokens) {
-      const { result } = await this.client.request(
-        "POST",
-        `/api/v1/sessions/${encodeURIComponent(mirror.openVikingSessionId)}/commit`,
-        { keep_recent_count: this.keepRecentMessages },
-        operationSignal,
-      );
-      const commit = normalizeCommitResult(result);
-      const activeContext = await this.assembleContext(route, mirror, operationSignal);
-      this.ready.set(route.fingerprint, activeContext);
-      this.trimReady();
-      if (commit.status === "skipped") {
-        mirror.pendingTokens = 0;
-        this.trimMirrors(mirror);
-        return activeContext;
-      }
-      await this.waitForTask(commit.taskId, operationSignal);
-      mirror.pendingTokens = 0;
-    }
-
-    const prepared = await this.assembleContext(route, mirror, operationSignal);
+    await this.maybeStartCommit(mirror, operationSignal);
+    const active = await this.assembleContext(route, mirror, operationSignal);
     this.trimMirrors(mirror);
-    return prepared;
+    return mirror.commitFlight ? { active, flight: mirror.commitFlight } : { active };
+  }
+
+  private settleAfterFlight(job: PrepareJob, prepared: FastPreparation): void {
+    const flight = prepared.flight;
+    if (!flight) return;
+    void this.waitForFlight(flight, job.signal).then(
+      () => {
+        if (this.shutdownController.signal.aborted) {
+          job.reject(this.shutdownController.signal.reason ?? new Error("Session Working Memory stopped"));
+        } else {
+          job.resolve(this.getReady(job.route) ?? prepared.active);
+        }
+      },
+      (error) => job.reject(error),
+    ).finally(() => this.pending.delete(job.key));
+  }
+
+  private async waitForFlight(flight: CommitFlight, signal?: AbortSignal): Promise<void> {
+    if (!signal) {
+      await flight.done;
+      return;
+    }
+    signal.throwIfAborted();
+    await new Promise<void>((resolveWait, rejectWait) => {
+      const finish = (error?: unknown) => {
+        signal.removeEventListener("abort", onAbort);
+        if (error === undefined) resolveWait();
+        else rejectWait(error);
+      };
+      const onAbort = () => finish(signal.reason ?? new Error("Working memory preparation cancelled"));
+      signal.addEventListener("abort", onAbort, { once: true });
+      void flight.done.then(() => finish(), (error) => finish(error));
+    });
+  }
+
+  private async maybeStartCommit(mirror: RouteMirror, signal: AbortSignal): Promise<void> {
+    if (mirror.retired || mirror.commitFlight || mirror.pendingTokens < this.commitPendingTokens) return;
+    const { result } = await this.client.request(
+      "POST",
+      `/api/v1/sessions/${encodeURIComponent(mirror.openVikingSessionId)}/commit`,
+      { keep_recent_count: this.keepRecentMessages },
+      signal,
+    );
+    const commit = normalizeCommitResult(result);
+    mirror.pendingTokens = 0;
+    if (commit.status === "accepted") this.startCommitFlight(mirror, commit.taskId);
+  }
+
+  private startCommitFlight(mirror: RouteMirror, taskId: string): void {
+    const flight: CommitFlight = { taskId, done: Promise.resolve() };
+    mirror.commitFlight = flight;
+    const task = this.runCommitFlight(mirror, flight)
+      .catch(() => undefined)
+      .finally(() => this.backgroundTasks.delete(task));
+    flight.done = task;
+    this.backgroundTasks.add(task);
+  }
+
+  private async runCommitFlight(mirror: RouteMirror, flight: CommitFlight): Promise<void> {
+    let completed = false;
+    try {
+      await this.waitForTask(flight.taskId, this.shutdownController.signal);
+      completed = true;
+    } catch {
+      // The Phase 1 source-verifiable context remains valid when Phase 2 fails or times out.
+    }
+    if (this.shutdownController.signal.aborted) {
+      if (mirror.commitFlight === flight) mirror.commitFlight = undefined;
+      return;
+    }
+    await this.enqueuePromotion(mirror, flight, completed);
+  }
+
+  private enqueuePromotion(mirror: RouteMirror, flight: CommitFlight, completed: boolean): Promise<void> {
+    const promotion = new Promise<void>((resolvePromotion, rejectPromotion) => {
+      this.queue.push({
+        kind: "promotion",
+        mirror,
+        flight,
+        completed,
+        resolve: resolvePromotion,
+        reject: rejectPromotion,
+      });
+    });
+    this.startDrain();
+    return promotion;
+  }
+
+  private async promoteSerial(mirror: RouteMirror, flight: CommitFlight, completed: boolean): Promise<void> {
+    if (mirror.commitFlight !== flight) return;
+    mirror.commitFlight = undefined;
+    if (mirror.retired) {
+      this.removeMirror(mirror);
+      return;
+    }
+    const route = mirror.latestRoute;
+    const revision = mirror.revision;
+    if (completed && route) {
+      try {
+        const promoted = await this.assembleContext(route, mirror, this.shutdownController.signal);
+        if (!mirror.retired
+          && mirror.revision === revision
+          && mirror.latestRoute?.fingerprint === route.fingerprint) {
+          this.ready.set(route.fingerprint, promoted);
+          this.trimReady();
+        }
+      } catch {
+        // Keep the last source-verifiable active context when final assembly is unavailable.
+      }
+    }
+    try {
+      await this.maybeStartCommit(mirror, this.shutdownController.signal);
+    } catch {
+      // A later route preparation may retry the still-pending live tail.
+    }
+    this.trimMirrors(mirror);
   }
 
   private async assembleContext(
@@ -376,12 +525,13 @@ export class OpenVikingSessionMemory {
     throw new Error("OpenViking working memory task timed out");
   }
 
-  private discardMirrorsForRoute(entries: readonly SourceEntry[]): void {
+  private discardMirrorsForRoute(route: SessionRouteIdentity, entries: readonly SourceEntry[]): void {
     const routeProjections = projectRouteEntries(entries);
-    for (let index = this.mirrors.length - 1; index >= 0; index -= 1) {
-      if (!isProjectionPrefix(this.mirrors[index].projections, routeProjections)) continue;
-      const [removed] = this.mirrors.splice(index, 1);
-      this.scheduleSessionDeletion(removed.openVikingSessionId);
+    for (const mirror of [...this.mirrors]) {
+      if (mirror.sessionId !== route.sessionId
+        || mirror.sessionFile !== route.sessionFile
+        || !isProjectionPrefix(mirror.projections, routeProjections)) continue;
+      this.retireMirror(mirror);
     }
   }
 
@@ -394,14 +544,29 @@ export class OpenVikingSessionMemory {
   }
 
   private trimMirrors(current: RouteMirror): void {
-    while (this.mirrors.length > this.maxMirrors) {
+    while (this.mirrors.filter((candidate) => !candidate.retired).length > this.maxMirrors) {
       const oldest = this.mirrors
-        .filter((candidate) => candidate !== current)
+        .filter((candidate) => !candidate.retired && candidate !== current)
         .sort((left, right) => left.touched - right.touched)[0];
       if (!oldest) break;
-      this.mirrors.splice(this.mirrors.indexOf(oldest), 1);
-      this.scheduleSessionDeletion(oldest.openVikingSessionId);
+      this.retireMirror(oldest);
     }
+  }
+
+  private retireMirror(mirror: RouteMirror): void {
+    if (mirror.retired) return;
+    mirror.retired = true;
+    for (const [key, prepared] of this.ready) {
+      if (prepared.openVikingSessionId === mirror.openVikingSessionId) this.ready.delete(key);
+    }
+    if (!mirror.commitFlight) this.removeMirror(mirror);
+  }
+
+  private removeMirror(mirror: RouteMirror): void {
+    const index = this.mirrors.indexOf(mirror);
+    if (index < 0) return;
+    this.mirrors.splice(index, 1);
+    this.scheduleSessionDeletion(mirror.openVikingSessionId);
   }
   private scheduleSessionDeletion(sessionId: string): void {
     const task = this.deleteOwnedSession(sessionId).finally(() => this.cleanupTasks.delete(task));

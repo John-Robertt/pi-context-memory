@@ -10,7 +10,7 @@
 
 用户正常运行时通过 `~/.pi/pi-context-memory.jsonc` 配置 OpenViking 记忆模型；开发验证不要求修改该文件。模型能力与成本 runner 共用 [`validation/model.json`](../validation/model.json) 的单一 `openRouterModel`，由它派生 Pi 任务路线和 LiteLLM 记忆路线；质量 runner 在 `.artifacts/` 写入隔离配置并通过 `PCR_MEMORY_MODEL_SETTINGS` 只注入验证进程，真实采用 runner 则核对同一配置与托管 runtime。OpenRouter 记忆请求的密钥通过 `PCR_OPENVIKING_VLM_API_KEY` 提供给验证 launcher。`/memory-model` 检查用户配置和运行状态，`/restart-viking` 安全应用；没有实际运行的记忆模型时，来源召回继续可用，模型上下文保持 Pi 原生。
 
-共享长任务 fixture 固定目标更新、冲突 branch、工具证据、Pi compaction 和压缩后继续。记忆模型可用后，扩展在 Provider 请求之外异步把当前有效投影写入 OpenViking Session：线性后继复用镜像，分叉或 compaction 改变有效前缀时隔离镜像；batch append 后先发布来源已核验的精确路线 active history assembly。达到阈值后，OpenViking `accepted` commit 在 180 秒有界终态期限内生成 Working Memory，完成后以 overview 更新同一路线；`skipped` commit 表示消息都位于保留窗口，空 task ID 不再使 active history 失效。共同适配层拒绝矛盾或未知状态、缺失来源、未知内容、空 active tail、通用回退与其它 malformed 响应。
+共享长任务 fixture 固定目标更新、冲突 branch、工具证据、Pi compaction 和压缩后继续。记忆模型可用后，扩展在 Provider 请求之外异步把当前有效投影写入 OpenViking Session：线性后继复用镜像，分叉或 compaction 改变有效前缀时隔离镜像。batch append 与必要的 commit Phase 1 由快速队列串行，随后立即发布来源已核验的精确路线 active history；`accepted` 的慢速 Phase 2 在队列外轮询，同一镜像期间继续追加后继路线。每个镜像至多一个 commit task，完成后按最新 revision 原子提升最新精确路线，期间新增 token 独立累计；`skipped` commit 保留 active history。Phase 2 失败、超时或最终 assembly 失败不采用未核验 Working Memory，但不删除已经来源核验的 active history。共同适配层继续拒绝矛盾或未知状态、缺失来源、未知内容、空 active tail、通用回退与其它 malformed 响应。
 
 Pi `context` hook 只读取内存中的当前受管 OpenViking 子进程和路线状态，不读取配置或启动新 OpenViking 工作；用户配置只描述下一次重启目标，变化或校验失败不会中断仍然 ready 的实例。精确路线已有在途准备时最多等待 1000 ms 取得来源核验结果，无 pending 或超时立即按 Pi 原生消息继续。采用时重新核对当前 prompt 之前的 session、session file、leaf、有序 entry 和完整路线指纹。`before_agent_start` 使用 Pi 当时已持久化的完整历史，不再误删上一轮；tree、compaction、session replacement 与 reload 从 Pi 当前 leaf 重建。状态栏实时区分“增强记忆 · 初始化中”“增强记忆 · 生效中”“增强记忆”和服务不可用时的“Pi 原生”；Provider 实际采用路径独立记录。
 
@@ -19,7 +19,7 @@ Pi `context` hook 只读取内存中的当前受管 OpenViking 子进程和路�
 - [`validation/evidence/source-archive.json`](../validation/evidence/source-archive.json)：session 隔离、branch 切换、来源恢复、完整结果与存储失败；
 - [`validation/evidence/source-recall.json`](../validation/evidence/source-recall.json)：受控 OpenViking、向量索引、队列边界、当前路线召回和权威展开；
 - [`validation/evidence/memory-model-runtime.json`](../validation/evidence/memory-model-runtime.json)：用户配置、配置编译、安全重启、生命周期所有权和冷启动降级；
-- [`validation/evidence/context-enhancement.json`](../validation/evidence/context-enhancement.json)：共享 fixture、路线与代际身份、合法 skipped commit、1000 ms 精确 pending 等待、commit 运行期间的 active history 采用、慢任务完成与超时降级、完整 Pi 生命周期、Provider/UI 一致性和清理；
+- [`validation/evidence/context-enhancement.json`](../validation/evidence/context-enhancement.json)：共享 fixture、路线与代际身份、合法 skipped commit、1000 ms 精确 pending 等待、慢 Phase 2 期间连续路线 active history、每镜像单一 commit、最新 revision 提升、pending token 保留、超时 active history 保留、完整 Pi 生命周期、Provider/UI 一致性和清理；
 - `scripts/validate-real-context-adoption.mjs`：统一验证模型的真实采用入口，不预等待 Working Memory；Pi `0.84.2` 下 skipped 场景的零间隔第二轮 Provider payload 已采用增强，accepted 场景在最终 Working Memory 完成前已用 active history 发出增强请求，原始产物保存在 Git 忽略的 `.artifacts/real-context-adoption/`；
 - [`validation/evidence/context-quality.json`](../validation/evidence/context-quality.json)：最近一次两个 arm 均保持当前决定 `bounded-current-route` 与来源 `b000000c`，并记录实际任务/记忆模型坐标、记忆调用路由与 token；本次状态生命周期改动后实现绑定已过期，需在验证凭据可用后重新运行质量 runner。
 
@@ -27,9 +27,9 @@ Pi `context` hook 只读取内存中的当前受管 OpenViking 子进程和路�
 
 ## 3. 当前主导约束
 
-增强状态现按“增强记忆 · 初始化中 → 增强记忆 · 生效中 → 增强记忆”实时展示，只有配置、代际或后端不可用并强制回退时显示“Pi 原生”；Provider 实际采用路径保持独立记录。四份本地 evidence 已覆盖启动、路线变化、tree/session/compaction、后端失败和恢复，并与当前实现一致。
+慢 VLM Phase 2 已退出路线准备关键路径：本地纵向验证证明同一镜像在任务运行期间可连续准备三条线性路线，均在 1000 ms 内发布精确 active context；旧任务只提升完成时最新 revision，每镜像不会并行提交，新增 pending token 不会被旧任务完成清零，超时继续保留已核验 active history。增强状态与 Provider 实际采用仍保持独立。
 
-当前立即约束是质量 evidence 尚未与状态生命周期改动后的扩展入口及统一模型配置重新绑定；验证进程取得 OpenRouter 凭据后直接重跑 `validate-context-quality.mjs`，确认任务质量仍成立。随后主导约束回到完整账单归属：把每个任务、记忆、重试和降级请求绑定到 OpenRouter 最终 billed cost，才能判断增强路径是否具有完整成本优势。
+当前立即约束重新回到质量 evidence 尚未与本次双通道实现及统一模型配置绑定；验证进程取得 OpenRouter 凭据后直接重跑 `validate-context-quality.mjs`，确认任务质量仍成立。随后主导约束是完整账单归属：把每个任务、记忆、重试和降级请求绑定到 OpenRouter 最终 billed cost，才能判断增强路径是否具有完整成本优势。
 
 ## 4. 当前交付边界
 

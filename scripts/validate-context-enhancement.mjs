@@ -162,7 +162,7 @@ async function startOpenVikingDouble() {
         }
         state.createRequests += 1;
         if (state.createResponseDelayMs > 0) await sleep(state.createResponseDelayMs);
-        const session = { id, messages: [], pendingTokens: 0, overview: "", batches: [], commits: 0 };
+        const session = { id, messages: [], pendingArchive: [], pendingTokens: 0, overview: "", batches: [], commits: 0 };
         state.sessions.set(id, session);
         state.allSessions.set(id, session);
         state.createdSessions += 1;
@@ -228,13 +228,18 @@ async function startOpenVikingDouble() {
           return;
         }
         const taskId = `task-${state.tasks.size + 1}`;
+        const archiveCount = Math.max(0, session.messages.length - keepRecent);
+        const archivedMessages = session.messages.slice(0, archiveCount);
+        session.pendingArchive.push(...structuredClone(archivedMessages));
+        session.messages = session.messages.slice(archiveCount);
+        session.pendingTokens = 0;
         state.tasks.set(taskId, {
           id: taskId,
           status: "pending",
           polls: 0,
           completeAfterPolls: state.taskPollsBeforeCompletion,
           session,
-          keepRecent,
+          archivedMessages,
         });
         send(response, 200, {
           status: "ok",
@@ -260,20 +265,17 @@ async function startOpenVikingDouble() {
         if (task.polls >= task.completeAfterPolls && task.status !== "completed") {
           task.status = "completed";
           task.session.overview = [
+            task.session.overview,
             "# Working Memory",
             "## Session Title\nLocal validation",
             "## Current State\nReady",
             "## Task & Goals\nValidate current route",
-            `## Key Facts & Decisions\n${task.session.messages.map((message) => textOfProjection(message)).join("\n\n")}`,
+            `## Key Facts & Decisions\n${task.archivedMessages.map((message) => textOfProjection(message)).join("\n\n")}`,
             "## Files & Context\nPi sources",
             "## Errors & Corrections\nNone",
             "## Open Issues\nNone",
-          ].join("\n\n");
-          task.session.messages = task.keepRecent > 0 ? task.session.messages.slice(-task.keepRecent) : [];
-          task.session.pendingTokens = task.session.messages.reduce(
-            (total, message) => total + Math.max(1, Math.ceil(textOfProjection(message).length / 4)),
-            0,
-          );
+          ].filter(Boolean).join("\n\n");
+          task.session.pendingArchive.splice(0, task.archivedMessages.length);
         }
         send(response, 200, { status: "ok", result: { task_id: task.id, status: task.status } });
         return;
@@ -293,7 +295,7 @@ async function startOpenVikingDouble() {
           send(response, 404, { status: "error", error: { message: "session not found" } });
           return;
         }
-        const messages = session.messages.map(assembledMessage);
+        const messages = [...session.pendingArchive, ...session.messages].map(assembledMessage);
         send(response, 200, {
           status: "ok",
           result: {
@@ -1152,7 +1154,17 @@ try {
   };
   const otherCoordinator = new SessionMemoryCoordinator(otherIdentity, new FileLongTermMemory(join(artifactRoot, "archive")));
   const otherRoute = otherCoordinator.identifyCurrentRoute(snapshot(otherIdentity, branchB));
-  checks.sessionIsolation = otherRoute.fingerprint !== routeB.fingerprint;
+  const replacementIdentity = {
+    sessionId: identity.sessionId,
+    sessionFile: join(artifactRoot, "replacement-session.jsonl"),
+  };
+  const replacementCoordinator = new SessionMemoryCoordinator(
+    replacementIdentity,
+    new FileLongTermMemory(join(artifactRoot, "archive")),
+  );
+  const replacementRoute = replacementCoordinator.identifyCurrentRoute(snapshot(replacementIdentity, branchB));
+  checks.sessionIsolation = otherRoute.fingerprint !== routeB.fingerprint
+    && replacementRoute.fingerprint !== routeB.fingerprint;
 
   openViking = await startOpenVikingDouble();
   const optimizer = new WorkingContextOptimizer(openViking.baseUrl, undefined, 2_000, {
@@ -1171,6 +1183,11 @@ try {
   const preparedA = await routeAPromise;
   checks.lateRouteResultRejected &&= optimizer.getReady(routeB) === undefined;
   const preparedB = await optimizer.prepare(routeB, branchB);
+  const preparedOther = await optimizer.prepare(otherRoute, branchB);
+  const preparedReplacement = await optimizer.prepare(replacementRoute, branchB);
+  checks.sessionIsolation &&= preparedOther.openVikingSessionId !== preparedB.openVikingSessionId
+    && preparedReplacement.openVikingSessionId !== preparedB.openVikingSessionId
+    && preparedReplacement.openVikingSessionId !== preparedOther.openVikingSessionId;
   const preparedCompacted = await optimizer.prepare(compactedRoute, afterCompaction);
 
   checks.linearRouteReused = commonPrepared.openVikingSessionId === preparedA.openVikingSessionId;
@@ -1284,25 +1301,61 @@ try {
     taskTimeoutMs: 1_000,
     taskPollMs: 5,
   });
+  const slowLatestEntries = [...branchA, {
+    type: "message",
+    id: "slow-route-latest",
+    parentId: branchA.at(-1).id,
+    timestamp: "2026-08-14T09:04:00.000Z",
+    message: { role: "user", content: "latest route while working memory is running" },
+  }];
+  const slowLatestRoute = coordinator.identifyCurrentRoute(snapshot(identity, slowLatestEntries));
   const slowTaskPreparation = slowTaskOptimizer.prepare(commonRoute, common);
-  const inFlightReadyWaitStarted = Date.now();
+  const commonReadyStarted = Date.now();
   const activeWhileCommitting = await slowTaskOptimizer.waitForReady(commonRoute, DEFAULT_IN_FLIGHT_READY_WAIT_MS);
-  const inFlightReadyWaitElapsedMs = Date.now() - inFlightReadyWaitStarted;
+  const commonReadyElapsedMs = Date.now() - commonReadyStarted;
   const activeWhileCommittingTask = [...openViking.state.tasks.values()].at(-1);
+  const slowRouteAPreparation = slowTaskOptimizer.prepare(routeA, branchA);
+  const routeAReadyStarted = Date.now();
+  const activeRouteA = await slowTaskOptimizer.waitForReady(routeA, DEFAULT_IN_FLIGHT_READY_WAIT_MS);
+  const routeAReadyElapsedMs = Date.now() - routeAReadyStarted;
+  const slowLatestPreparation = slowTaskOptimizer.prepare(slowLatestRoute, slowLatestEntries);
+  const latestReadyStarted = Date.now();
+  const activeLatest = await slowTaskOptimizer.waitForReady(slowLatestRoute, DEFAULT_IN_FLIGHT_READY_WAIT_MS);
+  const latestReadyElapsedMs = Date.now() - latestReadyStarted;
+  const slowSession = openViking.state.sessions.get(activeWhileCommitting?.openVikingSessionId);
+  const tasksBeforePromotion = [...openViking.state.tasks.values()]
+    .filter((task) => task.session === slowSession);
   const activeHistoryAdopted = activeWhileCommitting
     ? applyPreparedWorkingContext(currentTurn, activeWhileCommitting)
     : [];
   checks.inFlightReadyWaitBounded = DEFAULT_IN_FLIGHT_READY_WAIT_MS === 1_000
-    && inFlightReadyWaitElapsedMs <= DEFAULT_IN_FLIGHT_READY_WAIT_MS + 50;
+    && Math.max(commonReadyElapsedMs, routeAReadyElapsedMs, latestReadyElapsedMs) <= DEFAULT_IN_FLIGHT_READY_WAIT_MS + 50;
   checks.activeHistoryAvailableDuringWorkingMemory = activeWhileCommitting?.hasWorkingMemory === false
     && activeWhileCommittingTask?.polls < 100
     && activeHistoryAdopted[0]?.role === "custom"
     && activeHistoryAdopted[1] === currentTurn[2];
-  const slowTaskPrepared = await slowTaskPreparation;
-  const slowTask = [...openViking.state.tasks.values()].at(-1);
-  checks.slowWorkingMemoryCompletesWithinDeadline = slowTaskPrepared.hasWorkingMemory
-    && slowTask?.status === "completed"
-    && slowTask.polls >= 100;
+  checks.routesPrepareDuringWorkingMemory = activeRouteA?.route.fingerprint === routeA.fingerprint
+    && activeLatest?.route.fingerprint === slowLatestRoute.fingerprint
+    && activeLatest.hasWorkingMemory === false
+    && activeWhileCommitting?.openVikingSessionId === activeRouteA.openVikingSessionId
+    && activeRouteA.openVikingSessionId === activeLatest.openVikingSessionId;
+  checks.singleCommitFlightPerMirror = slowSession?.commits === 1
+    && tasksBeforePromotion.length === 1
+    && tasksBeforePromotion[0]?.status !== "completed";
+  const [slowCommonPrepared, slowRouteAPrepared, slowLatestPrepared] = await Promise.all([
+    slowTaskPreparation,
+    slowRouteAPreparation,
+    slowLatestPreparation,
+  ]);
+  checks.latestRoutePromotedAfterCommit = slowCommonPrepared.hasWorkingMemory === false
+    && slowRouteAPrepared.hasWorkingMemory === false
+    && slowLatestPrepared.hasWorkingMemory
+    && slowTaskOptimizer.getReady(slowLatestRoute)?.hasWorkingMemory === true
+    && slowTaskOptimizer.getReady(routeA)?.hasWorkingMemory === false
+    && slowLatestPrepared.content.includes(slowLatestRoute.leafId);
+  checks.pendingTokensPreservedAcrossCommit = slowSession?.commits === 2;
+  checks.slowWorkingMemoryCompletesWithinDeadline = activeWhileCommittingTask?.status === "completed"
+    && activeWhileCommittingTask.polls >= 100;
   await slowTaskOptimizer.shutdown();
 
   openViking.state.taskPollsBeforeCompletion = Number.MAX_SAFE_INTEGER;
@@ -1314,14 +1367,30 @@ try {
     taskTimeoutMs: 30,
     taskPollMs: 5,
   });
-  let taskTimedOut = false;
-  try {
-    await timeoutOptimizer.prepare(commonRoute, common);
-  } catch (error) {
-    taskTimedOut = String(error).includes("timed out");
-  }
-  checks.workingMemoryTimeoutFallsBack = taskTimedOut && timeoutOptimizer.getReady(commonRoute) === undefined;
+  const timeoutPrepared = await timeoutOptimizer.prepare(commonRoute, common);
+  checks.workingMemoryTimeoutRetainsActiveHistory = timeoutPrepared.hasWorkingMemory === false
+    && timeoutOptimizer.getReady(commonRoute)?.content === timeoutPrepared.content;
   await timeoutOptimizer.shutdown();
+
+  const commitShutdownBaseline = new Set(openViking.state.sessions.keys());
+  const commitShutdownOptimizer = new WorkingContextOptimizer(openViking.baseUrl, undefined, 2_000, {
+    contextTokenBudget: 2_000,
+    commitPendingTokens: 1,
+    keepRecentMessages: 3,
+    maxContextChars: 1_600,
+    taskTimeoutMs: 2_000,
+    taskPollMs: 5,
+  });
+  const commitShutdownPreparation = commitShutdownOptimizer.prepare(commonRoute, common).then(
+    () => false,
+    () => true,
+  );
+  const commitShutdownActive = await commitShutdownOptimizer.waitForReady(commonRoute, DEFAULT_IN_FLIGHT_READY_WAIT_MS);
+  await commitShutdownOptimizer.shutdown();
+  checks.inFlightCommitShutdownCleaned = commitShutdownActive?.hasWorkingMemory === false
+    && await commitShutdownPreparation
+    && [...openViking.state.sessions.keys()].every((sessionId) => commitShutdownBaseline.has(sessionId))
+    && openViking.state.sessions.size === commitShutdownBaseline.size;
   openViking.state.taskPollsBeforeCompletion = 2;
 
   const failedOptimizer = new WorkingContextOptimizer(openViking.baseUrl, undefined, 2_000, {
