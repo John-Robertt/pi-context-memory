@@ -1,11 +1,11 @@
 {
   "schemaVersion": 1,
   "generatedBy": "scripts/validate-source-archive.mjs",
-  "runId": "source-archive-2026-08-14T22-08-29-755Z",
-  "recordedAt": "2026-08-14T22:08:30.528Z",
+  "runId": "source-archive-2026-08-15T04-17-14-193Z",
+  "recordedAt": "2026-08-15T04:17:14.984Z",
   "piVersion": "0.84.2",
   "implementation": {
-    "sourceManifestSha256": "4392c30ccb21ced0de5fb93f6815a93bc8387a2e073aa120273c6e309acb7fbf",
+    "sourceManifestSha256": "57cf069f8f015e2a6a9941c950a755788ed4b82c4b37c987c39c4a6c184f2de3",
     "files": [
       {
         "path": ".pi/extensions/pi-context-memory/index.ts",
@@ -17,7 +17,7 @@
       },
       {
         "path": ".pi/extensions/pi-context-memory/memory-model-configuration.ts",
-        "sha256": "270467148579a1b9141665cdc62cff6dbb0311ba26013dff0a15a5049b7baec0"
+        "sha256": "241cce1184190c94837dbcc4976c5e7411d87947279444d6abbefb26af140eea"
       },
       {
         "path": ".pi/extensions/pi-context-memory/openviking-protocol.ts",
@@ -53,14 +53,14 @@
       },
       {
         "path": "scripts/validation-evidence.mjs",
-        "sha256": "ff83b7d6551fc369f1fb516f838e40e2cf71f0143cacb8da769c77ba276f4434"
+        "sha256": "b2ae8a7bcd06f0b11316f4493aa35b660055a88f2279604cf4494c8490c43c08"
       },
       {
         "path": "scripts/validation-model-config.mjs",
-        "sha256": "30b9c777779612593eba4e5fff5679cc2d91434286261964465d115d067702d5"
+        "sha256": "bf39bf91ec6816eea77aad3d9a4986c452bf37155099ad429a17b90fefd538eb"
       }
     ],
-    "gitCommit": "9468031d9b8787bc611bf2c2eccae86499cb77a5",
+    "gitCommit": "971f6fccb88c8cdfb09683da3c6e7f973f25c8c0",
     "workingTreeDirty": true
   },
   "passed": true,

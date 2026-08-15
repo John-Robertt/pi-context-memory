@@ -8,11 +8,11 @@ OpenViking原生配置、运行配置格式和进程通信由系统设计统一�
 
 ## 2. 目标与边界
 
-系统在 `~/.pi/pi-context-memory.jsonc` 维护用户级 OpenViking VLM 配置。文件不存在时创建合法空配置，并以注释列出扩展当前验证和转换的 Provider、必要连接字段及认证入口；已有文件始终由用户拥有，系统不自动覆盖。项目锁定的 OpenViking 版本用于可复现安装，不把其全部内部能力变成用户配置承诺。
+系统在 `~/.pi/pi-context-memory.jsonc` 维护用户级 OpenViking VLM 配置。文件不存在时创建合法空配置，并以注释列出扩展当前验证和转换的 Provider、必要连接字段及认证入口；已有文件内容始终由用户拥有，系统不自动覆盖，只在读取时把权限收紧为 `0600`。项目锁定的 OpenViking 版本用于可复现安装，不把其全部内部能力变成用户配置承诺。
 
 记忆模型设置独立于 Pi `/model` 的任务模型设置。修改记忆模型保持当前任务模型和 Pi session branch 不变，也不产生任务模型调用或对话消息。
 
-凭据由环境变量、云原生凭据链或 OpenViking支持的认证机制提供，不进入记忆模型设置和 Pi session。
+`memoryModel.api_key` 归属于当前 Provider 或 LiteLLM 来源，可直接填写 key，也可填写 `$NAME` 或 `${NAME}` 环境变量引用；无需 API key 的来源可以省略并使用云原生或 OpenViking 原生认证。配置文件由系统以 `0600` 创建，用户须按凭据文件保护；`/memory-model`、运行状态、诊断、日志和 Pi session 不回显该字段。
 
 ## 3. `/memory-model`
 
@@ -40,10 +40,10 @@ readiness 检查只验证本地服务，不产生外部 Provider 调用。具体
 
 ## 6. 完成条件
 
-- 用户只填写 OpenViking VLM Provider、模型和该 Provider 要求的必要连接信息，其余 OpenViking 配置由系统生成；
+- 用户只填写 OpenViking VLM Provider、模型、可选 `api_key` 和该 Provider 要求的必要连接信息，其余 OpenViking 配置由系统生成；
 - 可选范围是扩展当前验证和转换的稳定子集，上游新增未知能力不影响已有配置；
-- 凭据与用户 JSONC、Pi session 和运行状态保持分离；
-- `/memory-model` 只检查并准确区分用户配置和运行实例，不覆盖用户文件；
+- `api_key` 支持直接值与环境变量引用；用户配置和生成配置以仅当前用户可读写权限保存，界面、状态、诊断、日志和 Pi session 均不回显凭据；
+- `/memory-model` 只检查并准确区分用户配置和运行实例，不覆盖用户配置内容；
 - `/restart-viking` 只控制项目启动器拥有的实例，并在 readiness 后报告实际加载设置；
 - 配置无效或服务异常期间，错误目标不生效，冷启动基础服务和 Pi 原生任务路径继续运行；
 - 多 Pi session 观察同一用户配置，每个项目的实例所有权和并发应用保持隔离；

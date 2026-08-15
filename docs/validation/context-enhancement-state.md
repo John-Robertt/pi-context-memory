@@ -61,11 +61,10 @@ node scripts/validate-real-context-adoption.mjs
 真实记忆模型质量使用同一 fixture 的独立成对入口：
 
 ```bash
-PCR_OPENVIKING_VLM_API_KEY="<OpenRouter API key>" \
 node scripts/validate-context-quality.mjs
 ```
 
-该 runner 的 evidence 坐标固定为 Pi `0.84.2` 与 OpenViking `0.4.13`，固定单次 native→enhanced 顺序；它读取同一 [`../../validation/model.json`](../../validation/model.json)，把派生记忆路线写入当前 run 的 `.artifacts/context-quality/<run>/memory-model.jsonc`，再以 `PCR_MEMORY_MODEL_SETTINGS` 只注入隔离的 launcher 与 Pi 验证进程，不读取或改写 `~/.pi/pi-context-memory.jsonc`。观察扩展核对 Pi thinking、active tools、system prompt 与 Provider 模型；adapter probe 证明配置的 LiteLLM OpenRouter 路由、temperature `0` 和 API key 被转发，但 reasoning 不被转发。任务要求从当前路线事实判定方案，增强 arm 还必须观察 Working Memory 就绪并在实际 Provider 请求采用。稳定结果保存于 [`../../validation/evidence/context-quality.json`](../../validation/evidence/context-quality.json)，并记录本次实际模型坐标；当前结果仍只证明一个固定 fixture 的单次样本。
+该 runner 的 evidence 坐标固定为 Pi `0.84.2` 与 OpenViking `0.4.13`，固定单次 native→enhanced 顺序；它通过 Pi `auth print-api-key --provider openrouter` 复用 Pi 已解析的认证，把 key 只放入本次 Launcher 的 `PCR_CONTEXT_QUALITY_OPENROUTER_API_KEY` 环境，并把派生记忆路线及对应环境引用写入当前 run 的 `0600` `.artifacts/context-quality/<run>/memory-model.jsonc`。Pi 验证子进程继续使用自己的认证存储，不继承该隔离变量；runner 不读取或改写 `~/.pi/pi-context-memory.jsonc`。观察扩展核对 Pi thinking、active tools、system prompt 与 Provider 模型；adapter probe 证明配置的 LiteLLM OpenRouter 路由、temperature `0` 和 API key 被转发，但 reasoning 不被转发。任务要求从当前路线事实判定方案，增强 arm 还必须观察 Working Memory 就绪并在实际 Provider 请求采用。稳定结果保存于 [`../../validation/evidence/context-quality.json`](../../validation/evidence/context-quality.json)，并记录本次实际模型坐标与脱敏凭据来源；配置、日志、结果和 evidence 均不保存 key。
 
 当前尚未闭合的是完整 billed cost：质量 runner 已保存 Pi 任务模型统计和 OpenViking 记忆模型 token 归属，但尚未把每个 generation 与 OpenRouter 最终账单逐项关联，因此不能据此宣称完整成本优势。
 

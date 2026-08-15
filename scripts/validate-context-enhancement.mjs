@@ -467,14 +467,13 @@ async function runPiAdoptionCase(openViking) {
     compaction: { enabled: true, reserveTokens: 1_000, keepRecentTokens: 1 },
   });
   mkdirSync(runtimeDir, { recursive: true });
-  const memorySetting = { provider: "openai", model: "local-memory" };
+  const memorySetting = { provider: "openai", model: "local-memory", api_key: "local-validation" };
   const settingsFingerprint = createHash("sha256")
     .update(JSON.stringify(Object.fromEntries(Object.entries(memorySetting).sort(([left], [right]) => left.localeCompare(right)))))
     .digest("hex");
   const compiledMemoryConfig = await compileOpenVikingConfig(root, memorySetting, {
     ...process.env,
     HOME: home,
-    PCR_OPENVIKING_VLM_API_KEY: "local-validation",
   });
   mkdirSync(settingsTargetDir, { recursive: true });
   writeFileSync(settingsTargetPath, `${JSON.stringify({ memoryModel: memorySetting })}\n`, "utf8");
@@ -587,7 +586,6 @@ async function runPiAdoptionCase(openViking) {
       PCR_MEMORY_MODEL_SETTINGS: settingsPath,
       PCR_OPENVIKING_RUNTIME_DIR: runtimeDir,
       PCR_OPENVIKING_URL: openViking.baseUrl,
-      PCR_OPENVIKING_VLM_API_KEY: "local-validation",
       PCR_OBSERVATION_LOG: observationLog,
       PCR_ARCHIVE_DIR: join(caseDir, "archive"),
     },

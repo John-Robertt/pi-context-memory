@@ -11,9 +11,13 @@ import {
   assertImplementationEvidenceUnchanged,
   captureImplementationEvidence,
 } from "./validation-evidence.mjs";
-import { readValidationModels } from "./validation-model-config.mjs";
+import {
+  createIsolatedPiProviderCredential,
+  readValidationModels,
+} from "./validation-model-config.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const QUALITY_CREDENTIAL_ENV = "PCR_CONTEXT_QUALITY_OPENROUTER_API_KEY";
 if (process.argv.length !== 2) throw new Error("Usage: node scripts/validate-context-quality.mjs");
 
 const runId = process.env.PCR_RUN_ID ?? `context-quality-${new Date().toISOString().replaceAll(/[:.]/g, "-")}`;
@@ -37,7 +41,7 @@ function assert(condition, message) {
 
 function writeJson(path, value) {
   mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+  writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
 }
 
 function replaceJson(path, value) {
@@ -261,19 +265,21 @@ async function runArm(name, model, openViking) {
   args.push("--extension", openViking.observerPath);
 
   const stderr = [];
+  const piEnvironment = {
+    ...process.env,
+    PI_SKIP_VERSION_CHECK: "1",
+    PCR_MEMORY_MODEL_SETTINGS: openViking.settingsPath,
+    PCR_OPENVIKING_RUNTIME_DIR: openViking.runtimeDir,
+    PCR_OPENVIKING_BASE_CONFIG: openViking.baseConfigPath,
+    PCR_OPENVIKING_URL: openViking.url,
+    PCR_OBSERVATION_LOG: observationLog,
+    PCR_ARCHIVE_DIR: join(armRoot, "archive"),
+    PCR_QUALITY_ARM_OBSERVATION: conditionLog,
+  };
+  delete piEnvironment[QUALITY_CREDENTIAL_ENV];
   const child = spawn("pi", args, {
     cwd: root,
-    env: {
-      ...process.env,
-      PI_SKIP_VERSION_CHECK: "1",
-      PCR_MEMORY_MODEL_SETTINGS: openViking.settingsPath,
-      PCR_OPENVIKING_RUNTIME_DIR: openViking.runtimeDir,
-      PCR_OPENVIKING_BASE_CONFIG: openViking.baseConfigPath,
-      PCR_OPENVIKING_URL: openViking.url,
-      PCR_OBSERVATION_LOG: observationLog,
-      PCR_ARCHIVE_DIR: join(armRoot, "archive"),
-      PCR_QUALITY_ARM_OBSERVATION: conditionLog,
-    },
+    env: piEnvironment,
     stdio: ["pipe", "pipe", "pipe"],
   });
   child.stderr.on("data", (chunk) => stderr.push(Buffer.from(chunk)));
@@ -323,20 +329,42 @@ async function runArm(name, model, openViking) {
       },
     };
   } catch (error) {
-    throw new Error(`${name}: ${error instanceof Error ? error.message : String(error)}\n${Buffer.concat(stderr).toString("utf8").slice(-4_000)}`);
+    throw new Error(redactQualityCredential(
+      `${name}: ${error instanceof Error ? error.message : String(error)}\n${Buffer.concat(stderr).toString("utf8").slice(-4_000)}`,
+    ));
   } finally {
-    writeJson(join(armRoot, "rpc-events.json"), client.events);
-    writeFileSync(join(armRoot, "pi-stderr.log"), Buffer.concat(stderr));
+    writeFileSync(
+      join(armRoot, "rpc-events.json"),
+      `${redactQualityCredential(JSON.stringify(client.events, null, 2))}\n`,
+      { encoding: "utf8", mode: 0o600 },
+    );
+    writeFileSync(
+      join(armRoot, "pi-stderr.log"),
+      redactQualityCredential(Buffer.concat(stderr).toString("utf8")),
+      { encoding: "utf8", mode: 0o600 },
+    );
     await client.close();
   }
 }
 
 const task = parseModel(taskModel, "task model");
-const memory = parseModel(memoryModel, "memory model");
-assert(
-  Boolean(process.env.PCR_OPENVIKING_VLM_API_KEY?.trim()),
-  "Quality validation requires PCR_OPENVIKING_VLM_API_KEY",
+const inheritedQualityCredential = process.env[QUALITY_CREDENTIAL_ENV];
+const isolatedOpenRouterCredential = createIsolatedPiProviderCredential(
+  "openrouter",
+  QUALITY_CREDENTIAL_ENV,
+  { cwd: root },
 );
+const qualityEnvironment = {
+  ...process.env,
+  ...isolatedOpenRouterCredential.environment,
+};
+delete qualityEnvironment.OPENROUTER_API_KEY;
+const isolatedOpenRouterApiKey = isolatedOpenRouterCredential.environment[QUALITY_CREDENTIAL_ENV];
+const redactQualityCredential = (value) => String(value).replaceAll(isolatedOpenRouterApiKey, "<redacted>");
+const memory = {
+  ...parseModel(memoryModel, "memory model"),
+  api_key: isolatedOpenRouterCredential.reference,
+};
 const adapterProbe = JSON.parse(commandOutput(
   join(root, ".venv/bin/python"),
   [join(root, "scripts/validate-openviking-vlm-adapters.py"), memory.model],
@@ -366,7 +394,7 @@ baseConfig.storage.workspace = join(artifactRoot, "openviking-data");
 writeJson(baseConfigPath, baseConfig);
 writeJson(settingsPath, { memoryModel: memory });
 const compiledMemoryModel = await compileOpenVikingConfig(root, memory, {
-  ...process.env,
+  ...qualityEnvironment,
   PCR_MEMORY_MODEL_SETTINGS: settingsPath,
   PCR_OPENVIKING_BASE_CONFIG: baseConfigPath,
 });
@@ -396,7 +424,7 @@ const launcherStderr = [];
 const launcher = spawn("node", [join(root, "scripts/start-openviking.mjs")], {
   cwd: root,
   env: {
-    ...process.env,
+    ...qualityEnvironment,
     PCR_MEMORY_MODEL_SETTINGS: settingsPath,
     PCR_OPENVIKING_RUNTIME_DIR: runtimeDir,
     PCR_OPENVIKING_BASE_CONFIG: baseConfigPath,
@@ -439,7 +467,20 @@ try {
   const memoryTotalTokens = memoryTokenUsage.reduce((total, row) => total + row.token_count, 0);
   const nativePassed = Object.values(native.checker).every(Boolean);
   const enhancedPassed = Object.values(enhanced.checker).every(Boolean);
+  const credentialObservables = [
+    readFileSync(settingsPath, "utf8"),
+    JSON.stringify(compiledMemoryModel),
+    Buffer.concat(launcherStdout).toString("utf8"),
+    Buffer.concat(launcherStderr).toString("utf8"),
+  ].join("\n");
+  const credentialIsolated = memory.api_key === isolatedOpenRouterCredential.reference
+    && compiledMemoryModel.config.vlm.api_key === isolatedOpenRouterCredential.reference
+    && qualityEnvironment[QUALITY_CREDENTIAL_ENV] === isolatedOpenRouterApiKey
+    && !Object.hasOwn(qualityEnvironment, "OPENROUTER_API_KEY")
+    && process.env[QUALITY_CREDENTIAL_ENV] === inheritedQualityCredential
+    && !credentialObservables.includes(isolatedOpenRouterApiKey);
   const checks = {
+    credentialIsolated,
     nativeQuality: nativePassed,
     enhancedQuality: enhancedPassed,
     enhancedContextAdopted: enhanced.adopted && enhanced.observations.enhancedProviderRequests > 0,
@@ -471,6 +512,7 @@ try {
     models: { task: taskModel, memory: memoryModel },
     openVikingUsage: { tokenRows: openVikingTokenUsage, memoryTotalTokens },
     memoryModelCondition: {
+      credentialSource: "pi-auth",
       configFingerprint: compiledMemoryModel.configFingerprint,
       explicitRequestControls: explicitMemoryRequestControls,
       adapterRequest: memoryRequestSemantics,
@@ -509,13 +551,19 @@ try {
     startedAt,
     completedAt: new Date().toISOString(),
     passed: false,
-    error: error instanceof Error ? error.message : String(error),
+    error: redactQualityCredential(error instanceof Error ? error.message : String(error)),
   };
   writeJson(join(artifactRoot, "result.json"), result);
   throw error;
 } finally {
-  writeFileSync(join(artifactRoot, "launcher-stdout.log"), Buffer.concat(launcherStdout));
-  writeFileSync(join(artifactRoot, "launcher-stderr.log"), Buffer.concat(launcherStderr));
   if (launcher.exitCode === null && launcher.signalCode === null) launcher.kill("SIGTERM");
   await waitForExit(launcher).catch(() => undefined);
+  writeFileSync(
+    join(artifactRoot, "launcher-stdout.log"),
+    redactQualityCredential(Buffer.concat(launcherStdout).toString("utf8")),
+  );
+  writeFileSync(
+    join(artifactRoot, "launcher-stderr.log"),
+    redactQualityCredential(Buffer.concat(launcherStderr).toString("utf8")),
+  );
 }

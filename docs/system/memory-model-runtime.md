@@ -10,13 +10,14 @@
 
 - `provider`：扩展当前能够转换并由项目 OpenViking 配置入口验证的 Provider；
 - `model`：对应 Provider 接受的模型 ID 或路由表达式；
-- 该 Provider 当前必要且无法推导的非凭据连接字段。
+- `api_key`：当前 Provider 或 LiteLLM 来源的可选凭据；可直接填写 key，也可使用 `$NAME` 或 `${NAME}` 引用启动器环境变量；
+- 该 Provider 当前必要且无法推导的其它连接字段。
 
 界面中的“来源”映射到规范 `provider`。OpenAI-compatible服务通过 `provider: "openai"` 和相应 `api_base` 表达，LiteLLM路由按其模型路由语义表达。配置结构只由 OpenViking schema 明确定义且当前来源需要的字段组成。
 
-文件缺失时，长时记忆模块根据扩展当前支持的配置面原子独占创建 `0600` JSONC 模板；模板说明支持的 Provider、必要字段和认证入口，`memoryModel: null` 表示未配置。已有文件只读解析，不自动覆盖用户内容；语法诊断保留行列，语义诊断定位到 `memoryModel`。该用户配置独立于 Pi session 历史和 `/model` 任务模型。
+文件缺失时，长时记忆模块根据扩展当前支持的配置面原子独占创建 `0600` JSONC 模板；模板说明支持的 Provider、必要字段和认证入口，`memoryModel: null` 表示未配置。已有文件只读解析内容、不自动覆盖，并在读取时把文件权限收紧为 `0600`；语法诊断保留行列，语义诊断定位到 `memoryModel`。该用户配置独立于 Pi session 历史和 `/model` 任务模型。
 运行配置由项目基础配置、公共 VLM 默认值和有效用户配置编译为可重建的 `.artifacts/openviking/runtime/openviking.json`。`state.json` 分别记录实际 ready 实例的 `active*` 配置事实与当前应用目标的 `target*` 配置事实，并保存冷启动配置诊断、启动器与子进程 PID、操作 ID、阶段和 readiness；失败目标不会伪装成运行配置。`launcher.json` 保存本地控制入口、启动标识和操作期限，`launcher.lock` 原子约束同一项目运行目录只有一个生命周期所有者。这些生成文件都不承担业务事实权威。
-普通 Provider 的密钥由 `PCR_OPENVIKING_VLM_API_KEY` 提供，生成配置只保存该环境变量占位符。LiteLLM 的 API-key 来源也可使用该入口；未设置时由 LiteLLM 按官方目录读取来源环境变量或使用云原生认证。模板只提供当前验证的少量显式云路由示例，不复制完整凭据 registry。用户 JSONC、运行状态、日志和 Pi session 均不保存展开后的 API key、OAuth token、云凭据或认证响应。
+`api_key` 原样写入 `0600` 运行配置；普通字符串是直接凭据，完整 `$NAME` 或 `${NAME}` 由 OpenViking 加载配置时从启动器环境展开。编译预检只检查引用变量是否存在，不展开或记录其值。普通 Provider 和 LiteLLM OpenRouter 需要有效 `api_key`；其它 LiteLLM 路由可按官方目录省略并使用来源环境或云原生认证，`openai-codex` 可使用原生 OAuth。模板只提供当前验证的少量显式云路由示例，不复制完整凭据 registry。运行状态、日志、诊断、evidence 和 Pi session 均不保存或回显 API key、OAuth token、云凭据或认证响应。
 
 ## 3. 来源覆盖与转换规则
 

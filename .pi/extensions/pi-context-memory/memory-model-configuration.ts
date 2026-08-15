@@ -5,13 +5,13 @@ import { chmod, link, mkdir, open, readFile, rename, rm, writeFile } from "node:
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 
-export const MEMORY_MODEL_CREDENTIAL_ENV = "PCR_OPENVIKING_VLM_API_KEY";
 export const OPENVIKING_CONFIG_BRIDGE_TIMEOUT_MS = 15_000;
 export const MEMORY_MODEL_CONFIG_FILENAME = "pi-context-memory.jsonc";
 
 export interface MemoryModelSetting {
   provider: string;
   model: string;
+  api_key?: string;
   api_base?: string;
   api_version?: string;
 }
@@ -20,7 +20,7 @@ export interface ProviderCapability {
   name: string;
   required: string[];
   optional: string[];
-  credential: "environment" | "environment-or-native" | "optional-environment-or-native";
+  credential: "api-key" | "api-key-or-native" | "optional-api-key-or-native";
 }
 
 export interface MemoryModelCapabilities {
@@ -28,7 +28,6 @@ export interface MemoryModelCapabilities {
   providers: ProviderCapability[];
   settingFields: Record<string, unknown>;
   vlmSchemaSha256: string;
-  credentialEnvironment: string;
   litellmCatalogUrl: string;
 }
 
@@ -242,7 +241,8 @@ function memoryModelTemplate(capabilities: MemoryModelCapabilities): string {
   const lines = [
     "{",
     "  // 从下方选择一个 Provider 示例，用对应对象替换 null。",
-    "  // 凭据不要写入本文件；请使用说明中的环境变量或原生认证。",
+    "  // api_key 可直接填写 key，或用 $NAME / ${NAME} 引用启动器环境变量。",
+    "  // 本文件包含直接 key 时必须保持仅当前用户可读写。",
     "  // 保存有效配置后，在 Pi 中执行 /restart-viking 应用。",
     "  \"memoryModel\": null,",
     "",
@@ -250,13 +250,14 @@ function memoryModelTemplate(capabilities: MemoryModelCapabilities): string {
   ];
   for (const provider of capabilities.providers) {
     const model = provider.name === "azure" ? "<deployment-name>" : provider.name === "litellm" ? "<litellm-provider>/<model-id>" : "<model-id>";
-    const credential = provider.name === "litellm"
-      ? `${MEMORY_MODEL_CREDENTIAL_ENV} 可用于 API-key 来源；未设置时由 LiteLLM 读取来源自己的环境变量或云原生凭据`
-      : provider.credential === "environment"
-        ? `通过 ${MEMORY_MODEL_CREDENTIAL_ENV} 环境变量提供`
-        : provider.credential === "environment-or-native"
-          ? `使用 ${MEMORY_MODEL_CREDENTIAL_ENV} 或 OpenViking 原生认证`
-          : `需要时使用 ${MEMORY_MODEL_CREDENTIAL_ENV}，否则使用原生认证`;
+    const apiKeyEnvironment = provider.name === "litellm"
+      ? "SOURCE_API_KEY"
+      : `${provider.name.toUpperCase().replaceAll("-", "_")}_API_KEY`;
+    const credential = provider.credential === "api-key"
+      ? "api_key 必填，可直接填写或引用环境变量"
+      : provider.name === "litellm"
+        ? "OpenRouter 等 API-key 路由必须填写 api_key；云原生路线可使用来源认证"
+        : "api_key 可选；省略时使用 OpenViking 原生认证";
     lines.push(`  // ${provider.name}:`);
     if (provider.name === "litellm") {
       lines.push("  // LiteLLM 是多来源路由层，model 使用 <litellm-provider>/<model-id>。");
@@ -266,9 +267,10 @@ function memoryModelTemplate(capabilities: MemoryModelCapabilities): string {
     }
     lines.push("  // {");
     lines.push(`  //   \"provider\": \"${provider.name}\",`);
-    lines.push(`  //   \"model\": \"${model}\"${provider.required.length + provider.optional.length > 0 ? "," : ""}`);
+    lines.push(`  //   \"model\": \"${model}\",`);
+    lines.push(`  //   \"api_key\": \"$${apiKeyEnvironment}\", // 也可直接填写 key；${credential}`);
     const fields = [...provider.required, ...provider.optional];
-    fields.forEach((field, index) => {
+    fields.forEach((field) => {
       const required = provider.required.includes(field);
       const placeholder = field === "api_base"
         ? provider.name === "litellm" ? "https://<custom-endpoint>" : "https://<service-endpoint>"
@@ -276,10 +278,9 @@ function memoryModelTemplate(capabilities: MemoryModelCapabilities): string {
       const fieldNote = provider.name === "litellm" && field === "api_base"
         ? "可选，仅用于自定义端点或要求显式端点的来源"
         : required ? "必填" : "可选";
-      lines.push(`  //   \"${field}\": \"${placeholder}\"${index < fields.length - 1 ? "," : ""} // ${fieldNote}`);
+      lines.push(`  //   \"${field}\": \"${placeholder}\", // ${fieldNote}`);
     });
     lines.push("  // }");
-    lines.push(`  // 认证：${credential}`);
     lines.push("");
   }
   lines.push("}", "");
@@ -293,6 +294,7 @@ export async function ensureMemoryModelConfig(
   const configPath = memoryModelConfigPath(root, env);
   try {
     await readFile(configPath, "utf8");
+    await chmod(configPath, 0o600);
     return configPath;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
@@ -330,7 +332,7 @@ export async function normalizeMemoryModelSetting(
     throw new Error("Memory model setting must be a JSON object");
   }
   const value = setting as Record<string, unknown>;
-  const knownFields = new Set(["provider", "model", "api_base", "api_version"]);
+  const knownFields = new Set(["provider", "model", "api_key", "api_base", "api_version"]);
   const unknown = Object.keys(value).filter((field) => !knownFields.has(field)).sort();
   if (unknown.length > 0) throw new Error(`Unknown memory model setting fields: ${unknown.join(", ")}`);
 
@@ -342,6 +344,16 @@ export async function normalizeMemoryModelSetting(
   if (!model) throw new Error("Memory model ID is required");
 
   const normalized: MemoryModelSetting = { provider, model };
+  const apiKey = value.api_key;
+  if (apiKey !== undefined && apiKey !== "") {
+    if (typeof apiKey !== "string" || !apiKey.trim()) throw new Error("api_key must be a non-empty string");
+    normalized.api_key = apiKey.trim();
+  }
+  const apiKeyRequired = descriptor.credential === "api-key"
+    || (provider === "litellm" && model.toLowerCase().startsWith("openrouter/"));
+  if (apiKeyRequired && !normalized.api_key) {
+    throw new Error(`api_key is required for OpenViking provider ${provider}`);
+  }
   const acceptedConnections = new Set([...descriptor.required, ...descriptor.optional]);
   for (const field of ["api_base", "api_version"] as const) {
     const input = value[field];
@@ -527,11 +539,7 @@ export async function compileOpenVikingConfig(
 ): Promise<CompiledOpenVikingConfig> {
   const paths = runtimePaths(root, env);
   const baseConfig = await readJson(paths.baseConfig);
-  return runBridge(root, "compile", {
-    baseConfig,
-    setting,
-    credentialAvailable: Boolean(env[MEMORY_MODEL_CREDENTIAL_ENV]?.trim()),
-  }, env);
+  return runBridge(root, "compile", { baseConfig, setting }, env);
 }
 
 export async function readLauncherInfo(

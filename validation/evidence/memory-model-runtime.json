@@ -1,12 +1,12 @@
 {
   "schemaVersion": 1,
   "generatedBy": "scripts/validate-memory-model-runtime.mjs",
-  "runId": "memory-model-runtime-2026-08-14T22-08-29-775Z",
-  "recordedAt": "2026-08-14T22:09:33.584Z",
+  "runId": "memory-model-runtime-2026-08-15T04-17-14-186Z",
+  "recordedAt": "2026-08-15T04:18:22.290Z",
   "piVersion": "0.84.2",
   "openVikingVersion": "0.4.13",
   "implementation": {
-    "sourceManifestSha256": "7c2b4049dd69387b3ff7f04a6b7caac19186eb46e8798994d2ebe62dd7534103",
+    "sourceManifestSha256": "993e20a029f225cf7827337cad0602ebb208ec7904891ff41cdb575e0967df13",
     "files": [
       {
         "path": ".pi/extensions/pi-context-memory/index.ts",
@@ -14,7 +14,7 @@
       },
       {
         "path": ".pi/extensions/pi-context-memory/memory-model-configuration.ts",
-        "sha256": "270467148579a1b9141665cdc62cff6dbb0311ba26013dff0a15a5049b7baec0"
+        "sha256": "241cce1184190c94837dbcc4976c5e7411d87947279444d6abbefb26af140eea"
       },
       {
         "path": ".pi/extensions/pi-context-memory/openviking-protocol.ts",
@@ -50,15 +50,15 @@
       },
       {
         "path": "scripts/openviking-config.py",
-        "sha256": "f0e6adac8404931a3689835bd85226050f6af83b8ba6697ef7765f3041f8d2f4"
+        "sha256": "188be9528d9b67d84c1e05b5754688da594a61759e2f72923eb4b1e55af06971"
       },
       {
         "path": "scripts/start-openviking.mjs",
-        "sha256": "be12bd1f496efa5dd55450798b067973aefbc64219db369542774f5da6b826df"
+        "sha256": "938e2b066708a42b75efe2115daf959fc7b728a467ebfaa00033d3de9fc61e78"
       },
       {
         "path": "scripts/validate-memory-model-runtime.mjs",
-        "sha256": "6b850ca5150ef477c72b8284550965ea99ef0f02a26a9a449849352b5f244158"
+        "sha256": "14fa93db42b1555864676f9265e1b609ed29e85de9ea7c994a95c0e726549628"
       },
       {
         "path": "scripts/validate-openviking-vlm-adapters.py",
@@ -66,18 +66,18 @@
       },
       {
         "path": "scripts/validation-evidence.mjs",
-        "sha256": "ff83b7d6551fc369f1fb516f838e40e2cf71f0143cacb8da769c77ba276f4434"
+        "sha256": "b2ae8a7bcd06f0b11316f4493aa35b660055a88f2279604cf4494c8490c43c08"
       },
       {
         "path": "scripts/validation-model-config.mjs",
-        "sha256": "30b9c777779612593eba4e5fff5679cc2d91434286261964465d115d067702d5"
+        "sha256": "bf39bf91ec6816eea77aad3d9a4986c452bf37155099ad429a17b90fefd538eb"
       },
       {
         "path": "uv.lock",
         "sha256": "910184bff539fd56b4b7f8fc2ee46439f3113c7394c1538d60ef3a5e3c78f094"
       }
     ],
-    "gitCommit": "9468031d9b8787bc611bf2c2eccae86499cb77a5",
+    "gitCommit": "971f6fccb88c8cdfb09683da3c6e7f973f25c8c0",
     "workingTreeDirty": true
   },
   "passed": true,
@@ -90,8 +90,14 @@
     "generatedConfigParsed": true,
     "providerDefaultsNotOverridden": true,
     "deterministicFingerprint": true,
-    "openRouterCredentialReferenceStable": true,
-    "codexIgnoresAmbientCredential": true,
+    "environmentReferencesExpanded": true,
+    "apiKeyFormsPreserved": true,
+    "apiKeysBoundToSettings": true,
+    "codexNativeCredentialPreserved": true,
+    "credentialDiagnosticsRedacted": true,
+    "piCredentialInjectedIntoIsolatedEnvironment": true,
+    "missingReferencedCredentialRejected": true,
+    "openRouterApiKeyRequired": true,
     "unknownFieldRejected": true,
     "missingCredentialRejected": true,
     "azureFieldRejected": true,
@@ -103,13 +109,14 @@
     "invalidConfigDiagnosed": true,
     "existingConfigPreserved": true,
     "existingSymlinksPreserved": true,
-    "configSecretsExcluded": true,
     "configurationDiagnosticContentHashed": true,
     "concurrentLauncherRejected": true,
     "deadChildReadySuppressed": true,
     "targetPortPreflightPreservesInstance": true,
     "preflightPreservesInstance": true,
     "orderedRestart": true,
+    "runtimeCredentialsProtected": true,
+    "launcherLogsExcludeCredentials": true,
     "operationDeadlinePublished": true,
     "operationDeadlineCoversFailureCleanup": true,
     "wrongLaunchRejected": true,
@@ -121,6 +128,7 @@
     "commandNoProviderRequests": true,
     "taskModelUnchanged": true,
     "branchUnchanged": true,
+    "piSessionCredentialsExcluded": true,
     "configCommandReadOnly": true,
     "sharedUserConfig": true,
     "configuredAndRunningDistinct": true,

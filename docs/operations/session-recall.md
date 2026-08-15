@@ -9,15 +9,14 @@ node scripts/install-dependencies.mjs
 ```
 
 安装脚本使用 `uv.lock`，把当前可复现的 uv、Python 3.12、OpenViking `0.4.13` 和本地 embedding 依赖安装到项目内 `.tools/`、`.venv/` 与 `.cache/`，不修改系统 Python 或 shell PATH。OpenViking 版本是项目私有依赖锁定，不是对外部服务的永久版本要求。基础服务配置位于 [`../../config/openviking.json`](../../config/openviking.json)；首次启动 Pi 或 OpenViking 时，系统在 `~/.pi/pi-context-memory.jsonc` 独占创建用户级注释模板。
-
-启动 OpenViking。当前开发验证的 OpenRouter 记忆路线必须只在 launcher 终端提供密钥：
+启动 OpenViking。若 `memoryModel.api_key` 使用环境变量引用，只在 launcher 终端提供该来源变量；例如当前开发验证的 OpenRouter 路线使用：
 
 ```bash
-export PCR_OPENVIKING_VLM_API_KEY="<OpenRouter API key>"
+export OPENROUTER_API_KEY="<OpenRouter API key>"
 node scripts/start-openviking.mjs
 ```
 
-启动脚本作为项目 OpenViking 生命周期所有者运行：它先原子创建 `.artifacts/openviking/runtime/launcher.lock`，再预检配置与目标端口，生成仅当前用户可读写的运行配置，启动子进程并等待 `/health` 返回 `healthy=true`。LiteLLM OpenRouter 配置始终编译为稳定的 `PCR_OPENVIKING_VLM_API_KEY` 引用；只有 launcher 启动模型服务时必须拥有真实密钥，Pi 进程不接触密钥，也不重建 launcher 的可执行配置来决定当前增强是否可用，而是采用 runtime state 发布的 ready 受管子进程。OpenViking `0.4.13` 的 `/ready` 还包含 `viking://` 目录检查，不作为进程启动屏障；来源读写能力由召回验证单独覆盖。`launcher.json` 发布 loopback 控制入口和完整操作期限，`state.json` 分别发布实际运行实例与下一次应用目标；脚本只停止自己持有的子进程。启动器 PID、启动标识、锁和子进程必须一致。首次启动会把约 46 MiB 的本地 embedding 模型下载到项目 `.cache/openviking/models/`。服务健康后，在另一个终端从同一仓库根目录启动 Pi：
+启动脚本作为项目 OpenViking 生命周期所有者运行：它先原子创建 `.artifacts/openviking/runtime/launcher.lock`，再预检配置与目标端口，把当前来源的 `memoryModel.api_key` 直接值或环境引用原样编译到 `0600` 运行配置，启动子进程并等待 `/health` 返回 `healthy=true`。环境引用必须在 launcher 环境中存在，并由 OpenViking 加载配置时展开；状态、日志和诊断不回显字段值。Pi 进程无需持有引用变量，也不重建 launcher 的可执行配置来决定当前增强是否可用，而是采用 runtime state 发布的 ready 受管子进程。OpenViking `0.4.13` 的 `/ready` 还包含 `viking://` 目录检查，不作为进程启动屏障；来源读写能力由召回验证单独覆盖。`launcher.json` 发布 loopback 控制入口和完整操作期限，`state.json` 分别发布实际运行实例与下一次应用目标；脚本只停止自己持有的子进程。启动器 PID、启动标识、锁和子进程必须一致。首次启动会把约 46 MiB 的本地 embedding 模型下载到项目 `.cache/openviking/models/`。服务健康后，在另一个终端从同一仓库根目录启动 Pi：
 
 ```bash
 pi
@@ -33,7 +32,6 @@ pi
 | --- | --- | --- |
 | `PCR_OPENVIKING_URL` | `http://127.0.0.1:1933` | OpenViking服务根 URL |
 | `PCR_OPENVIKING_API_KEY` | 未设置 | 需要服务 API key 认证时发送 `X-API-Key` |
-| `PCR_OPENVIKING_VLM_API_KEY` | 未设置 | OpenViking VLM 凭据；当前 OpenRouter 开发路线要求 launcher 设置，生成配置只保存环境变量引用 |
 | `PCR_MEMORY_MODEL_SETTINGS` | 未设置 | 受控部署或验证覆盖记忆模型 JSONC 路径；普通运行不设置，设置时 Pi 与启动器必须使用同一值 |
 | `PCR_OPENVIKING_TIMEOUT_MS` | `30000` | 单次来源或 Session API 请求期限；Working Memory 任务另有 180 秒终态期限 |
 | `PCR_OPENVIKING_READINESS_TIMEOUT_MS` | `30000` | 启动器等待 `/health` 健康的期限 |
@@ -44,14 +42,15 @@ pi
 
 ## 3. 使用
 
-执行 `/memory-model` 查看用户配置路径和当前运行模型。编辑 `~/.pi/pi-context-memory.jsonc`，把 `memoryModel: null` 替换为文件中一个 Provider 示例并填写模型及必要连接字段；保存后执行 `/restart-viking`。恢复为 `null` 并重启会停用 VLM、保留基础来源服务。命令不改写 JSONC，且只向当前项目启动器提交应用请求。普通运行由用户自行选择记忆模型；开发验证从 [`../../validation/model.json`](../../validation/model.json) 的一个 `openRouterModel` 派生 Pi 任务路线和 LiteLLM 记忆路线，再通过隔离配置运行，不要求修改用户文件。验证 launcher 必须通过 `PCR_OPENVIKING_VLM_API_KEY` 获得密钥。其它 LiteLLM 路由按来源使用同一凭据入口、来源环境变量或云原生凭据。
+执行 `/memory-model` 查看用户配置路径和当前运行模型。编辑 `~/.pi/pi-context-memory.jsonc`，把 `memoryModel: null` 替换为文件中一个 Provider 示例并填写模型、`api_key` 及必要连接字段；`api_key` 可直接填写，也可写 `$NAME` 或 `${NAME}`。保存后执行 `/restart-viking`。恢复为 `null` 并重启会停用 VLM、保留基础来源服务。命令不改写 JSONC，且只向当前项目启动器提交应用请求。普通运行由用户自行选择记忆模型；开发验证从 [`../../validation/model.json`](../../validation/model.json) 的一个 `openRouterModel` 派生 Pi 任务路线和 LiteLLM 记忆路线，再通过带 `${OPENROUTER_API_KEY}` 引用的隔离配置运行，不要求修改用户文件。无需 API key 的云原生或 LiteLLM 认证路线可以省略该字段；具体来源的官方环境变量或凭据链继续由该来源负责。
 
 系统不会改写已有 JSONC 的注释。若文件仍是未配置的旧模板，可先备份并删除该文件，再执行 `/memory-model` 生成当前模板；已经配置的文件应保留设置，只按新模板说明手工调整 LiteLLM 段。
 ```jsonc
 {
   "memoryModel": {
     "provider": "litellm",
-    "model": "openrouter/<provider>/<model-id>"
+    "model": "openrouter/<provider>/<model-id>",
+    "api_key": "${OPENROUTER_API_KEY}"
   }
 }
 ```

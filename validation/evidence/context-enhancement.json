@@ -2,9 +2,9 @@
   "schemaVersion": 1,
   "generatedBy": "scripts/validate-context-enhancement.mjs",
   "scope": "local",
-  "runId": "context-enhancement-2026-08-14T22-10-15-914Z",
-  "startedAt": "2026-08-14T22:10:15.927Z",
-  "completedAt": "2026-08-14T22:10:24.301Z",
+  "runId": "context-enhancement-2026-08-15T04-17-13-825Z",
+  "startedAt": "2026-08-15T04:17:13.839Z",
+  "completedAt": "2026-08-15T04:17:22.860Z",
   "piVersion": "0.84.2",
   "openVikingVersion": "0.4.13-protocol",
   "fixture": {
@@ -12,7 +12,7 @@
     "name": "bounded-context-route-continuity"
   },
   "implementation": {
-    "sourceManifestSha256": "9b4c0873ecc7a86a10ea4c509ca197e4d0403c4b8dfe5ac064d70736663a542d",
+    "sourceManifestSha256": "1b7f0e151ab99d676d6f065efbd68525ffa42da52aafe72c4c1be1354c7b1f4b",
     "files": [
       {
         "path": ".pi/extensions/pi-context-memory/index.ts",
@@ -24,7 +24,7 @@
       },
       {
         "path": ".pi/extensions/pi-context-memory/memory-model-configuration.ts",
-        "sha256": "270467148579a1b9141665cdc62cff6dbb0311ba26013dff0a15a5049b7baec0"
+        "sha256": "241cce1184190c94837dbcc4976c5e7411d87947279444d6abbefb26af140eea"
       },
       {
         "path": ".pi/extensions/pi-context-memory/openviking-protocol.ts",
@@ -52,22 +52,22 @@
       },
       {
         "path": "scripts/validate-context-enhancement.mjs",
-        "sha256": "998acd06d945e22e8d7f0cc293507d935efdeeed59516cdafe9a7fd08d5b5639"
+        "sha256": "66d442d07a63b62ce1743ee60e5f58dcedfaec2a73fc5a8583ca895ef880bf7c"
       },
       {
         "path": "scripts/validation-evidence.mjs",
-        "sha256": "ff83b7d6551fc369f1fb516f838e40e2cf71f0143cacb8da769c77ba276f4434"
+        "sha256": "b2ae8a7bcd06f0b11316f4493aa35b660055a88f2279604cf4494c8490c43c08"
       },
       {
         "path": "scripts/validation-model-config.mjs",
-        "sha256": "30b9c777779612593eba4e5fff5679cc2d91434286261964465d115d067702d5"
+        "sha256": "bf39bf91ec6816eea77aad3d9a4986c452bf37155099ad429a17b90fefd538eb"
       },
       {
         "path": "validation/fixtures/context-enhancement-long-task.json",
         "sha256": "8aed19f4611f47d8d000b89e6901727cd213282849e6faf5a5d1a4adda724694"
       }
     ],
-    "gitCommit": "9468031d9b8787bc611bf2c2eccae86499cb77a5",
+    "gitCommit": "971f6fccb88c8cdfb09683da3c6e7f973f25c8c0",
     "workingTreeDirty": true
   },
   "passed": true,
@@ -118,16 +118,16 @@
   },
   "details": {
     "routes": {
-      "common": "5541162871d090803a1ca3a8644296268ec12b372a2e37ec92da25a0cdb9a031",
-      "branchA": "6f9d433a9a9cf6b00ec10fe76778605e0084aa247ef0fe36d4b165a3e4a66925",
-      "branchB": "eb481a9977ccc173cd7f1ea488b4e8bc97c25413831ec8c39bd17d6a660b099f",
-      "afterCompaction": "28d9b15d26369ba6e7f6a69126eee210665af2e571d64b1c36f9bcbc7a4e3299"
+      "common": "c69c96745886fda4fde3b0e1707e89055cc9734b6edd8a92cbed7a962707ee23",
+      "branchA": "d4c2aa497d7c978ef668499125010021266d134d44c61fc5a2bdd77e2879db8b",
+      "branchB": "735c0324736721136d01062fc6520e300be99f5129d13312c456e2c40fd090f7",
+      "afterCompaction": "211247d71469c7d80be3d163761c2c2a9abde3394f20eb7f2e9ad2f0ada9434f"
     },
     "openViking": {
       "sessionsCreated": 25,
       "sessionsDeleted": 25,
       "tasks": 13,
-      "requests": 1314
+      "requests": 1294
     },
     "context": {
       "branchAChars": 1205,

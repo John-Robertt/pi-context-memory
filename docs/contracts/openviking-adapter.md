@@ -41,7 +41,7 @@ Working Memory overview 是派生文本，不以固定语言、标题名称、�
 
 用户 JSONC 是扩展拥有的稳定、最小配置面，只包含当前用户需要选择的 Provider、模型和必要连接字段。扩展可以支持 OpenViking 能力的明确子集，不承诺复制其全部 Provider registry 或内部 LiteLLM 路由表。
 
-LiteLLM OpenRouter 模型始终编译为稳定的 `PCR_OPENVIKING_VLM_API_KEY` 引用；只有 launcher 启动实际模型服务时要求密钥，Pi 配置读取进程不接触密钥。Launcher 独占可执行配置校验与完整配置指纹；Pi 只读取不含凭据的用户设置用于诊断，并以 runtime state 中 ready 的受管子进程判断当前增强能力。无凭据 launcher 仍明确降级为无 VLM 基础服务。
+用户配置的 `api_key` 原样进入受限权限的 OpenViking 运行配置：普通字符串作为直接凭据，完整 `$NAME` 或 `${NAME}` 由 OpenViking 配置加载器从启动器环境展开。凭据必须属于当前模型来源，不存在项目级全局 VLM key。要求 API key 的 Provider 或 LiteLLM OpenRouter 路由缺失字段、环境引用未设置或字段无效时，Launcher 在停止旧实例前拒绝目标；无需 API key 的 LiteLLM 云原生路线和 `openai-codex` 原生认证可以省略。Pi 只显示 Provider、模型和脱敏诊断，运行状态、日志、evidence 与 Pi session 不保存或回显凭据。
 
 配置桥只在一个位置接触 OpenViking 配置校验入口。上游新增未知 Provider 不得使已有受支持 Provider 失效；上游删除或改变已支持能力时，适配验证必须失败并由维护者更新转换。
 

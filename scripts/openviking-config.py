@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 import hashlib
 import json
+import os
+import re
 import sys
 from copy import deepcopy
 
 from openviking import __version__ as openviking_version
 from openviking_cli.utils.config import OpenVikingConfig, VLMConfig
-CREDENTIAL_ENV = "PCR_OPENVIKING_VLM_API_KEY"
-SETTING_FIELDS = frozenset({"provider", "model", "api_base", "api_version"})
+SETTING_FIELDS = frozenset({"provider", "model", "api_key", "api_base", "api_version"})
+ENV_REFERENCE = re.compile(r"^\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))$")
 CONNECTION_FIELDS = {
     "volcengine": {"required": [], "optional": ["api_base"]},
     "openai": {"required": [], "optional": ["api_base"]},
@@ -23,6 +25,13 @@ def stable_hash(value):
     encoded = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
     return hashlib.sha256(encoded).hexdigest()
 
+
+def redacted_error(error, secrets):
+    message = str(error)
+    for secret in secrets:
+        if isinstance(secret, str) and secret:
+            message = message.replace(secret, "<redacted>")
+    return message
 
 def vlm_properties():
     schema = VLMConfig.model_json_schema()
@@ -44,21 +53,20 @@ def describe():
                 "name": provider,
                 **CONNECTION_FIELDS[provider],
                 "credential": (
-                    "optional-environment-or-native"
+                    "optional-api-key-or-native"
                     if provider == "litellm"
-                    else "environment-or-native"
+                    else "api-key-or-native"
                     if provider == "openai-codex"
-                    else "environment"
+                    else "api-key"
                 ),
             }
             for provider in providers
         ],
         "settingFields": {
             name: properties[name]
-            for name in ("provider", "model", "api_base", "api_version")
+            for name in ("provider", "model", "api_key", "api_base", "api_version")
         },
         "vlmSchemaSha256": stable_hash(schema),
-        "credentialEnvironment": CREDENTIAL_ENV,
         "litellmCatalogUrl": "https://docs.litellm.ai/docs/providers",
     }
 
@@ -82,6 +90,11 @@ def normalized_setting(value):
         raise ValueError("Memory model ID is required")
 
     result = {"provider": provider, "model": model.strip()}
+    api_key = value.get("api_key")
+    if api_key is not None and api_key != "":
+        if not isinstance(api_key, str) or not api_key.strip():
+            raise ValueError("api_key must be a non-empty string")
+        result["api_key"] = api_key.strip()
     descriptor = next(item for item in capabilities["providers"] if item["name"] == provider)
     accepted_connections = set(descriptor["required"] + descriptor["optional"])
     for field in ("api_base", "api_version"):
@@ -106,28 +119,39 @@ def compile_config(payload):
     if not isinstance(base_config, dict):
         raise ValueError("Base OpenViking configuration must be a JSON object")
     setting = normalized_setting(payload.get("setting"))
-    credential_available = payload.get("credentialAvailable") is True
 
     provider = setting["provider"]
-    credential_reference_required = (
-        provider == "litellm" and setting["model"].lower().startswith("openrouter/")
+    api_key = setting.get("api_key")
+    api_key_required = (
+        provider not in {"litellm", "openai-codex"}
+        or (provider == "litellm" and setting["model"].lower().startswith("openrouter/"))
     )
-    if provider not in {"litellm", "openai-codex"} and not credential_available:
-        raise ValueError(f"{CREDENTIAL_ENV} is required for OpenViking provider {provider}")
-
+    if api_key_required and not api_key:
+        raise ValueError(f"api_key is required for OpenViking provider {provider}")
+    credential_secrets = []
+    if api_key:
+        credential_secrets.append(api_key)
+        reference = ENV_REFERENCE.fullmatch(api_key)
+        if reference:
+            environment_name = reference.group(1) or reference.group(2)
+            environment_value = os.environ.get(environment_name)
+            if not environment_value or not environment_value.strip():
+                raise ValueError(f"api_key references unset environment variable {environment_name}")
+            credential_secrets.append(environment_value)
     vlm = {
         "provider": provider,
         "model": setting["model"],
     }
-    for field in ("api_base", "api_version"):
+    for field in ("api_key", "api_base", "api_version"):
         if field in setting:
             vlm[field] = setting[field]
-    if provider != "openai-codex" and (credential_available or credential_reference_required):
-        vlm["api_key"] = f"${{{CREDENTIAL_ENV}}}"
 
     generated = deepcopy(base_config)
     generated["vlm"] = vlm
-    OpenVikingConfig.from_dict(deepcopy(generated))
+    try:
+        OpenVikingConfig.from_dict(deepcopy(generated))
+    except Exception as error:
+        raise ValueError(redacted_error(error, credential_secrets)) from None
     return {
         "config": generated,
         "provider": provider,

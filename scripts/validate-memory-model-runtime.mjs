@@ -22,6 +22,7 @@ import {
   assertImplementationEvidenceUnchanged,
   captureImplementationEvidence,
 } from "./validation-evidence.mjs";
+import { createIsolatedPiProviderCredential } from "./validation-model-config.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 if (process.argv.length !== 2) throw new Error("Usage: node scripts/validate-memory-model-runtime.mjs");
@@ -32,15 +33,25 @@ const runId = process.env.PCR_RUN_ID ?? `memory-model-runtime-${new Date().toISO
 const artifactRoot = join(root, ".artifacts/memory-model-runtime", runId);
 const evidencePath = join(root, "validation/evidence/memory-model-runtime.json");
 const implementation = captureImplementationEvidence(root, "memory-model-runtime");
+const VALIDATION_API_KEY_ENV = "MEMORY_MODEL_RUNTIME_API_KEY";
+const VALIDATION_API_KEY_REFERENCE = `$${VALIDATION_API_KEY_ENV}`;
+const VALIDATION_API_KEY_BRACED_REFERENCE = `\${${VALIDATION_API_KEY_ENV}}`;
+const VALIDATION_API_KEY = "validation-only-not-a-provider-key";
 mkdirSync(artifactRoot, { recursive: true });
 
 function writeJson(path, value) {
   mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+  writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
 }
 
-async function writeMemoryModelConfig(path, setting) {
-  await atomicWriteJson(path, { memoryModel: setting });
+async function writeMemoryModelConfig(path, setting, includeCredential = true) {
+  const credentialRequired = setting
+    && setting.provider !== "openai-codex"
+    && (setting.provider !== "litellm" || setting.model?.toLowerCase().startsWith("openrouter/"));
+  const configured = credentialRequired && includeCredential && !setting.api_key
+    ? { ...setting, api_key: VALIDATION_API_KEY_REFERENCE }
+    : setting;
+  await atomicWriteJson(path, { memoryModel: configured });
 }
 function replaceJson(path, value) {
   const pending = `${path}.pending`;
@@ -117,7 +128,7 @@ function validationEnvironment(caseDir, baseConfigPath, fakeServer) {
     PCR_OPENVIKING_LAUNCHER_INFO: join(caseDir, "runtime", "launcher.json"),
     PCR_OPENVIKING_STATE: join(caseDir, "runtime", "state.json"),
     PCR_OPENVIKING_SERVER: fakeServer,
-    PCR_OPENVIKING_VLM_API_KEY: "validation-only-not-a-provider-key",
+    [VALIDATION_API_KEY_ENV]: VALIDATION_API_KEY,
     PCR_OPENVIKING_READINESS_TIMEOUT_MS: "1200",
     PCR_OPENVIKING_STOP_TIMEOUT_MS: "800",
     PCR_OPENVIKING_CHILD_STDIO: "ignore",
@@ -279,12 +290,37 @@ async function runPiCommandCase(caseDir, env, commandSequence, expectedWarning) 
 
 async function validateConfiguration() {
   const capabilities = await describeMemoryModelCapabilities(root);
+  const credentialInvocations = [];
+  const isolatedCredentialVariable = "PCR_VALIDATION_ISOLATED_OPENROUTER_KEY";
+  const inheritedIsolatedCredential = process.env[isolatedCredentialVariable];
+  const isolatedCredential = createIsolatedPiProviderCredential("openrouter", isolatedCredentialVariable, {
+    cwd: root,
+    env: { ...process.env, PI_CODING_AGENT_DIR: "/validation/pi-agent" },
+    run: (command, args, options) => {
+      credentialInvocations.push({ command, args, options });
+      return { status: 0, stdout: "validation-pi-openrouter-key\n", stderr: "" };
+    },
+  });
+  const unavailableCredentialError = await expectFailure(() => createIsolatedPiProviderCredential(
+    "openrouter",
+    isolatedCredentialVariable,
+    { run: () => ({ status: 1, stdout: "", stderr: "unavailable-secret-output" }) },
+  ));
+  const piCredentialInjectedIntoIsolatedEnvironment = isolatedCredential.reference === `\${${isolatedCredentialVariable}}`
+    && isolatedCredential.environment[isolatedCredentialVariable] === "validation-pi-openrouter-key"
+    && process.env[isolatedCredentialVariable] === inheritedIsolatedCredential
+    && credentialInvocations.length === 1
+    && credentialInvocations[0].command === "pi"
+    && credentialInvocations[0].args.join(" ") === "auth print-api-key --provider openrouter"
+    && credentialInvocations[0].options.env.PI_CODING_AGENT_DIR === "/validation/pi-agent"
+    && unavailableCredentialError?.includes("authenticate with /login openrouter")
+    && !unavailableCredentialError.includes("unavailable-secret-output");
   const providers = capabilities.providers.map((item) => item.name);
   const expectedProviders = ["volcengine", "openai", "azure", "kimi", "glm", "litellm", "openai-codex"];
   const supportedProviderSurface = JSON.stringify(providers) === JSON.stringify(expectedProviders);
   const schemaObserved = capabilities.openVikingVersion === "0.4.13"
     && typeof capabilities.vlmSchemaSha256 === "string"
-    && Object.keys(capabilities.settingFields).sort().join(",") === "api_base,api_version,model,provider";
+    && Object.keys(capabilities.settingFields).sort().join(",") === "api_base,api_key,api_version,model,provider";
   const bridgeSource = readFileSync(join(root, "scripts/openviking-config.py"), "utf8");
   const upstreamProviderAdditionsTolerated = !bridgeSource.includes("get_all_provider_names")
     && !bridgeSource.includes("PROVIDER_CONFIGS")
@@ -325,10 +361,15 @@ async function validateConfiguration() {
   const caseDir = join(artifactRoot, "configuration");
   const basePath = join(caseDir, "base.json");
   writeJson(basePath, baseConfig(await freePort(), join(caseDir, "data")));
-  const env = { ...process.env, PCR_OPENVIKING_BASE_CONFIG: basePath, PCR_OPENVIKING_VLM_API_KEY: "validation-only" };
+  const env = {
+    ...process.env,
+    PCR_OPENVIKING_BASE_CONFIG: basePath,
+    [VALIDATION_API_KEY_ENV]: VALIDATION_API_KEY,
+  };
   const compiled = [];
   for (const descriptor of capabilities.providers) {
     const setting = { provider: descriptor.name, model: descriptor.name === "litellm" ? "bedrock/validation" : "validation-model" };
+    if (descriptor.credential === "api-key") setting.api_key = VALIDATION_API_KEY_REFERENCE;
     for (const field of descriptor.required) setting[field] = field === "api_base" ? "https://example.invalid/v1" : "validation";
     compiled.push(await compileOpenVikingConfig(root, setting, env));
   }
@@ -337,38 +378,81 @@ async function validateConfiguration() {
   const providerDefaultsNotOverridden = compiled.every((item) =>
     !["thinking", "temperature", "max_retries", "stream"].some((field) => Object.hasOwn(item.config.vlm, field))
   );
+  const deterministicSetting = { provider: "volcengine", model: "validation-model", api_key: VALIDATION_API_KEY_REFERENCE };
   const deterministicFingerprint = compiled[0].configFingerprint
-    === (await compileOpenVikingConfig(root, { provider: "volcengine", model: "validation-model" }, env)).configFingerprint;
+    === (await compileOpenVikingConfig(root, deterministicSetting, env)).configFingerprint;
   const missingCredentialRejected = Boolean(await expectFailure(() => compileOpenVikingConfig(
     root,
     { provider: "openai", model: "validation" },
-    { ...env, PCR_OPENVIKING_VLM_API_KEY: "" },
+    env,
   )));
   const azureFieldRejected = Boolean(await expectFailure(() => compileOpenVikingConfig(
     root,
-    { provider: "azure", model: "validation" },
+    { provider: "azure", model: "validation", api_key: VALIDATION_API_KEY_REFERENCE },
     env,
   )));
   const openRouterSetting = { provider: "litellm", model: "openrouter/validation/model" };
-  const openRouterWithoutCredential = await compileOpenVikingConfig(
+  const openRouterApiKeyRequired = Boolean(await expectFailure(() => compileOpenVikingConfig(root, openRouterSetting, env)));
+  const directApiKey = await compileOpenVikingConfig(
     root,
-    openRouterSetting,
-    { ...env, PCR_OPENVIKING_VLM_API_KEY: "" },
+    { ...openRouterSetting, api_key: "literal-validation-key" },
+    env,
   );
-  const openRouterWithCredential = await compileOpenVikingConfig(root, openRouterSetting, env);
-  const openRouterCredentialReferenceStable = openRouterWithoutCredential.configFingerprint === openRouterWithCredential.configFingerprint
-    && openRouterWithoutCredential.config.vlm.api_key === "${PCR_OPENVIKING_VLM_API_KEY}"
-    && !JSON.stringify(openRouterWithoutCredential.config).includes("validation-only");
+  const referencedApiKey = await compileOpenVikingConfig(
+    root,
+    { ...openRouterSetting, api_key: VALIDATION_API_KEY_REFERENCE },
+    env,
+  );
+  const bracedReferencedApiKey = await compileOpenVikingConfig(
+    root,
+    { ...openRouterSetting, api_key: VALIDATION_API_KEY_BRACED_REFERENCE },
+    env,
+  );
+  const apiKeyFormsPreserved = directApiKey.config.vlm.api_key === "literal-validation-key"
+    && referencedApiKey.config.vlm.api_key === VALIDATION_API_KEY_REFERENCE
+    && bracedReferencedApiKey.config.vlm.api_key === VALIDATION_API_KEY_BRACED_REFERENCE
+    && new Set([
+      directApiKey.configFingerprint,
+      referencedApiKey.configFingerprint,
+      bracedReferencedApiKey.configFingerprint,
+    ]).size === 3;
+  const referenceConfigPath = join(caseDir, "reference-openviking.json");
+  const bracedReferenceConfigPath = join(caseDir, "braced-reference-openviking.json");
+  writeJson(referenceConfigPath, referencedApiKey.config);
+  writeJson(bracedReferenceConfigPath, bracedReferencedApiKey.config);
+  const loaderProbe = spawnSync(
+    process.platform === "win32" ? join(root, ".venv/Scripts/python.exe") : join(root, ".venv/bin/python"),
+    [
+      "-c",
+      "import json,sys; from pathlib import Path; from openviking_cli.utils.config.config_loader import load_json_config; print(json.dumps([load_json_config(Path(path))['vlm']['api_key'] for path in sys.argv[1:]]))",
+      referenceConfigPath,
+      bracedReferenceConfigPath,
+    ],
+    { cwd: root, encoding: "utf8", env },
+  );
+  const environmentReferencesExpanded = loaderProbe.status === 0
+    && JSON.parse(loaderProbe.stdout).every((value) => value === VALIDATION_API_KEY);
+  const missingReferencedCredentialRejected = Boolean(await expectFailure(() => compileOpenVikingConfig(
+    root,
+    { ...openRouterSetting, api_key: "$MISSING_MEMORY_MODEL_RUNTIME_API_KEY" },
+    env,
+  )));
+  const invalidBridgeBasePath = join(caseDir, "invalid-bridge-base.json");
+  writeJson(invalidBridgeBasePath, { embedding: { dense: "invalid" } });
+  const credentialDiagnostic = await expectFailure(() => compileOpenVikingConfig(
+    root,
+    { provider: "openai", model: "validation", api_key: VALIDATION_API_KEY },
+    { ...env, PCR_OPENVIKING_BASE_CONFIG: invalidBridgeBasePath },
+  ));
+  const credentialDiagnosticsRedacted = Boolean(credentialDiagnostic)
+    && !credentialDiagnostic.includes(VALIDATION_API_KEY)
+    && !credentialDiagnostic.includes(VALIDATION_API_KEY_REFERENCE);
   const codexSetting = { provider: "openai-codex", model: "validation-model" };
-  const codexWithoutCredential = await compileOpenVikingConfig(
-    root,
-    codexSetting,
-    { ...env, PCR_OPENVIKING_VLM_API_KEY: "" },
-  );
-  const codexWithAmbientCredential = await compileOpenVikingConfig(root, codexSetting, env);
-  const codexIgnoresAmbientCredential = codexWithoutCredential.configFingerprint === codexWithAmbientCredential.configFingerprint
-    && !Object.hasOwn(codexWithAmbientCredential.config.vlm, "api_key")
-    && !JSON.stringify(codexWithAmbientCredential.config).includes("validation-only");
+  const codexNativeConfig = await compileOpenVikingConfig(root, codexSetting, env);
+  const codexNativeCredentialPreserved = !Object.hasOwn(codexNativeConfig.config.vlm, "api_key");
+  const apiKeysBoundToSettings = compiled.every((item) => item.provider === "openai-codex" || item.provider === "litellm"
+    ? !Object.hasOwn(item.config.vlm, "api_key")
+    : item.config.vlm.api_key === VALIDATION_API_KEY_REFERENCE);
 
   const isolatedHome = join(caseDir, "user-home");
   const templateEnv = {
@@ -394,7 +478,8 @@ async function validateConfiguration() {
         .filter((field) => field !== "provider" && field !== "model")
         .every((field) => section.split("\n").some((line) => line.includes(`\"${field}\":`)
           && line.includes(`// ${provider.required.includes(field) ? "必填" : "可选"}`)))
-      && section.includes("// 认证：");
+      && section.includes('"api_key": "$')
+      && section.includes("也可直接填写 key");
   });
   const litellmSection = templateSource.slice(
     templateSource.indexOf("  // litellm:"),
@@ -418,8 +503,9 @@ async function validateConfiguration() {
     && templateSource.includes('"memoryModel": null,')
     && templatePaths.every((path) => path === expectedConfigPath)
     && readdirSync(dirname(templatePath)).every((name) => !name.endsWith(".pending"))
-    && templateSource.includes("PCR_OPENVIKING_VLM_API_KEY")
-    && !templateSource.includes("validation-only");
+    && templateSource.includes("$SOURCE_API_KEY")
+    && templateSource.includes("可直接填写 key")
+    && !templateSource.includes(VALIDATION_API_KEY);
 
   const jsoncPath = join(caseDir, "configured.jsonc");
   const jsoncEnv = { ...env, PCR_MEMORY_MODEL_SETTINGS: jsoncPath };
@@ -428,13 +514,16 @@ async function validateConfiguration() {
   "memoryModel": {
     "provider": "openai",
     "model": "configured-model",
+    "api_key": "literal-config-key",
     "api_base": "https://example.invalid/v1/",
   },
 }\n`;
-  writeFileSync(jsoncPath, jsoncSource, { encoding: "utf8", mode: 0o600 });
+  writeFileSync(jsoncPath, jsoncSource, { encoding: "utf8", mode: 0o644 });
   const parsedSetting = await readMemoryModelSetting(root, jsoncEnv);
   const jsoncConfigurationParsed = parsedSetting?.model === "configured-model"
-    && parsedSetting.api_base === "https://example.invalid/v1";
+    && parsedSetting.api_key === "literal-config-key"
+    && parsedSetting.api_base === "https://example.invalid/v1"
+    && (statSync(jsoncPath).mode & 0o777) === 0o600;
   const emptyPath = join(caseDir, "empty.jsonc");
   const emptyEnv = { ...env, PCR_MEMORY_MODEL_SETTINGS: emptyPath };
   writeFileSync(emptyPath, "// No memory model is enabled yet.\n", { encoding: "utf8", mode: 0o600 });
@@ -475,21 +564,17 @@ async function validateConfiguration() {
     && !existsSync(join(caseDir, "absent-target.jsonc"));
   const semanticPath = join(caseDir, "semantic-error.jsonc");
   const semanticEnv = { ...env, PCR_MEMORY_MODEL_SETTINGS: semanticPath };
-  writeJson(semanticPath, { memoryModel: { provider: "openai", model: "validation", api_key: "must-not-be-stored" } });
+  writeJson(semanticPath, { memoryModel: { provider: "openai", model: "validation", api_secret: "must-not-be-stored" } });
   const semanticError = await expectFailure(() => readMemoryModelSetting(root, semanticEnv));
   const invalidConfigDiagnosed = Boolean(
     syntaxError?.includes(invalidPath)
     && /:\d+:\d+:/.test(syntaxError)
     && !syntaxError.includes("syntax-secret-value")
-    && semanticError?.includes("api_key")
+    && semanticError?.includes("api_secret")
     && semanticError.includes(semanticPath)
     && !semanticError.includes("must-not-be-stored"),
   );
   const unknownFieldRejected = Boolean(semanticError);
-  const configSecretsExcluded = compiled.every((item) => !JSON.stringify(item.config).includes("validation-only"))
-    && compiled.every((item) => item.provider === "openai-codex"
-      ? !Object.hasOwn(item.config.vlm, "api_key")
-      : item.config.vlm.api_key === "${PCR_OPENVIKING_VLM_API_KEY}");
   return {
     checks: {
       adapterProtocolsCovered,
@@ -500,8 +585,14 @@ async function validateConfiguration() {
       generatedConfigParsed,
       providerDefaultsNotOverridden,
       deterministicFingerprint,
-      openRouterCredentialReferenceStable,
-      codexIgnoresAmbientCredential,
+      environmentReferencesExpanded,
+      apiKeyFormsPreserved,
+      apiKeysBoundToSettings,
+      codexNativeCredentialPreserved,
+      credentialDiagnosticsRedacted,
+      piCredentialInjectedIntoIsolatedEnvironment,
+      missingReferencedCredentialRejected,
+      openRouterApiKeyRequired,
       unknownFieldRejected,
       missingCredentialRejected,
       azureFieldRejected,
@@ -513,7 +604,6 @@ async function validateConfiguration() {
       invalidConfigDiagnosed,
       existingConfigPreserved,
       existingSymlinksPreserved,
-      configSecretsExcluded,
       configurationDiagnosticContentHashed,
     },
     capabilities,
@@ -530,11 +620,10 @@ async function validateLauncherAndCommands() {
   const missingCredentialBase = join(missingCredentialDir, "base.json");
   writeJson(missingCredentialBase, baseConfig(await freePort(), join(missingCredentialDir, "data")));
   const missingCredentialEnv = validationEnvironment(missingCredentialDir, missingCredentialBase, fakeServer);
-  delete missingCredentialEnv.PCR_OPENVIKING_VLM_API_KEY;
   await writeMemoryModelConfig(missingCredentialEnv.PCR_MEMORY_MODEL_SETTINGS, {
     provider: "litellm",
     model: "openrouter/validation/model",
-  });
+  }, false);
   const missingCredentialLauncher = startLauncher(missingCredentialEnv);
   let missingCredentialState;
   try {
@@ -549,19 +638,35 @@ async function validateLauncherAndCommands() {
   }
   const openRouterLauncherCredentialRequired = missingCredentialState?.ready === true
     && missingCredentialState.activeProvider === undefined
-    && missingCredentialState.configurationError.includes("PCR_OPENVIKING_VLM_API_KEY is required for LiteLLM OpenRouter models");
+    && missingCredentialState.configurationError.includes("api_key is required for OpenViking provider litellm")
+    && !missingCredentialState.configurationError.includes(VALIDATION_API_KEY);
   const port = await freePort();
   const basePath = join(caseDir, "base.json");
   writeJson(basePath, baseConfig(port, join(caseDir, "data")));
   const env = validationEnvironment(caseDir, basePath, fakeServer);
-  await writeMemoryModelConfig(env.PCR_MEMORY_MODEL_SETTINGS, { provider: "openai", model: "initial-model", api_base: "https://example.invalid/v1" });
+  await writeMemoryModelConfig(env.PCR_MEMORY_MODEL_SETTINGS, {
+    provider: "openai",
+    model: "initial-model",
+    api_key: VALIDATION_API_KEY,
+    api_base: "https://example.invalid/v1",
+  });
   const launcher = startLauncher(env);
+  const launcherOutput = [];
+  launcher.stdout.on("data", (chunk) => launcherOutput.push(Buffer.from(chunk)));
+  launcher.stderr.on("data", (chunk) => launcherOutput.push(Buffer.from(chunk)));
   let targetOccupant;
   try {
     const initial = await waitFor(async () => {
       const state = await readRuntimeState(root, env);
       return state?.ready ? state : undefined;
     }, "initial OpenViking readiness");
+    const generatedRuntimeSource = readFileSync(env.PCR_OPENVIKING_GENERATED_CONFIG, "utf8");
+    const initialLauncherInfo = await readLauncherInfo(root, env);
+    const runtimeCredentialsProtected = (statSync(env.PCR_MEMORY_MODEL_SETTINGS).mode & 0o777) === 0o600
+      && (statSync(env.PCR_OPENVIKING_GENERATED_CONFIG).mode & 0o777) === 0o600
+      && generatedRuntimeSource.includes(VALIDATION_API_KEY)
+      && !JSON.stringify(initial).includes(VALIDATION_API_KEY)
+      && !JSON.stringify(initialLauncherInfo).includes(VALIDATION_API_KEY);
     const firstChildPid = initial.childPid;
     await atomicWriteJson(env.PCR_OPENVIKING_STATE, { ...initial, childPid: 999_999_999 });
     const suppressedDeadChild = await readRuntimeState(root, env);
@@ -631,10 +736,14 @@ async function validateLauncherAndCommands() {
       && second.configurationError === undefined
       && !processAlive(firstChildPid);
 
-    await writeMemoryModelConfig(env.PCR_MEMORY_MODEL_SETTINGS, { provider: "openai-codex", model: "credential-boundary" });
+    await writeMemoryModelConfig(env.PCR_MEMORY_MODEL_SETTINGS, {
+      provider: "openai",
+      model: "credential-boundary",
+      api_key: VALIDATION_API_KEY_REFERENCE,
+    });
     const credentialBoundaryState = await requestOpenVikingRestart(root, env);
     const piWithoutCredentialEnv = { ...env };
-    delete piWithoutCredentialEnv.PCR_OPENVIKING_VLM_API_KEY;
+    delete piWithoutCredentialEnv[VALIDATION_API_KEY_ENV];
     const credentialBoundaryPiCase = await runPiCommandCase(
       join(caseDir, "pi-credential-boundary"),
       piWithoutCredentialEnv,
@@ -643,7 +752,7 @@ async function validateLauncherAndCommands() {
     const credentialBoundaryStatuses = credentialBoundaryPiCase.events.filter((event) => event.type === "extension_ui_request"
       && event.method === "setStatus").map((event) => event.statusText);
     const splitCredentialRuntimeRemainsAvailable = credentialBoundaryState.ready === true
-      && credentialBoundaryState.activeProvider === "openai-codex"
+      && credentialBoundaryState.activeProvider === "openai"
       && credentialBoundaryStatuses.includes("增强记忆 · 生效中")
       && !credentialBoundaryStatuses.includes("Pi 原生")
       && credentialBoundaryPiCase.events.some((event) => event.type === "extension_ui_request"
@@ -680,7 +789,12 @@ async function validateLauncherAndCommands() {
     const interruptedControlOperationCompletes = afterInterruptedControl.childPid !== second.childPid
       && !processAlive(second.childPid);
 
-    await writeMemoryModelConfig(env.PCR_MEMORY_MODEL_SETTINGS, { provider: "openai", model: "command-model", api_base: "https://example.invalid/v1" });
+    await writeMemoryModelConfig(env.PCR_MEMORY_MODEL_SETTINGS, {
+      provider: "openai",
+      model: "command-model",
+      api_key: VALIDATION_API_KEY,
+      api_base: "https://example.invalid/v1",
+    });
     const commandConfigBefore = readFileSync(env.PCR_MEMORY_MODEL_SETTINGS, "utf8");
     console.error("[memory-model-runtime] Pi command session A");
     const piCase = await runPiCommandCase(join(caseDir, "pi-a"), env, [
@@ -696,6 +810,7 @@ async function validateLauncherAndCommands() {
     const taskModelUnchanged = piCase.beforeState.model.provider === piCase.afterState.model.provider
       && piCase.beforeState.model.id === piCase.afterState.model.id;
     const branchUnchanged = JSON.stringify(piCase.beforeEntries) === JSON.stringify(piCase.afterEntries);
+    const piSessionCredentialsExcluded = !JSON.stringify({ piCase, secondPiCase }).includes(VALIDATION_API_KEY);
     const sharedUserConfig = secondPiCase.events.some((event) => event.type === "extension_ui_request"
       && event.method === "notify"
       && event.message.includes("openai/command-model"));
@@ -779,6 +894,7 @@ async function validateLauncherAndCommands() {
     launcher.kill("SIGTERM");
     launcher.kill("SIGHUP");
     await waitForExit(launcher);
+    const launcherLogsExcludeCredentials = !Buffer.concat(launcherOutput).toString("utf8").includes(VALIDATION_API_KEY);
     const stopped = JSON.parse(readFileSync(env.PCR_OPENVIKING_STATE, "utf8"));
     const staleRuntimeSuppressed = await readRuntimeState(root, env) === undefined;
     const signalCleansOwnedChild = !processAlive(ownedChild)
@@ -795,6 +911,8 @@ async function validateLauncherAndCommands() {
         targetPortPreflightPreservesInstance,
         preflightPreservesInstance,
         orderedRestart,
+        runtimeCredentialsProtected,
+        launcherLogsExcludeCredentials,
         operationDeadlinePublished,
         operationDeadlineCoversFailureCleanup,
         wrongLaunchRejected,
@@ -806,6 +924,7 @@ async function validateLauncherAndCommands() {
         commandNoProviderRequests,
         taskModelUnchanged,
         branchUnchanged,
+        piSessionCredentialsExcluded,
         configCommandReadOnly,
         sharedUserConfig,
         configuredAndRunningDistinct,
@@ -883,8 +1002,12 @@ async function validateOwnershipBoundaries() {
     const coldDir = join(caseDir, "invalid-cold-start");
     const coldBase = join(coldDir, "base.json");
     writeJson(coldBase, baseConfig(await freePort(), join(coldDir, "data")));
-    const coldEnv = { ...validationEnvironment(coldDir, coldBase, fakeServer), PCR_OPENVIKING_VLM_API_KEY: "" };
-    writeFileSync(coldEnv.PCR_MEMORY_MODEL_SETTINGS, '{ "memoryModel": { "provider": "openai", "model": "cold-start-model" } }\n', { encoding: "utf8", mode: 0o600 });
+    const coldEnv = validationEnvironment(coldDir, coldBase, fakeServer);
+    writeFileSync(
+      coldEnv.PCR_MEMORY_MODEL_SETTINGS,
+      '{ "memoryModel": { "provider": "openai", "model": "cold-start-model", "api_key": "$MISSING_COLD_START_API_KEY" } }\n',
+      { encoding: "utf8", mode: 0o600 },
+    );
     coldLauncher = startLauncher(coldEnv);
     coldLauncher.stdout.resume();
     coldLauncher.stderr.resume();
@@ -893,7 +1016,8 @@ async function validateOwnershipBoundaries() {
       return state?.ready ? state : undefined;
     }, "invalid cold-start source-only fallback", 20_000);
     const invalidColdStartFallsBack = coldState.activeModel === undefined
-      && coldState.configurationError?.includes("PCR_OPENVIKING_VLM_API_KEY")
+      && coldState.configurationError?.includes("api_key references unset environment variable MISSING_COLD_START_API_KEY")
+      && !coldState.configurationError.includes(VALIDATION_API_KEY)
       && coldState.configurationError.includes(coldEnv.PCR_MEMORY_MODEL_SETTINGS)
       && processAlive(coldState.childPid);
     await stopLauncher(coldLauncher);

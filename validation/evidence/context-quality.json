@@ -2,9 +2,9 @@
   "schemaVersion": 1,
   "generatedBy": "scripts/validate-context-quality.mjs",
   "scope": "real-provider-quality",
-  "runId": "context-quality-2026-08-14T19-20-07-708Z",
-  "startedAt": "2026-08-14T19:20:07.729Z",
-  "completedAt": "2026-08-14T19:20:34.417Z",
+  "runId": "context-quality-2026-08-15T04-22-58-928Z",
+  "startedAt": "2026-08-15T04:22:58.938Z",
+  "completedAt": "2026-08-15T04:23:23.119Z",
   "piVersion": "0.84.2",
   "openVikingVersion": "0.4.13",
   "models": {
@@ -32,13 +32,14 @@
         "token_type": "output",
         "provider": "litellm",
         "model_name": "openrouter/openai/gpt-5.6-luna",
-        "token_count": 1030
+        "token_count": 1338
       }
     ],
-    "memoryTotalTokens": 17615
+    "memoryTotalTokens": 17923
   },
   "memoryModelCondition": {
-    "configFingerprint": "619f2d11a3ebe6f82f8de8b234b0eb30a166bc8bd98a5600848e2cad3f1d053b",
+    "credentialSource": "pi-auth",
+    "configFingerprint": "72de38232480503a4ae8dcbf1f889b6198121c0533116a74425a6f4a1a9914d7",
     "explicitRequestControls": [],
     "adapterRequest": {
       "adapter": "LiteLLM OpenRouter",
@@ -64,11 +65,11 @@
     "repetitions": 1
   },
   "implementation": {
-    "sourceManifestSha256": "fc13ab3ea5368a244d10d185efcc8941102a20d36655c436295d66a78d2f1a74",
+    "sourceManifestSha256": "ce68446140871dc31b5af3d0a24b88e57879d1ff08b14f66d965dba276cc29ea",
     "files": [
       {
         "path": ".pi/extensions/pi-context-memory/index.ts",
-        "sha256": "26721f74f0798a07d60f1bbd891bf14cca442b71864aa472ea4c85d009c1c1cd"
+        "sha256": "36710855109325128fa00ddd44c0b1bb7d926040a9f9431e57e0f003c4e2c748"
       },
       {
         "path": ".pi/extensions/pi-context-memory/long-term-memory.ts",
@@ -76,7 +77,7 @@
       },
       {
         "path": ".pi/extensions/pi-context-memory/memory-model-configuration.ts",
-        "sha256": "2608d22ad9cd53bb882fff1001a94dc9bc21f484f18574cd0fd011a36f2d2788"
+        "sha256": "241cce1184190c94837dbcc4976c5e7411d87947279444d6abbefb26af140eea"
       },
       {
         "path": ".pi/extensions/pi-context-memory/openviking-protocol.ts",
@@ -92,7 +93,7 @@
       },
       {
         "path": ".pi/extensions/pi-context-memory/session-working-memory.ts",
-        "sha256": "a76d58c57bdf943cafd74d191f20a54ddce61bb84b7b0177a63838cca3f2eae5"
+        "sha256": "56c1bbcd04a3920f47fd2c296d75ef747ff3f84a0322d2d0bd8a25b994f371b2"
       },
       {
         "path": ".pi/extensions/pi-context-memory/working-context-optimization.ts",
@@ -112,19 +113,23 @@
       },
       {
         "path": "scripts/openviking-config.py",
-        "sha256": "2405f90f6eef7265f3e0e834ebaf829105ef3661eda8e1686452a1ea4f7bbd83"
+        "sha256": "188be9528d9b67d84c1e05b5754688da594a61759e2f72923eb4b1e55af06971"
       },
       {
         "path": "scripts/start-openviking.mjs",
-        "sha256": "be12bd1f496efa5dd55450798b067973aefbc64219db369542774f5da6b826df"
+        "sha256": "938e2b066708a42b75efe2115daf959fc7b728a467ebfaa00033d3de9fc61e78"
       },
       {
         "path": "scripts/validate-context-quality.mjs",
-        "sha256": "0d2d23ed740caec8172b83fcce82decb473cf07e9f7ec2d58476f617c2f93cb3"
+        "sha256": "8db5d71a7e6223a2aa271c1de4ec29b85a2673443bd4c8c16d72af045cf85522"
       },
       {
         "path": "scripts/validation-evidence.mjs",
-        "sha256": "157c5601d59a3f93fc9932cb94e5d6ec2dd9c600785e07785633c9d549ce135c"
+        "sha256": "b2ae8a7bcd06f0b11316f4493aa35b660055a88f2279604cf4494c8490c43c08"
+      },
+      {
+        "path": "scripts/validation-model-config.mjs",
+        "sha256": "bf39bf91ec6816eea77aad3d9a4986c452bf37155099ad429a17b90fefd538eb"
       },
       {
         "path": "uv.lock",
@@ -133,13 +138,18 @@
       {
         "path": "validation/fixtures/context-enhancement-long-task.json",
         "sha256": "8aed19f4611f47d8d000b89e6901727cd213282849e6faf5a5d1a4adda724694"
+      },
+      {
+        "path": "validation/model.json",
+        "sha256": "ec8aa7610d0a030d1030e8486b09278ac82a295b2713914374b73b5ab5ecac4d"
       }
     ],
-    "gitCommit": "b8108fedef8127ca20687471cda1d88aed22a6eb",
+    "gitCommit": "971f6fccb88c8cdfb09683da3c6e7f973f25c8c0",
     "workingTreeDirty": true
   },
   "passed": true,
   "checks": {
+    "credentialIsolated": true,
     "nativeQuality": true,
     "enhancedQuality": true,
     "enhancedContextAdopted": true,
@@ -177,11 +187,11 @@
         "tokens": {
           "input": 3,
           "output": 21,
-          "cacheRead": 22941,
-          "cacheWrite": 0,
+          "cacheRead": 0,
+          "cacheWrite": 22941,
           "total": 22965
         },
-        "cost": 0.00024231,
+        "cost": 0.002880525,
         "contextUsage": {
           "tokens": 22965,
           "contextWindow": 1050000,
@@ -221,14 +231,14 @@
           "input": 3,
           "output": 21,
           "cacheRead": 0,
-          "cacheWrite": 1686,
-          "total": 1710
+          "cacheWrite": 1950,
+          "total": 1974
         },
-        "cost": 0.00022365,
+        "cost": 0.00025665,
         "contextUsage": {
-          "tokens": 1710,
+          "tokens": 1974,
           "contextWindow": 1050000,
-          "percent": 0.16285714285714287
+          "percent": 0.188
         }
       },
       "observations": {

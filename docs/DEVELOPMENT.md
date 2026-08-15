@@ -8,7 +8,7 @@
 
 当前 evidence 的宿主坐标是 Pi `0.84.2`，项目私有记忆依赖锁定为 OpenViking `0.4.13`。扩展通过独立 Pi 规范化边界观察持久化 session 当前 branch，把权威路线归档到 session 隔离的本地来源存储，并异步同步可检索任务文本。`recall_session(search|read_source)` 在当前路线内排序、预览和展开 Pi 权威 entry；带 `fullOutputPath` 的 toolResult 保存完整副本。上游版本变化由扩展适配，不要求用户降级 Pi。
 
-用户正常运行时通过 `~/.pi/pi-context-memory.jsonc` 配置 OpenViking 记忆模型；开发验证不要求修改该文件。模型能力与成本 runner 共用 [`validation/model.json`](../validation/model.json) 的单一 `openRouterModel`，由它派生 Pi 任务路线和 LiteLLM 记忆路线；质量 runner 在 `.artifacts/` 写入隔离配置并通过 `PCR_MEMORY_MODEL_SETTINGS` 只注入验证进程，真实采用 runner 则核对同一配置与托管 runtime。OpenRouter 记忆请求的密钥通过 `PCR_OPENVIKING_VLM_API_KEY` 提供给验证 launcher。`/memory-model` 检查用户配置和运行状态，`/restart-viking` 安全应用；没有实际运行的记忆模型时，来源召回继续可用，模型上下文保持 Pi 原生。
+用户正常运行时通过 `~/.pi/pi-context-memory.jsonc` 配置 OpenViking 记忆模型；每个来源的 `api_key` 可直接填写或引用该来源环境变量，不存在跨来源全局 VLM key。开发验证不要求修改该文件。模型能力与成本 runner 共用 [`validation/model.json`](../validation/model.json) 的单一 `openRouterModel`，由它派生 Pi 任务路线和 LiteLLM 记忆路线；质量 runner 从 Pi 已解析的 `openrouter` 认证取得 key，只注入该次 Launcher 的隔离环境，并在 `.artifacts/` 写入对应环境引用的 `0600` 配置；真实采用 runner 则核对同一配置与托管 runtime。`/memory-model` 检查用户配置和运行状态，`/restart-viking` 安全应用；没有实际运行的记忆模型时，来源召回继续可用，模型上下文保持 Pi 原生。
 
 共享长任务 fixture 固定目标更新、冲突 branch、工具证据、Pi compaction 和压缩后继续。记忆模型可用后，扩展在 Provider 请求之外异步把当前有效投影写入 OpenViking Session：线性后继复用镜像，分叉或 compaction 改变有效前缀时隔离镜像。batch append 与必要的 commit Phase 1 由快速队列串行，随后立即发布来源已核验的精确路线 active history；`accepted` 的慢速 Phase 2 在队列外轮询，同一镜像期间继续追加后继路线。每个镜像至多一个 commit task，完成后按最新 revision 原子提升最新精确路线，期间新增 token 独立累计；`skipped` commit 保留 active history。Phase 2 失败、超时或最终 assembly 失败不采用未核验 Working Memory，但不删除已经来源核验的 active history。共同适配层继续拒绝矛盾或未知状态、缺失来源、未知内容、空 active tail、通用回退与其它 malformed 响应。
 
@@ -21,15 +21,15 @@ Pi `context` hook 只读取内存中的当前受管 OpenViking 子进程和路�
 - [`validation/evidence/memory-model-runtime.json`](../validation/evidence/memory-model-runtime.json)：用户配置、配置编译、安全重启、生命周期所有权和冷启动降级；
 - [`validation/evidence/context-enhancement.json`](../validation/evidence/context-enhancement.json)：共享 fixture、路线与代际身份、合法 skipped commit、1000 ms 精确 pending 等待、慢 Phase 2 期间连续路线 active history、每镜像单一 commit、最新 revision 提升、pending token 保留、超时 active history 保留、完整 Pi 生命周期、Provider/UI 一致性和清理；
 - `scripts/validate-real-context-adoption.mjs`：统一验证模型的真实采用入口，不预等待 Working Memory；Pi `0.84.2` 下 skipped 场景的零间隔第二轮 Provider payload 已采用增强，accepted 场景在最终 Working Memory 完成前已用 active history 发出增强请求，原始产物保存在 Git 忽略的 `.artifacts/real-context-adoption/`；
-- [`validation/evidence/context-quality.json`](../validation/evidence/context-quality.json)：最近一次两个 arm 均保持当前决定 `bounded-current-route` 与来源 `b000000c`，并记录实际任务/记忆模型坐标、记忆调用路由与 token；本次状态生命周期改动后实现绑定已过期，需在验证凭据可用后重新运行质量 runner。
+- [`validation/evidence/context-quality.json`](../validation/evidence/context-quality.json)：当前实现绑定下的真实 OpenRouter 成对验证已通过；两个 arm 均保持当前决定 `bounded-current-route` 与来源 `b000000c`，增强 arm 实际采用增强上下文并观察到 Working Memory 就绪，Pi 认证仅注入隔离 Launcher 环境；evidence 同时记录实际任务/记忆模型坐标、记忆调用路由与 token。
 
-四个本地 runner 与模型质量、真实采用 runner 共同构成验证链；按风险先运行本地检查，凭据可用时继续模型能力与成本环节。`node scripts/check-validation-evidence.mjs` 只读核对五份稳定 evidence，不会重新发起 Provider 请求；当前只报告 `context-quality` evidence 的实现绑定待刷新。
+四个本地 runner 与模型质量、真实采用 runner 共同构成验证链；`node scripts/check-validation-evidence.mjs` 只读核对五份稳定 evidence，不会重新发起 Provider 请求；当前五份 evidence 均与实现绑定且通过。
 
 ## 3. 当前主导约束
 
 慢 VLM Phase 2 已退出路线准备关键路径：本地纵向验证证明同一镜像在任务运行期间可连续准备三条线性路线，均在 1000 ms 内发布精确 active context；旧任务只提升完成时最新 revision，每镜像不会并行提交，新增 pending token 不会被旧任务完成清零，超时继续保留已核验 active history。增强状态与 Provider 实际采用仍保持独立。
 
-当前立即约束重新回到质量 evidence 尚未与本次双通道实现及统一模型配置绑定；验证进程取得 OpenRouter 凭据后直接重跑 `validate-context-quality.mjs`，确认任务质量仍成立。随后主导约束是完整账单归属：把每个任务、记忆、重试和降级请求绑定到 OpenRouter 最终 billed cost，才能判断增强路径是否具有完整成本优势。
+当前质量 evidence 已与双通道实现及统一模型配置重新绑定，任务质量、增强上下文采用、Working Memory 就绪和隔离凭据均通过。当前主导约束是完整账单归属：现有结果只记录 Pi 任务成本与 OpenViking token usage，尚未把每个任务、记忆、重试和降级请求绑定到 OpenRouter 最终 billed cost，因此不能据此判断增强路径的完整成本优势。
 
 ## 4. 当前交付边界
 
@@ -50,7 +50,6 @@ Pi `context` hook 只读取内存中的当前受管 OpenViking 子进程和路�
 
 ## 6. 下一执行入口
 
-1. 向验证进程提供 `PCR_OPENVIKING_VLM_API_KEY` 后直接运行 `node scripts/validate-context-quality.mjs`，恢复质量 evidence 与当前扩展入口的实现绑定；
-2. 调查 OpenRouter 与 LiteLLM 响应中可稳定关联账单的 request/generation 标识和 billed cost 字段；
-3. 把关联信息加入成对质量 runner 的 run-local 原始产物与稳定 evidence 校验；
-4. 固定重复次数运行 native/enhanced 两个 arm，核对完整费用归属与任务质量；只有归属完整后才比较并形成成本结论。
+1. 调查 OpenRouter 与 LiteLLM 响应中可稳定关联账单的 request/generation 标识和 billed cost 字段；
+2. 把关联信息加入成对质量 runner 的 run-local 原始产物与稳定 evidence 校验；
+3. 固定重复次数运行 native/enhanced 两个 arm，核对完整费用归属与任务质量；只有归属完整后才比较并形成成本结论。
