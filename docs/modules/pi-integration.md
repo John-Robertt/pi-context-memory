@@ -50,7 +50,7 @@ ControlBoundary = {
 
 Pi 适配器发现结构化 `fullOutputPath` 时，只用该结构化值和当前版本确定生成的文本片段做精确配对，把匹配路径替换为基于 entry ID 的稳定“完整输出可展开”标记，并把原路径作为瞬时 `FullOutputCandidate` 交给长时记忆复制。这里的文本处理是对已知 locator 的精确脱敏，不解析正文语义。candidate 不参与 task-content hash，不持久化，也不进入 OpenViking、recall、增强 Provider payload 或日志；长时记忆完成 blob 发布后，只保存稳定 `fullOutputRef { blobId, sha256, size }`。
 
-其它扩展 custom 仍按 Pi 基线处理：全 text 可形成 MessageSource；含 image/unsupported public block 的整条 message 或完整 ToolBatch 成为请求内存中的 `OpaqueProviderSegment { entryIds?, providerMessages, providerViewHash }`。providerMessages 只能是 `convertToLlm`/版本探针确认的有序输出，不含 raw entry/details；它原样保留，但不持久化、不进 OpenViking/log/stable evidence，也不能被 checkpoint 覆盖。预算要求替换却无法保持该有序 Provider view 时才报告 `opaque-content-unrepresentable`，不要求 foreign allowlist 或组件变更。
+其它扩展 custom 仍按 Pi 基线处理：全 text 可形成 MessageSource；含 image/unsupported public block 的整条 message 或完整 ToolBatch 成为请求内存中的 `OpaqueProviderSegment { reason: "unsupported-content", entryIds, providerMessages, providerViewHash }`；孤立结果、重复调用 ID、缺失结果或错配形成 `reason: "tool-protocol"`，不得发布部分 MessageSource。providerMessages 只能是 `convertToLlm`/版本探针确认的有序输出，不含 raw entry/details；它原样保留，但不持久化、不进 OpenViking/log/stable evidence，也不能被 checkpoint 覆盖。预算要求替换却无法保持该有序 Provider view 时才报告 `opaque-content-unrepresentable`，不要求 foreign allowlist 或组件变更。
 
 `HistoricalRouteKey` 和 `CurrentTurnKey` 绑定 Pi Provider 基线中实际保留的有序消息、完成状态、协议关系及无文本 control 身份。记忆投影可以替代已经由 MessageSource/检查点覆盖的历史内容，但不得静默删除未被覆盖的 Pi Provider 内容。compaction 前仍在当前 parent 链上的原始 message entry 按自身身份读取；branch summary 的 `fromId` 只用于边界身份，不展开废弃 branch。
 
@@ -92,7 +92,7 @@ Pi 适配器发现结构化 `fullOutputPath` 时，只用该结构化值和当�
 
 `before_provider_request` 使用与当前任务 Provider API 匹配的 `PayloadProofAdapter`，把本 handler 被调用时可见的 payload 归一化为模型、系统、工具 schema 与有序消息表示，并核对本扩展此前发布的增强证明。需要绑定的完整字段由 [`../system/context-enhancement.md`](../system/context-enhancement.md) §8.2 唯一定义。
 
-核验成功只证明 handler 时点一致并记 verified；失败记 hookRejected、停止自身确认并 abort。后续 handler 仍由 Pi 按顺序调用，本扩展不要求其停止、重排或注册 allowlist。
+核验成功只证明 handler 时点一致并记 verified；失败记 hookRejected、锁存到当前 session 与运行代际、停止自身确认并 abort，只有显式新代际可以重新授权。后续 handler 仍由 Pi 按顺序调用，本扩展不要求其停止、重排或注册 allowlist。
 
 未到达本 handler 的 constructed 输出由 runner 记 hookUnobserved。transport 只由职责外观测分类；本扩展不从自身日志推断，也不自动修改其它组件。
 

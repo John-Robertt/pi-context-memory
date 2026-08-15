@@ -1,73 +1,121 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "generatedBy": "scripts/validate-context-enhancement.mjs",
   "scope": "local",
-  "runId": "context-enhancement-2026-08-15T04-17-13-825Z",
-  "startedAt": "2026-08-15T04:17:13.839Z",
-  "completedAt": "2026-08-15T04:17:22.860Z",
+  "runId": "context-enhancement-2026-08-15T16-15-03-524Z",
+  "startedAt": "2026-08-15T16:15:03.538Z",
+  "completedAt": "2026-08-15T16:15:11.524Z",
   "piVersion": "0.84.2",
-  "openVikingVersion": "0.4.13-protocol",
+  "nodeVersion": "24.15.0",
+  "piProtocolProfile": "pi-provider-protocol-v1",
+  "openViking": {
+    "kind": "controlled-protocol",
+    "compatibilityTarget": "0.4.13"
+  },
   "fixture": {
     "path": "validation/fixtures/context-enhancement-long-task.json",
     "name": "bounded-context-route-continuity"
   },
   "implementation": {
-    "sourceManifestSha256": "1b7f0e151ab99d676d6f065efbd68525ffa42da52aafe72c4c1be1354c7b1f4b",
+    "sourceManifestSha256": "653cb71989b5a0abb02c2bdaa14b6c8a8177d36a3bce2e40b4d2f736733ab196",
     "files": [
       {
         "path": ".pi/extensions/pi-context-memory/index.ts",
-        "sha256": "36710855109325128fa00ddd44c0b1bb7d926040a9f9431e57e0f003c4e2c748"
+        "sha256": "095151fe50af068ac1c086f37ef6bfe68b5b78cf8170271be8e52dad0937cc88"
       },
       {
         "path": ".pi/extensions/pi-context-memory/long-term-memory.ts",
-        "sha256": "2ccf1fa89d0eff97dc021a13d78ecf1cd22ce1257d6c45fcf96af99ba511dabe"
+        "sha256": "1337a8f94c5774dafac722c67e90da94e16ab67be701c6dab7af1a3e2181718e"
       },
       {
         "path": ".pi/extensions/pi-context-memory/memory-model-configuration.ts",
-        "sha256": "241cce1184190c94837dbcc4976c5e7411d87947279444d6abbefb26af140eea"
+        "sha256": "1e24578fb9ba72c80d08f30d3da5ff777bcdc6258288893f9501521b87af8017"
       },
       {
         "path": ".pi/extensions/pi-context-memory/openviking-protocol.ts",
-        "sha256": "072f287089aa8593eea47428c9a0b986beaa2634b2ddf43a6d3f06b5c7ffd89c"
+        "sha256": "ca435ae48adf4e7d3f0051e0b3e89bb018095ce0493dcc647efc1e9f0a9b5a08"
       },
       {
         "path": ".pi/extensions/pi-context-memory/pi-session-protocol.ts",
-        "sha256": "b9eccbcf704078778e5c7b7bb8f404b85a2e15180626b86deb82279b231a7a98"
+        "sha256": "56dbacf9a4974c46e7c65b56dc7d0a340e079136bf9459cce7271e6faf5db7c5"
+      },
+      {
+        "path": ".pi/extensions/pi-context-memory/provider-payload-proof.ts",
+        "sha256": "af7d12bdf21cc988fd59b2670281b4ea486a454960f99e0a51b430a74da2396b"
       },
       {
         "path": ".pi/extensions/pi-context-memory/session-memory-coordination.ts",
-        "sha256": "9d02cdeb8168a7ab39501cc41d9fcb6e9b3add6c5e467dbe9cc47fe44332d2a4"
+        "sha256": "a9e0e4f67d3839f5a955f07d867f2a963e3156766c266dfb866372a52b70e1d6"
       },
       {
         "path": ".pi/extensions/pi-context-memory/session-working-memory.ts",
-        "sha256": "56c1bbcd04a3920f47fd2c296d75ef747ff3f84a0322d2d0bd8a25b994f371b2"
+        "sha256": "6c7432288aa112743b10a6f4fc43c5a475d1f8f1ca7039f090c8140a687021bf"
       },
       {
         "path": ".pi/extensions/pi-context-memory/working-context-optimization.ts",
-        "sha256": "64e14b83b20d28cf964ad0801b182a18187355f395403a3df90c5e97903a9e91"
+        "sha256": "cef566e580e81c92ac3af3ece3d08cda84d4e91798051be17ae9248c0543ef6e"
+      },
+      {
+        "path": "config/openviking-adapter-contract.json",
+        "sha256": "a66331136c045734d10d9c790dc137358de7deb59c2da41b62f9b95eb970c00a"
+      },
+      {
+        "path": "config/openviking.json",
+        "sha256": "d5abacdcf5268ad5a7caa7fb9e6eb193ddb3016b16096b891f44e13a36c430e2"
+      },
+      {
+        "path": "scripts/check-maintenance-sources.mjs",
+        "sha256": "a75dcb7a9184532d75f91644842a4fac2699830de4009256f2b74c47af38d568"
       },
       {
         "path": "scripts/check-validation-evidence.mjs",
-        "sha256": "1b64785fecbf855d28a79e7d642c9c4339d610ef5761d53b073f68e7c06743c5"
+        "sha256": "0a226ec103c8f8a1cee6913c556d812ffaf0850f81f1963e4df374f738cdb32b"
+      },
+      {
+        "path": "scripts/install-dependencies.mjs",
+        "sha256": "761e97f9f30111ae277e4bcabe96838ceba5b33ac71fd43ea9b4a09dd97ba191"
       },
       {
         "path": "scripts/validate-context-enhancement.mjs",
-        "sha256": "66d442d07a63b62ce1743ee60e5f58dcedfaec2a73fc5a8583ca895ef880bf7c"
+        "sha256": "1b560936f78af82634b8a810067ed14daa48a5a97c00a94aa9840875c0bdbb88"
       },
       {
         "path": "scripts/validation-evidence.mjs",
-        "sha256": "b2ae8a7bcd06f0b11316f4493aa35b660055a88f2279604cf4494c8490c43c08"
+        "sha256": "fa21427c80c256a18f8c3438396b1be7e7ee8f800f25875fffdc8718a99e3ffb"
       },
       {
-        "path": "scripts/validation-model-config.mjs",
-        "sha256": "bf39bf91ec6816eea77aad3d9a4986c452bf37155099ad429a17b90fefd538eb"
+        "path": "scripts/validation-suite.mjs",
+        "sha256": "2765892ccbc87857965e22ff8a2163bc0bf4d089fe04bc913c1ce5d78f3e58f5"
       },
       {
         "path": "validation/fixtures/context-enhancement-long-task.json",
         "sha256": "8aed19f4611f47d8d000b89e6901727cd213282849e6faf5a5d1a4adda724694"
       }
     ],
-    "gitCommit": "971f6fccb88c8cdfb09683da3c6e7f973f25c8c0",
+    "specificationManifestSha256": "9b94e10bb3c9090a7d404050f03c1398e4029f14b241e0500c9d562b097b6e75",
+    "specificationFiles": [
+      {
+        "path": "config/toolchain.json",
+        "sha256": "90e66463054e506385a7f0076063b3e9b532b7cd41de85045f800176dc8b8993"
+      },
+      {
+        "path": "docs/validation/README.md",
+        "sha256": "68f66a21b9cb6457fd2b8a4a125ac9888164b1aefda6a1a43a4593dca5a0db48"
+      },
+      {
+        "path": "docs/validation/context-enhancement-state.md",
+        "sha256": "c74d995db95d0faa261647ccd44b7ace9fbe4c00fd54729a530b82c865d76068"
+      },
+      {
+        "path": "pyproject.toml",
+        "sha256": "c4258b0c6ff676eeaf22e0a022575cb12c1dcad4d6538cfee54091b2d04c1d5c"
+      },
+      {
+        "path": "validation/suite.json",
+        "sha256": "2f34c5cec5f73f972887aaeb0ad7decf734500911f7ea0412061d33deb3d139b"
+      }
+    ],
+    "gitCommit": "60fce6465b6450f4bc132468d64d2260b434452b",
     "workingTreeDirty": true
   },
   "passed": true,
@@ -75,9 +123,10 @@
     "sharedFixtureLoaded": true,
     "workingMemoryTaskDeadlineBounded": true,
     "workingContextResponseNormalized": true,
-    "piProtocolFailClosed": true,
+    "piProtocolUnknownDropped": true,
     "currentRouteIdentity": true,
     "invalidRouteRejected": true,
+    "opaqueHistoryBlocks": true,
     "sessionIsolation": true,
     "lateRouteResultRejected": true,
     "linearRouteReused": true,
@@ -87,6 +136,9 @@
     "sourceIdsPreserved": true,
     "compactionBoundary": true,
     "currentTurnPreserved": true,
+    "proofContentMutationRejected": true,
+    "proofToolSequenceBound": true,
+    "proofMessageSequenceBound": true,
     "skippedCommitRetainsActiveHistory": true,
     "inFlightReadyWaitBounded": true,
     "activeHistoryAvailableDuringWorkingMemory": true,
@@ -97,13 +149,15 @@
     "slowWorkingMemoryCompletesWithinDeadline": true,
     "workingMemoryTimeoutRetainsActiveHistory": true,
     "inFlightCommitShutdownCleaned": true,
-    "backendFailureFallsBack": true,
+    "backendFailureBlocks": true,
     "pendingRoutesCollapsed": true,
     "inFlightShutdownCleaned": true,
     "openVikingProtocolCovered": true,
-    "piContextHookAdopted": true,
-    "providerStateUnspoofable": true,
-    "contextHookNonBlocking": true,
+    "hookVerifiedAtExtension": true,
+    "spoofedMarkerCannotAuthorize": true,
+    "contextBlockStopsExtension": true,
+    "hookOutcomeAccounting": true,
+    "transportObservedIndependently": true,
     "inFlightContextWaitAdopted": true,
     "desiredConfigDoesNotDisableRuntime": true,
     "providerPayloadCurrentTurn": true,
@@ -111,33 +165,58 @@
     "treeLifecycle": true,
     "sessionReplacementLifecycle": true,
     "compactionLifecycle": true,
-    "backendFailureRecovery": true,
-    "lifecycleProviderStateConsistent": true,
-    "memoryStatusLifecycle": true,
+    "backendFailureLatchesUntilNewGeneration": true,
+    "archiveFailureLatchesUntilNewGeneration": true,
+    "hookTransportStateConsistent": true,
+    "memoryStatusThreeStateLifecycle": true,
     "ownedSessionsCleaned": true
   },
   "details": {
     "routes": {
-      "common": "c69c96745886fda4fde3b0e1707e89055cc9734b6edd8a92cbed7a962707ee23",
-      "branchA": "d4c2aa497d7c978ef668499125010021266d134d44c61fc5a2bdd77e2879db8b",
-      "branchB": "735c0324736721136d01062fc6520e300be99f5129d13312c456e2c40fd090f7",
-      "afterCompaction": "211247d71469c7d80be3d163761c2c2a9abde3394f20eb7f2e9ad2f0ada9434f"
+      "common": "ec165441f7ecce335499b5f6eeddcd64cd1b543f228bc751baaf155591f5dd1c",
+      "branchA": "ab93bd203f34a0ec4c5b81b3877a9da111e30af57be11b9d2de10e82eeaae781",
+      "branchB": "840e8653cb5fde6c1f296b1d3db022890014490115b96af1846bb31555b1e375",
+      "afterCompaction": "04559982fe60455a3cd4710e1afdb60a713b6fc5cb1869cef1bef355b20cb761"
     },
     "openViking": {
-      "sessionsCreated": 25,
-      "sessionsDeleted": 25,
+      "sessionsCreated": 26,
+      "sessionsDeleted": 26,
       "tasks": 13,
-      "requests": 1294
+      "requests": 929
     },
     "context": {
-      "branchAChars": 1205,
-      "branchBChars": 1319,
-      "compactedChars": 1086,
-      "branchBEstimatedTokens": 472
+      "branchAChars": 1111,
+      "branchBChars": 1097,
+      "compactedChars": 793,
+      "branchBEstimatedTokens": 349
     },
     "pi": {
-      "providerRequests": 36,
-      "enhancedContextEvents": 26,
+      "providerRequests": 35,
+      "contextAllowed": 29,
+      "contextBlocked": 4,
+      "hookOutcomes": {
+        "verified": 29,
+        "rejected": 0,
+        "no-constructed-output": 0
+      },
+      "transport": {
+        "adopted": 29,
+        "changed": 0,
+        "unobserved": 0
+      },
+      "authorizationBlock": {
+        "contextBlockStopsExtension": true,
+        "transportObservedIndependently": true,
+        "extensionContinuedAfterBlock": 0,
+        "transportRequestCount": 0,
+        "blockFaults": [
+          "not-ready"
+        ],
+        "statusTexts": [
+          "增强记忆 · 初始化中",
+          "增强记忆 · 故障"
+        ]
+      },
       "lifecycle": {
         "treeRoundTrip": true,
         "treeSummaryChoices": true,
@@ -148,10 +227,11 @@
         "replacementProviderAdoption": true,
         "reload": true,
         "compactionReasons": true,
-        "overflowRetryFallsBack": true,
+        "overflowRetryAuthorized": true,
         "compactionCancellationState": true,
         "compactionProviderAdoption": true,
         "backendRecovery": true,
+        "archiveRecovery": true,
         "providerStateConsistent": true,
         "memoryStatusLifecycle": true,
         "eventCounts": {
@@ -159,14 +239,14 @@
           "compaction": 3,
           "starts": 10,
           "shutdowns": 5,
-          "providerRequests": 30
+          "providerRequests": 29
         }
       }
     }
   },
   "limitations": [
     "The local runner uses protocol-compatible OpenViking and task-Provider doubles and makes no external Provider requests.",
-    "It proves route identity, runtime-generation gating, complete Pi tree/session-replacement/compaction lifecycle, bounded adoption, Provider/UI consistency, failure fallback, and derived-Session cleanup.",
+    "It proves route identity, runtime-generation gating, Pi tree/session-replacement/compaction lifecycle, bounded authorization, hook outcome accounting, independent local transport observation, block semantics, and derived-Session cleanup.",
     "Real memory-model task quality has a dedicated paired runner; complete API-cost attribution remains outside this local scope."
   ]
 }

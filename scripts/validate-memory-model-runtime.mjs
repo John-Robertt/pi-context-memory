@@ -741,8 +741,9 @@ async function validateLauncherAndCommands() {
       && automaticWarnings[0].message.includes("The running OpenViking instance remains available until restart.")
       && /^[a-f0-9]{64}$/.test(automaticDiagnostic?.contentFingerprint ?? "")
       && !invalidPiCase.observations.some((row) => row.type === "before_provider_request");
-    const desiredConfigDoesNotDisableRunning = invalidConfigStatuses.includes("增强记忆 · 生效中")
-      && !invalidConfigStatuses.includes("Pi 原生");
+    const invalidDesiredConfigPreservesRunningInstance = afterPreflight?.ready === true
+      && invalidConfigStatuses.includes("增强记忆 · 初始化中")
+      && invalidConfigStatuses.every((status) => status === undefined || status === "增强记忆 · 初始化中");
     await writeMemoryModelConfig(env.PCR_MEMORY_MODEL_SETTINGS, { provider: "openai", model: "second-model", api_base: "https://example.invalid/v1" });
     const second = await requestOpenVikingRestart(root, env);
     const orderedRestart = second.ready === true
@@ -765,10 +766,10 @@ async function validateLauncherAndCommands() {
     );
     const credentialBoundaryStatuses = credentialBoundaryPiCase.events.filter((event) => event.type === "extension_ui_request"
       && event.method === "setStatus").map((event) => event.statusText);
-    const splitCredentialRuntimeRemainsAvailable = credentialBoundaryState.ready === true
+    const splitCredentialRuntimeAvailable = credentialBoundaryState.ready === true
       && credentialBoundaryState.activeProvider === "openai"
-      && credentialBoundaryStatuses.includes("增强记忆 · 生效中")
-      && !credentialBoundaryStatuses.includes("Pi 原生")
+      && credentialBoundaryStatuses.includes("增强记忆 · 初始化中")
+      && !credentialBoundaryStatuses.includes("增强记忆 · 故障")
       && credentialBoundaryPiCase.events.some((event) => event.type === "extension_ui_request"
         && event.method === "notify"
         && event.message.includes("Configuration: applied"));
@@ -828,11 +829,11 @@ async function validateLauncherAndCommands() {
     const sharedUserConfig = secondPiCase.events.some((event) => event.type === "extension_ui_request"
       && event.method === "notify"
       && event.message.includes("openai/command-model"));
-    const configuredAndRunningDistinct = piCase.events.some((event) => event.type === "extension_ui_request"
+    const configuredAndRunningReportedSeparately = piCase.events.some((event) => event.type === "extension_ui_request"
       && event.method === "notify"
       && event.message.includes("Configured memory model: openai/command-model")
       && event.message.includes("Running OpenViking model: openai/slow-ready")
-      && event.message.includes("Context path: Pi 原生"));
+      && event.message.includes("Extension authorization: 初始化中"));
     await writeMemoryModelConfig(env.PCR_MEMORY_MODEL_SETTINGS, null);
     const nullPiCase = await runPiCommandCase(join(caseDir, "pi-null-config"), env, [
       "/memory-model",
@@ -851,14 +852,12 @@ async function validateLauncherAndCommands() {
     const statusEvents = [...piCase.events, ...secondPiCase.events, ...nullPiCase.events].filter((event) => event.type === "extension_ui_request"
       && event.method === "setStatus");
     const statusTexts = statusEvents.map((event) => event.statusText);
-    const memoryStatusLifecycleVisible = statusTexts.includes("增强记忆 · 初始化中")
-      && statusTexts.includes("增强记忆 · 生效中")
-      && statusTexts.includes("Pi 原生")
+    const memoryStatusVocabularyCurrent = statusTexts.includes("增强记忆 · 初始化中")
+      && statusTexts.includes("增强记忆 · 故障")
       && statusTexts.every((status) => status === undefined
         || status === "增强记忆 · 初始化中"
-        || status === "增强记忆 · 生效中"
         || status === "增强记忆"
-        || status === "Pi 原生");
+        || status === "增强记忆 · 故障");
 
     console.error("[memory-model-runtime] restart failure matrix");
     await writeMemoryModelConfig(env.PCR_MEMORY_MODEL_SETTINGS, { provider: "openai", model: "slow-ready", api_base: "https://example.invalid/v1" });
@@ -932,18 +931,18 @@ async function validateLauncherAndCommands() {
         wrongLaunchRejected,
         interruptedControlOperationCompletes,
         automaticConfigErrorReported,
-        desiredConfigDoesNotDisableRunning,
+        invalidDesiredConfigPreservesRunningInstance,
         openRouterLauncherCredentialRequired,
-        splitCredentialRuntimeRemainsAvailable,
+        splitCredentialRuntimeAvailable,
         commandNoProviderRequests,
         taskModelUnchanged,
         branchUnchanged,
         piSessionCredentialsExcluded,
         configCommandReadOnly,
         sharedUserConfig,
-        configuredAndRunningDistinct,
+        configuredAndRunningReportedSeparately,
         nullConfigurationStateReported,
-        memoryStatusLifecycleVisible,
+        memoryStatusVocabularyCurrent,
         concurrentRestartSerialized,
         readinessTimeoutPublished,
         childExitPublished,
@@ -1028,8 +1027,8 @@ async function validateOwnershipBoundaries() {
     const coldState = await waitFor(async () => {
       const state = await readRuntimeState(root, coldEnv);
       return state?.ready ? state : undefined;
-    }, "invalid cold-start source-only fallback", 20_000);
-    const invalidColdStartFallsBack = coldState.activeModel === undefined
+    }, "invalid cold-start source runtime", 20_000);
+    const invalidColdStartKeepsSourceRuntime = coldState.activeModel === undefined
       && coldState.configurationError?.includes("api_key references unset environment variable MISSING_COLD_START_API_KEY")
       && !coldState.configurationError.includes(VALIDATION_API_KEY)
       && coldState.configurationError.includes(coldEnv.PCR_MEMORY_MODEL_SETTINGS)
@@ -1076,7 +1075,7 @@ async function validateOwnershipBoundaries() {
     const unrelatedReadyNotReconciled = Boolean(reconciliationError);
     await new Promise((resolveClose) => resetServer.close(resolveClose));
     resetServer = undefined;
-    return { checks: { unknownPortPreserved, launcherOwnershipProtected, staleLifecycleLockRequiresExplicitRecovery, invalidColdStartFallsBack, unrelatedReadyNotReconciled } };
+    return { checks: { unknownPortPreserved, launcherOwnershipProtected, staleLifecycleLockRequiresExplicitRecovery, invalidColdStartKeepsSourceRuntime, unrelatedReadyNotReconciled } };
   } finally {
     if (coldLauncher) await stopLauncher(coldLauncher).catch(() => undefined);
     if (resetServer?.listening) await new Promise((resolveClose) => resetServer.close(resolveClose));

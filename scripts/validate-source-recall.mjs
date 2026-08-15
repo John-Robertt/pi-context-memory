@@ -133,7 +133,19 @@ function locatePiDist() {
   return dirname(realpathSync(located));
 }
 
-const { SessionManager } = await import(pathToFileURL(join(locatePiDist(), "index.js")).href);
+const {
+  SessionManager,
+  buildContextEntries,
+  convertToLlm,
+  sessionEntryToContextMessages,
+} = await import(pathToFileURL(join(locatePiDist(), "index.js")).href);
+
+/** 与扩展 index.ts 使用同一宿主转换的 PiProtocolProfile。 */
+const profile = {
+  id: "pi-provider-protocol-v1",
+  contextEntries: (entries, leafId) => buildContextEntries([...entries], leafId),
+  providerMessages: (entry) => convertToLlm(sessionEntryToContextMessages(entry)),
+};
 
 function sessionIdentity(manager) {
   const sessionFile = manager.getSessionFile();
@@ -306,13 +318,19 @@ async function validateIndexCoordination() {
     throw abortController.signal.reason;
   };
   const abortRecords = ["one", "two", "three"].map((entryId) => ({
+    format: "message-source-v1",
+    normalizationVersion: profile.id,
     source: { sessionId: "coordination", entryId },
-    entry: {
-      type: "message",
+    projection: {
+      kind: "message-source",
       id: entryId,
       parentId: null,
+      role: "user",
       timestamp: new Date(0).toISOString(),
-      message: { role: "user", content: entryId },
+      taskContent: [{ type: "text", text: entryId }],
+      completion: undefined,
+      taskContentHash: "abort-traversal-fixture",
+      authorityHash: "abort-traversal-fixture",
     },
   }));
   const abortedSynchronizationRejected = await expectFailure(() =>
@@ -595,7 +613,7 @@ async function validateRecallCore(proxy) {
       `Branch A obsolete database decision ${index}: SQLite remained selected for durable storage.`,
     )));
   }
-  const firstCoordinator = new SessionMemoryCoordinator(sessionIdentity(first), memory);
+  const firstCoordinator = new SessionMemoryCoordinator(sessionIdentity(first), memory, profile);
   await firstCoordinator.archiveCurrentRoute(snapshot(first));
   const routeA = snapshot(first);
   const sourcesA = await firstCoordinator.listCurrentSources(routeA);
@@ -608,7 +626,7 @@ async function validateRecallCore(proxy) {
   const sourcesB = await firstCoordinator.listCurrentSources(routeB);
 
   second.appendMessage(userMessage("Another session uses MARIGOLD-9902 and exact port 59881."));
-  const secondCoordinator = new SessionMemoryCoordinator(sessionIdentity(second), memory);
+  const secondCoordinator = new SessionMemoryCoordinator(sessionIdentity(second), memory, profile);
   await secondCoordinator.archiveCurrentRoute(snapshot(second));
   const sourcesSecond = await secondCoordinator.listCurrentSources(snapshot(second));
 
@@ -631,7 +649,8 @@ async function validateRecallCore(proxy) {
     .searchCurrent(routeB, sourcesB, "deliberately empty backend result", 5);
   await emptySearchServer.close();
   const oldSource = await firstCoordinator.resolveCurrentSource(routeB, branchAId);
-  const expanded = expandSource(first.getEntry(longId), 1_000);
+  const longSource = await firstCoordinator.resolveCurrentSource(routeB, longId);
+  const expanded = longSource ? expandSource(longSource.projection, 1_000) : { content: "", truncated: false };
   const resourceRequestsBeforeRecovery = proxy.requests
     .filter((request) => request.method === "POST" && request.path === "/api/v1/resources")
     .length;
@@ -651,7 +670,7 @@ async function validateRecallCore(proxy) {
   const recovered = await recall.searchCurrent(routeB, sourcesB, "exact early sentinel and control port", 5);
 
   const modified = structuredClone(sourcesB.find((source) => source.source.entryId === commonId));
-  modified.entry.message.content = "tampered source";
+  modified.projection.taskContent = [{ type: "text", text: "tampered source" }];
   const reopened = new OpenVikingSourceRecall(proxy.url, undefined, 30_000, namespace);
   const immutableMismatchRejected = await expectFailure(() => reopened.synchronize([modified]));
   const original = sourcesB.find((source) => source.source.entryId === commonId);
@@ -665,7 +684,7 @@ async function validateRecallCore(proxy) {
     concurrentMismatch[0].status === "fulfilled"
     && concurrentMismatch[1].status === "rejected";
   const authorityMismatchRejected = await expectFailure(() =>
-    new SessionMemoryCoordinator(routeB, { readSource: async () => modified })
+    new SessionMemoryCoordinator(routeB, { readSource: async () => modified }, profile)
       .listCurrentSources({ ...routeB, leafId: commonId, entries: [first.getEntry(commonId)] }),
   );
   const insecureRemoteRejected = (await Promise.all([

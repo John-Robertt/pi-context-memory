@@ -36,15 +36,15 @@
 
 ### 3.3 Provider 基线、记忆投影与 Summary 边界
 
-加入全-text/mixed/image user/custom、各 stopReason assistant、完整 ToolBatch、普通/excluded bash、thinking、details/usage、当前 unknown role、未来 Pi 可见 block 和已有 summary entry；分别设哨兵。
+加入全-text/mixed/image user/custom、各 stopReason assistant、完整 ToolBatch、孤立 toolResult、重复或缺失 tool-call ID、不完整调用、普通/excluded bash、thinking、details/usage、当前 unknown role、未来 Pi 可见 block 和已有 summary entry；分别设哨兵。
 
-通过条件：基线与 Pi 转换/探针一致；全-text 任意 customType 形成 user-role MessageSource，mixed/image 整单元 opaque，当前 unknown role drop；assistant text 保存 completion。thinking/private metadata、excluded bash、opaque 和 locator 不进来源。opaque 预算内原样保留，不能投影时只返回本扩展诊断；ControlBoundary 无 summary 正文，废弃 branch 不回灌。
+通过条件：基线与 Pi 转换/探针一致；全-text 任意 customType 形成 user-role MessageSource，mixed/image 整单元 opaque，孤立结果、重复/缺失调用 ID 和不完整批次不得发布 MessageSource，当前 unknown role drop；assistant text 保存 completion。thinking/private metadata、excluded bash、opaque 和本机 locator 不进来源或 Provider 表示；opaque 单元若携带 locator 但无法发布稳定 `fullOutputRef`，请求屏障必须拒绝。opaque 预算内原样保留，不能投影时只返回本扩展诊断；ControlBoundary 无 summary 正文，废弃 branch 不回灌。
 
 ### 3.4 完整工具结果
 
 以权威 toolResult 和 BashExecutionMessage 的受控 `fullOutputPath` 验证大结果归档，并注入损坏 blob、元数据发布失败、输入持续增长和复制期限结束。
 
-通过条件：`Pi entry → FullOutputCandidate → content-addressed blob → 唯一 source record/fullOutputRef` 链路成立；Pi 文本中的同路径提示被替换为稳定引用，来源记录不持久化 candidate 或原始路径；source record 只在 blob 完整写入后发布，不存在第二份 entry metadata；读取字节数与 SHA-256 一致；删除原临时文件并创建新的协调实例后，仍可按当前 branch 和 fullOutputRef 恢复完整结果。
+通过条件：`Pi entry → FullOutputCandidate → content-addressed blob → 唯一 source record/fullOutputRef` 链路成立；Pi 文本中的同路径提示被替换为稳定引用，来源记录不持久化 candidate 或原始路径；source record 只在 blob 完整写入后发布，不存在第二份 entry metadata；读取和每次请求来源屏障都复核字节数与 SHA-256，损坏或缺失 blob 不得放行；删除原临时文件并创建新的协调实例后，仍可按当前 branch 和 fullOutputRef 恢复完整结果。
 
 ### 3.5 ToolBatch 来源屏障
 

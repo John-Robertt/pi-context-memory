@@ -281,8 +281,10 @@ try {
       at: event.at,
       provider: event.provider,
       model: event.model,
-      contextPath: event.contextPath,
-      contextDecision: event.contextDecision,
+      hookOutcome: event.hookOutcome,
+      contextAuthorization: event.contextAuthorization,
+      nonce: event.nonce,
+      rejectionReason: event.rejectionReason,
       payloadHasEnhancedContext: event.payloadHasEnhancedContext,
       payloadBytes: event.payloadBytes,
       payloadHash: event.payloadHash,
@@ -299,13 +301,13 @@ try {
     usage: { tokens: stats.tokens, cost: stats.cost },
     passed: workingErrors.length === 0 && (scenario === "skipped"
       ? providerRequests.length === 2
-        && secondRequest?.contextPath === "enhanced"
-        && secondRequest?.contextDecision === "enhanced"
+        && secondRequest?.hookOutcome === "verified"
+        && secondRequest?.contextAuthorization === "allowed"
         && secondRequest?.payloadHasEnhancedContext === true
         && workingReady.some((event) => event.hasWorkingMemory === false)
       : providerRequests.length === 1
-        && firstRequest?.contextPath === "enhanced"
-        && firstRequest?.contextDecision === "enhanced"
+        && firstRequest?.hookOutcome === "verified"
+        && firstRequest?.contextAuthorization === "allowed"
         && firstRequest?.payloadHasEnhancedContext === true
         && typeof firstRequest.sequence === "number"
         && typeof acceptedFinalReady?.sequence === "number"

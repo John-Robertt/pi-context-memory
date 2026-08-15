@@ -4,6 +4,7 @@ import { spawnSync } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   renameSync,
@@ -21,7 +22,11 @@ import {
 } from "./validation-evidence.mjs";
 import { assertValidationPiVersion } from "./validation-suite.mjs";
 
-import { FileLongTermMemory } from "../.pi/extensions/pi-context-memory/long-term-memory.ts";
+import {
+  FileLongTermMemory,
+  isMessageSourceRecord,
+} from "../.pi/extensions/pi-context-memory/long-term-memory.ts";
+import { expandSource } from "../.pi/extensions/pi-context-memory/recall-and-provenance.ts";
 import { SessionMemoryCoordinator } from "../.pi/extensions/pi-context-memory/session-memory-coordination.ts";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -100,7 +105,89 @@ function locatePiDist() {
   return dirname(realpathSync(located));
 }
 
-const { SessionManager } = await import(pathToFileURL(join(locatePiDist(), "index.js")).href);
+const {
+  SessionManager,
+  buildContextEntries,
+  convertToLlm,
+  sessionEntryToContextMessages,
+} = await import(pathToFileURL(join(locatePiDist(), "index.js")).href);
+
+/** 当前 suite 所选 PiProtocolProfile；与扩展 index.ts 使用同一宿主转换。 */
+const profile = {
+  id: "pi-provider-protocol-v1",
+  contextEntries: (entries, leafId) => buildContextEntries([...entries], leafId),
+  providerMessages: (entry) => convertToLlm(sessionEntryToContextMessages(entry)),
+};
+
+function coordinatorFor(identity, memory) {
+  return new SessionMemoryCoordinator(identity, memory, profile);
+}
+
+function projectionsOf(records) {
+  return records.map((record) => record.projection);
+}
+
+function archivedText(records) {
+  return JSON.stringify(records);
+}
+
+/**
+ * Provider 基线行为探针：固定当前 Pi 版本的转换语义。
+ * profile 只有在本探针重新通过后才能继续使用（docs/modules/pi-integration.md §2）。
+ */
+function validateProviderBaseline() {
+  const ts = Date.now();
+  const one = (message) => convertToLlm([message]);
+  const roles = (out) => out.map((message) => message.role).join("+");
+
+  const userPreserved = roles(one({ role: "user", content: "u", timestamp: ts })) === "user";
+  const assistantPreserved = roles(one({
+    role: "assistant", content: [{ type: "text", text: "a" }], stopReason: "endTurn", timestamp: ts,
+  })) === "assistant";
+  const toolResultPreserved = roles(one({
+    role: "toolResult", toolCallId: "c", toolName: "t",
+    content: [{ type: "text", text: "r" }], isError: false, timestamp: ts,
+  })) === "toolResult";
+  const bashBecomesUser = roles(one({
+    role: "bashExecution", command: "ls", output: "o", exitCode: 0,
+    cancelled: false, truncated: false, timestamp: ts,
+  })) === "user";
+  const excludedBashDropped = one({
+    role: "bashExecution", command: "x", output: "BASELINE-EXCLUDED", exitCode: 0,
+    cancelled: false, truncated: false, excludeFromContext: true, timestamp: ts,
+  }).length === 0;
+  const customBecomesUser = (() => {
+    const out = one({
+      role: "custom", customType: "any-foreign", content: "c",
+      display: true, details: { BASELINE_DETAILS: 1 }, timestamp: ts,
+    });
+    return roles(out) === "user" && !JSON.stringify(out).includes("BASELINE_DETAILS");
+  })();
+  const summariesBecomeUser = roles(one({
+    role: "compactionSummary", summary: "s", tokensBefore: 1, timestamp: ts,
+  })) === "user" && roles(one({
+    role: "branchSummary", summary: "s", fromId: "x", timestamp: ts,
+  })) === "user";
+  const unknownRoleDropped = one({ role: "futureUnknownRole", content: "BASELINE-UNKNOWN", timestamp: ts }).length === 0;
+  const nonContextEntriesDropped = [
+    { id: "p1", parentId: null, type: "thinking_level_change", timestamp: new Date(ts).toISOString(), thinkingLevel: "off" },
+    { id: "p2", parentId: "p1", type: "model_change", timestamp: new Date(ts).toISOString(), provider: "p", modelId: "m" },
+    { id: "p3", parentId: "p2", type: "custom", timestamp: new Date(ts).toISOString(), customType: "e", data: { BASELINE_EXT: 1 } },
+  ].every((entry) => sessionEntryToContextMessages(entry).length === 0);
+
+  const checks = {
+    userPreserved,
+    assistantPreserved,
+    toolResultPreserved,
+    bashBecomesUser,
+    excludedBashDropped,
+    customBecomesUser,
+    summariesBecomeUser,
+    unknownRoleDropped,
+    nonContextEntriesDropped,
+  };
+  return { passed: Object.values(checks).every(Boolean), checks, profileId: profile.id };
+}
 
 function validateUnpersistedSession() {
   const caseDir = join(artifactRoot, "unpersisted-session");
@@ -186,8 +273,8 @@ async function validateStorageAndCoordination() {
   second.appendMessage(userMessage("conflict-key=SESSION_B"));
   const firstIdentity = sessionIdentity(first);
   const secondIdentity = sessionIdentity(second);
-  const firstCoordinator = new SessionMemoryCoordinator(firstIdentity, memory);
-  const secondCoordinator = new SessionMemoryCoordinator(secondIdentity, memory);
+  const firstCoordinator = coordinatorFor(firstIdentity, memory);
+  const secondCoordinator = coordinatorFor(secondIdentity, memory);
   await firstCoordinator.archiveCurrentRoute(snapshot(first));
   await secondCoordinator.archiveCurrentRoute(snapshot(second));
 
@@ -216,25 +303,42 @@ async function validateStorageAndCoordination() {
   const historical = await memory.listSources(firstIdentity);
   const current = await firstCoordinator.listCurrentSources(routeBSnapshot);
   const branchFiltering = (
-    historical.some((record) => record.entry.id === routeAId)
-    && historical.some((record) => record.entry.id === routeBId)
-    && !current.some((record) => record.entry.id === routeAId)
-    && current.some((record) => record.entry.id === routeBId)
+    historical.some((record) => record.source.entryId === routeAId)
+    && historical.some((record) => record.source.entryId === routeBId)
+    && !current.some((record) => record.source.entryId === routeAId)
+    && current.some((record) => record.source.entryId === routeBId)
     && await firstCoordinator.resolveCurrentSource(routeBSnapshot, routeAId) === undefined
   );
 
-  const restored = await Promise.all(routeBSnapshot.entries.map((entry) =>
-    firstCoordinator.resolveCurrentSource(routeBSnapshot, entry.id),
+  // 来源与当前 Pi entry 经同版本规范化后，task-content、完成状态与两个哈希精确一致。
+  const liveProjections = new Map(
+    firstCoordinator.projectCurrentRoute(routeBSnapshot).projections
+      .filter((projection) => projection.kind === "message-source")
+      .map((projection) => [projection.id, projection]),
+  );
+  const restored = await Promise.all([...liveProjections.keys()].map((entryId) =>
+    firstCoordinator.resolveCurrentSource(routeBSnapshot, entryId),
   ));
-  const sourceRestoration = restored.every((item, index) => (
-    item
-    && item.record.source.sessionId === firstIdentity.sessionId
-    && item.record.source.sessionFile === firstIdentity.sessionFile
-    && item.record.source.entryId === routeBSnapshot.entries[index].id
-    && JSON.stringify(item.authoritativeEntry) === JSON.stringify(first.getEntry(item.record.source.entryId))
-  ));
+  const messageSourceReprojection = restored.length > 0 && restored.every((item) => {
+    if (!item || !isMessageSourceRecord(item.record)) return false;
+    const live = liveProjections.get(item.record.source.entryId);
+    const stored = item.record.projection;
+    return Boolean(live)
+      && item.record.source.sessionId === firstIdentity.sessionId
+      && item.record.source.sessionFile === firstIdentity.sessionFile
+      && stored.taskContentHash === live.taskContentHash
+      && stored.authorityHash === live.authorityHash
+      && JSON.stringify(stored.taskContent) === JSON.stringify(live.taskContent)
+      && JSON.stringify(stored.completion ?? null) === JSON.stringify(live.completion ?? null);
+  });
 
   const toolCallId = "call_source_archive_validation";
+  first.appendMessage({
+    role: "assistant",
+    content: [{ type: "toolCall", id: toolCallId, name: "bash", arguments: {} }],
+    stopReason: "toolUse",
+    timestamp: Date.now(),
+  });
   const toolResultId = first.appendMessage({
     role: "toolResult",
     toolCallId,
@@ -249,17 +353,23 @@ async function validateStorageAndCoordination() {
   const largeSnapshot = snapshot(first);
   const authoritativeToolEntry = first.getEntry(toolResultId);
   authoritativeToolEntry.message.details = { fullOutputPath: largeOutputPath };
-  const recoveryCoordinator = new SessionMemoryCoordinator(firstIdentity, memory);
+  const recoveryCoordinator = coordinatorFor(firstIdentity, memory);
   const archivedLarge = await recoveryCoordinator.archiveCurrentRoute(largeSnapshot);
-  const opened = await memory.openLargeResult(firstIdentity, toolResultId);
+  const opened = await memory.openFullOutput(firstIdentity, toolResultId);
   const copied = opened ? await consume(opened.stream) : Buffer.alloc(0);
-  const completeLargeResult = (
+  const toolRecord = await memory.readSource(firstIdentity, toolResultId);
+  const completeFullOutput = (
     recoveryCoordinator !== firstCoordinator
-    && archivedLarge.archivedToolCallIds.length === 1
-    && archivedLarge.archivedToolCallIds[0] === toolCallId
-    && opened?.record.bytes === largeOutput.length
-    && opened?.record.sha256 === sha256(largeOutput)
+    && archivedLarge.archivedFullOutputEntryIds.length === 1
+    && archivedLarge.archivedFullOutputEntryIds[0] === toolResultId
+    && opened?.ref.size === largeOutput.length
+    && opened?.ref.sha256 === sha256(largeOutput)
     && copied.equals(largeOutput)
+    // fullOutputRef 只存在于同一份来源记录，不存在第二份 entry metadata
+    && Boolean(toolRecord && isMessageSourceRecord(toolRecord) && toolRecord.fullOutputRef)
+    && !existsSync(join(archiveRoot, sha256(firstIdentity.sessionId), "large-results", "records"))
+    // 本机路径不进入来源记录
+    && !archivedText([toolRecord]).includes(largeOutputPath)
   );
 
   const blobPath = join(
@@ -267,42 +377,43 @@ async function validateStorageAndCoordination() {
     sha256(firstIdentity.sessionId),
     "large-results",
     "blobs",
-    opened.record.blob,
+    opened.ref.blobId,
   );
   const originalBlob = readFileSync(blobPath);
   writeFileSync(blobPath, Buffer.concat([originalBlob, Buffer.from("corrupt")]));
-  const corruptedBlobRejected = await expectFailure(() => memory.openLargeResult(firstIdentity, toolResultId));
+  const corruptedBlobRejected = await expectFailure(() => memory.openFullOutput(firstIdentity, toolResultId));
+  const corruptedBlobBarrierRejected = await expectFailure(() =>
+    recoveryCoordinator.archiveCurrentRoute(largeSnapshot));
   writeFileSync(blobPath, originalBlob);
 
-  const recordsPath = join(archiveRoot, sha256(firstIdentity.sessionId), "large-results", "records");
-  const recordsBackup = `${recordsPath}.validation-backup`;
-  renameSync(recordsPath, recordsBackup);
-  writeFileSync(recordsPath, "blocked");
-  let metadataPublishFailurePreservesPublishedResult;
-  try {
-    metadataPublishFailurePreservesPublishedResult = await expectFailure(() =>
-      memory.archiveLargeResult(firstIdentity, first.getEntry(toolResultId), toolCallId, largeOutputPath),
-    );
-  } finally {
-    rmSync(recordsPath, { force: true });
-    renameSync(recordsBackup, recordsPath);
-  }
-  const reopened = await memory.openLargeResult(firstIdentity, toolResultId);
+  // 复制失败不得污染已经发布的 fullOutputRef，也不得留下待发布中间态。
+  const copyFailureRejected = await expectFailure(() => memory.archiveFullOutput(firstIdentity, {
+    entryId: toolResultId,
+    toolCallId,
+    path: join(caseDir, "missing-full-output.bin"),
+  }));
+  const reopened = await memory.openFullOutput(firstIdentity, toolResultId);
   const reopenedContent = reopened ? await consume(reopened.stream) : Buffer.alloc(0);
-  const largeResultPublicationAtomic = (
-    metadataPublishFailurePreservesPublishedResult
-    && reopened?.record.sha256 === sha256(largeOutput)
+  const pendingBlobs = readdirSync(join(archiveRoot, sha256(firstIdentity.sessionId), "large-results", "blobs"))
+    .filter((name) => name.startsWith(".pending"));
+  const fullOutputPublicationAtomic = (
+    copyFailureRejected
+    && reopened?.ref.sha256 === sha256(largeOutput)
     && reopenedContent.equals(largeOutput)
+    && pendingBlobs.length === 0
   );
 
   const timeoutSource = join(caseDir, "timeout-source.bin");
   writeFileSync(timeoutSource, "");
   truncateSync(timeoutSource, 64 * 1024 * 1024);
   const timeoutMemory = new FileLongTermMemory(join(caseDir, "timeout-archive"), 1);
-  const timeoutCoordinator = new SessionMemoryCoordinator(firstIdentity, timeoutMemory);
-  await timeoutCoordinator.archiveCurrentRoute(largeSnapshot);
-  const largeResultCopyTimeoutEnforced = await expectFailure(() =>
-    timeoutMemory.archiveLargeResult(firstIdentity, first.getEntry(toolResultId), toolCallId, timeoutSource),
+  const timeoutCoordinator = coordinatorFor(firstIdentity, timeoutMemory);
+  const timeoutSnapshot = structuredClone(largeSnapshot);
+  const timeoutEntry = timeoutSnapshot.entries.find((entry) => entry.id === toolResultId);
+  if (timeoutEntry?.message?.details) delete timeoutEntry.message.details.fullOutputPath;
+  await timeoutCoordinator.archiveCurrentRoute(timeoutSnapshot);
+  const fullOutputCopyTimeoutEnforced = await expectFailure(() =>
+    timeoutMemory.archiveFullOutput(firstIdentity, { entryId: toolResultId, toolCallId, path: timeoutSource }),
   );
   rmSync(timeoutSource, { force: true });
 
@@ -314,29 +425,31 @@ async function validateStorageAndCoordination() {
 
   const blockedRoot = join(caseDir, "blocked-root");
   writeFileSync(blockedRoot, "not a directory", "utf8");
-  const blockedCoordinator = new SessionMemoryCoordinator(firstIdentity, new FileLongTermMemory(blockedRoot));
+  const blockedCoordinator = coordinatorFor(firstIdentity, new FileLongTermMemory(blockedRoot));
   const storageFailurePropagates = await expectFailure(() => blockedCoordinator.archiveCurrentRoute(largeSnapshot));
 
   return {
     passed: [
       sessionIsolation,
       branchFiltering,
-      sourceRestoration,
-      completeLargeResult,
+      messageSourceReprojection,
+      completeFullOutput,
       corruptedBlobRejected,
-      largeResultPublicationAtomic,
-      largeResultCopyTimeoutEnforced,
+      corruptedBlobBarrierRejected,
+      fullOutputPublicationAtomic,
+      fullOutputCopyTimeoutEnforced,
       invalidRouteRejected,
       storageFailurePropagates,
     ].every(Boolean),
     checks: {
       sessionIsolation,
       branchFiltering,
-      sourceRestoration,
-      completeLargeResult,
+      messageSourceReprojection,
+      completeFullOutput,
       corruptedBlobRejected,
-      largeResultPublicationAtomic,
-      largeResultCopyTimeoutEnforced,
+      corruptedBlobBarrierRejected,
+      fullOutputPublicationAtomic,
+      fullOutputCopyTimeoutEnforced,
       invalidRouteRejected,
       storageFailurePropagates,
     },
@@ -345,15 +458,237 @@ async function validateStorageAndCoordination() {
       firstSessionCurrentBranch: current.length,
       secondSessionCurrentBranch: secondSources.length,
     },
-    largeResult: { bytes: largeOutput.length, sha256: sha256(largeOutput) },
+    fullOutput: { size: largeOutput.length, sha256: sha256(largeOutput) },
   };
 }
 
 
+/**
+ * Provider 基线、记忆投影与 summary 边界（docs/validation/source-archive.md §3.3）。
+ * 全-text 任意 customType 形成 user-role MessageSource；mixed/image 整单元 opaque；
+ * ControlBoundary 无正文；thinking/private details/locator 不进来源。
+ */
+async function validateProjectionBoundary() {
+  const caseDir = join(artifactRoot, "projection-boundary");
+  mkdirSync(caseDir, { recursive: true });
+  const archiveRoot = join(caseDir, "archive");
+  const memory = new FileLongTermMemory(archiveRoot);
+  const session = SessionManager.create(caseDir, join(caseDir, "session"));
+  const identity = sessionIdentity(session);
+  const coordinator = coordinatorFor(identity, memory);
+
+  const firstUserId = session.appendMessage(userMessage("PROBE-USER"));
+  session.appendMessage({
+    role: "assistant",
+    content: [{ type: "thinking", thinking: "PROBE-THINKING" }, { type: "text", text: "PROBE-ASSISTANT" }],
+    stopReason: "endTurn",
+    timestamp: Date.now(),
+    usage: { input: 1, output: 1 },
+  });
+  const foreignTextId = session.appendCustomMessageEntry("foreign-extension", "PROBE-FOREIGN-TEXT", true, {
+    PROBE_DETAILS: "PROBE-PRIVATE-DETAILS",
+  });
+  const mixedId = session.appendCustomMessageEntry("foreign-extension", [
+    { type: "text", text: "PROBE-MIXED-TEXT" },
+    { type: "image", data: "UFJPQkU=", mimeType: "image/png" },
+  ], true);
+  session.appendCustomEntry("private-extension", { PROBE_EXT: "PROBE-EXTENSION-DATA" });
+  session.appendMessage({
+    role: "bashExecution", command: "echo", output: "PROBE-EXCLUDED-BASH", exitCode: 0,
+    cancelled: false, truncated: false, excludeFromContext: true, timestamp: Date.now(),
+  });
+
+  const bashOutputPath = join(caseDir, "bash-full-output.txt");
+  writeFileSync(bashOutputPath, "PROBE-BASH-FULL-OUTPUT\n");
+  const truncatedBashId = session.appendMessage({
+    role: "bashExecution", command: "probe", output: "PROBE-BASH-TAIL", exitCode: 0,
+    cancelled: false, truncated: true, fullOutputPath: bashOutputPath, timestamp: Date.now(),
+  });
+
+  const orphanResultId = session.appendMessage({
+    role: "toolResult", toolCallId: "probe-orphan", toolName: "Read",
+    content: [{ type: "text", text: "PROBE-ORPHAN-RESULT" }], isError: false, timestamp: Date.now(),
+  });
+  const duplicateCallId = session.appendMessage({
+    role: "assistant",
+    content: [
+      { type: "toolCall", id: "probe-duplicate", name: "Read", arguments: {} },
+      { type: "toolCall", id: "probe-duplicate", name: "Shot", arguments: {} },
+    ],
+    stopReason: "toolUse",
+    timestamp: Date.now(),
+  });
+  const duplicateResultId = session.appendMessage({
+    role: "toolResult", toolCallId: "probe-duplicate", toolName: "Read",
+    content: [{ type: "text", text: "PROBE-DUPLICATE-RESULT" }], isError: false, timestamp: Date.now(),
+  });
+
+  // ToolBatch：一次调用两个工具，其中一个返回 image，整批必须 opaque。
+  const batchCallId = session.appendMessage({
+    role: "assistant",
+    content: [
+      { type: "toolCall", id: "probe-a", name: "Read", arguments: {} },
+      { type: "toolCall", id: "probe-b", name: "Shot", arguments: {} },
+    ],
+    stopReason: "toolUse",
+    timestamp: Date.now(),
+  });
+  const batchTextId = session.appendMessage({
+    role: "toolResult", toolCallId: "probe-a", toolName: "Read",
+    content: [{ type: "text", text: "PROBE-BATCH-TEXT" }], isError: false, timestamp: Date.now(),
+  });
+  const batchImageId = session.appendMessage({
+    role: "toolResult", toolCallId: "probe-b", toolName: "Shot",
+    content: [{ type: "image", data: "UFJPQkU=", mimeType: "image/png" }], isError: false, timestamp: Date.now(),
+  });
+  const missingCallId = session.appendMessage({
+    role: "assistant",
+    content: [{ type: "toolCall", name: "Read", arguments: {} }],
+    stopReason: "toolUse",
+    timestamp: Date.now(),
+  });
+  const missingCallResultId = session.appendMessage({
+    role: "toolResult", toolCallId: "probe-missing-id", toolName: "Read",
+    content: [{ type: "text", text: "PROBE-MISSING-ID-RESULT" }], isError: false, timestamp: Date.now(),
+  });
+  const incompleteCallId = session.appendMessage({
+    role: "assistant",
+    content: [{ type: "toolCall", id: "probe-incomplete", name: "Read", arguments: {} }],
+    stopReason: "toolUse",
+    timestamp: Date.now(),
+  });
+  const malformedId = session.appendCustomMessageEntry("foreign-extension", [
+    { type: "text", text: "PROBE-MALFORMED-TEXT" },
+    7,
+  ], true);
+
+  const compactionId = session.appendCompaction("PROBE-COMPACTION-SUMMARY", firstUserId, 42);
+  session.appendMessage(userMessage("PROBE-AFTER-COMPACTION"));
+  session.branchWithSummary(compactionId, "PROBE-BRANCH-SUMMARY");
+  session.appendMessage(userMessage("PROBE-AFTER-BRANCH"));
+
+  const routeSnapshot = snapshot(session);
+  await coordinator.archiveCurrentRoute(routeSnapshot);
+  const records = await memory.listSources(identity);
+  const stored = archivedText(records);
+  const byId = new Map(records.map((record) => [record.source.entryId, record]));
+  const { projections, providerBaseline } = coordinator.projectCurrentRoute(routeSnapshot);
+  const opaque = projections.filter((projection) => projection.kind === "opaque-provider-segment");
+  const boundaries = projections.filter((projection) => projection.kind === "control-boundary");
+  const bashRecord = byId.get(truncatedBashId);
+  const bashFullOutput = await coordinator.readCurrentFullOutput(routeSnapshot, truncatedBashId, 1_000);
+  const bashExpansion = bashRecord && isMessageSourceRecord(bashRecord)
+    ? expandSource(bashRecord.projection, 1_000, bashFullOutput)
+    : undefined;
+
+  const opaqueLocatorPath = join(caseDir, "opaque-full-output.txt");
+  writeFileSync(opaqueLocatorPath, "PROBE-OPAQUE-FULL-OUTPUT\n");
+  const opaqueLocatorSnapshot = structuredClone(routeSnapshot);
+  const opaqueLocatorEntry = opaqueLocatorSnapshot.entries.find((entry) => entry.id === batchImageId);
+  opaqueLocatorEntry.message.details = { fullOutputPath: opaqueLocatorPath };
+  const opaqueLocatorProjection = coordinator.projectCurrentRoute(opaqueLocatorSnapshot);
+  const opaqueLocatorSanitized = opaqueLocatorProjection.fullOutputCandidates.some((candidate) =>
+    candidate.entryId === batchImageId && candidate.path === opaqueLocatorPath)
+    && !JSON.stringify(opaqueLocatorProjection.providerBaseline).includes(opaqueLocatorPath)
+    && !JSON.stringify(opaqueLocatorProjection.projections).includes(opaqueLocatorPath)
+    && JSON.stringify(opaqueLocatorProjection.projections).includes(`recall_session read_source ${batchImageId}`);
+  const opaqueLocatorBarrierRejected = await expectFailure(() =>
+    coordinator.archiveCurrentRoute(opaqueLocatorSnapshot));
+
+  const foreignTextProjected = Boolean(
+    byId.get(foreignTextId)
+    && isMessageSourceRecord(byId.get(foreignTextId))
+    && byId.get(foreignTextId).projection.role === "user"
+    && stored.includes("PROBE-FOREIGN-TEXT"),
+  );
+  const mixedUnitOpaque = !byId.has(mixedId)
+    && !byId.has(malformedId)
+    && opaque.some((segment) => segment.entryIds.includes(mixedId))
+    && opaque.some((segment) => segment.entryIds.includes(malformedId))
+    && !stored.includes("PROBE-MIXED-TEXT")
+    && !stored.includes("PROBE-MALFORMED-TEXT");
+  const bashFullOutputRecoverable = Boolean(
+    bashRecord
+    && isMessageSourceRecord(bashRecord)
+    && bashRecord.fullOutputRef
+    && !stored.includes(bashOutputPath)
+    && !JSON.stringify(providerBaseline).includes(bashOutputPath)
+    && JSON.stringify(providerBaseline).includes(`recall_session read_source ${truncatedBashId}`)
+    && JSON.stringify(bashRecord.projection.taskContent).includes(`recall_session read_source ${truncatedBashId}`)
+    && bashFullOutput?.content === "PROBE-BASH-FULL-OUTPUT\n"
+    && bashFullOutput.truncated === false
+    && bashExpansion?.content.includes("full_output:\nPROBE-BASH-FULL-OUTPUT")
+  );
+  const malformedToolProtocolOpaque = !byId.has(orphanResultId)
+    && !byId.has(duplicateCallId)
+    && !byId.has(duplicateResultId)
+    && !byId.has(missingCallId)
+    && !byId.has(missingCallResultId)
+    && opaque.some((segment) =>
+      segment.reason === "tool-protocol" && segment.entryIds.includes(orphanResultId))
+    && opaque.some((segment) => segment.reason === "tool-protocol"
+      && segment.entryIds.includes(duplicateCallId)
+      && segment.entryIds.includes(duplicateResultId))
+    && opaque.some((segment) => segment.reason === "tool-protocol"
+      && segment.entryIds.includes(missingCallId))
+    && opaque.some((segment) => segment.reason === "tool-protocol"
+      && segment.entryIds.includes(missingCallResultId));
+  const toolBatchAtomicity = (() => {
+    const segment = opaque.find((candidate) => candidate.entryIds.includes(batchImageId));
+    const incomplete = opaque.find((candidate) => candidate.entryIds.includes(incompleteCallId));
+    return Boolean(segment)
+      && segment.entryIds.includes(batchCallId)
+      && segment.entryIds.includes(batchTextId)
+      && Boolean(incomplete)
+      && !byId.has(batchCallId)
+      && !byId.has(batchTextId)
+      && !byId.has(batchImageId)
+      && !byId.has(incompleteCallId)
+      && !stored.includes("PROBE-BATCH-TEXT");
+  })();
+  const controlBoundaryWithoutSummary = boundaries.length >= 1
+    && boundaries.every((boundary) => !JSON.stringify(boundary).includes("PROBE-"))
+    && !stored.includes("PROBE-COMPACTION-SUMMARY")
+    && !stored.includes("PROBE-BRANCH-SUMMARY");
+  const privateContentExcluded = !stored.includes("PROBE-THINKING")
+    && !stored.includes("PROBE-PRIVATE-DETAILS")
+    && !stored.includes("PROBE-EXTENSION-DATA")
+    && !stored.includes("PROBE-EXCLUDED-BASH");
+
+  // 归档格式身份不匹配时丢弃重建，不存在读取其它格式的路径。
+  const manifestPath = join(archiveRoot, sha256(identity.sessionId), "session.json");
+  writeJson(manifestPath, { format: "superseded-format", ...identity });
+  const rebuiltMemory = new FileLongTermMemory(archiveRoot);
+  await coordinatorFor(identity, rebuiltMemory).archiveCurrentRoute(routeSnapshot);
+  const rebuilt = await rebuiltMemory.listSources(identity);
+  const archiveFormatRebuilt = rebuilt.length === records.length
+    && JSON.parse(readFileSync(manifestPath, "utf8")).format === "message-source-v1";
+
+  const checks = {
+    foreignTextProjected,
+    mixedUnitOpaque,
+    bashFullOutputRecoverable,
+    opaqueLocatorSanitized,
+    opaqueLocatorBarrierRejected,
+    malformedToolProtocolOpaque,
+    toolBatchAtomicity,
+    controlBoundaryWithoutSummary,
+    privateContentExcluded,
+    archiveFormatRebuilt,
+  };
+  return {
+    passed: Object.values(checks).every(Boolean),
+    checks,
+    counts: { records: records.length, opaqueSegments: opaque.length, controlBoundaries: boundaries.length },
+  };
+}
+
 const startedAt = new Date().toISOString();
+const baseline = validateProviderBaseline();
 const unpersisted = validateUnpersistedSession();
 const coordination = await validateStorageAndCoordination();
-const checks = { ...unpersisted.checks, ...coordination.checks };
+const boundary = await validateProjectionBoundary();
+const checks = { ...baseline.checks, ...unpersisted.checks, ...coordination.checks, ...boundary.checks };
 assertImplementationEvidenceUnchanged(root, "source-archive", implementation);
 const summary = {
   schemaVersion: STABLE_EVIDENCE_SCHEMA_VERSION,
@@ -365,10 +700,13 @@ const summary = {
   piVersion,
   nodeVersion: process.versions.node,
   implementation,
-  passed: unpersisted.passed && coordination.passed && Object.values(checks).every(Boolean),
+  passed: baseline.passed && unpersisted.passed && coordination.passed && boundary.passed
+    && Object.values(checks).every(Boolean),
   checks,
+  providerBaseline: baseline,
   unpersisted,
   coordination,
+  projectionBoundary: boundary,
   limitations: [
     "The local scope covers source storage and coordination with a zero-request local Provider probe.",
     "Derived memory, recall quality, Provider lifecycle, and complete API cost use their dedicated validation paths.",
@@ -389,8 +727,10 @@ if (scope === "local") {
     implementation,
     passed: summary.passed,
     checks,
+    profileId: baseline.profileId,
     sourceCounts: coordination.sourceCounts,
-    largeResult: coordination.largeResult,
+    projectionCounts: boundary.counts,
+    fullOutput: coordination.fullOutput,
     limitations: summary.limitations,
   };
   if (stableEvidence.passed) replaceJson(evidencePath, stableEvidence);

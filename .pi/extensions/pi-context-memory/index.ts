@@ -3,14 +3,19 @@ import { appendFileSync, mkdirSync, realpathSync, watch, type FSWatcher } from "
 import { open } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import {
+  buildContextEntries,
+  convertToLlm,
+  sessionEntryToContextMessages,
+  type ExtensionAPI,
+  type ExtensionContext,
+} from "@earendil-works/pi-coding-agent";
 import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import {
   DEFAULT_ARCHIVE_COPY_TIMEOUT_MS,
   FileLongTermMemory,
   type SessionIdentity,
-  type SourceEntry,
 } from "./long-term-memory.ts";
 import {
   expandSource,
@@ -25,8 +30,11 @@ import {
   type SessionRouteSnapshot,
 } from "./session-memory-coordination.ts";
 import {
-  applyPreparedWorkingContext,
+  type AssemblyProof,
+  type ContextAuthorization,
+  type ContextFault,
   DEFAULT_IN_FLIGHT_READY_WAIT_MS,
+  payloadCarriesEnhancedContent,
   WorkingContextOptimizer,
 } from "./working-context-optimization.ts";
 import {
@@ -43,7 +51,38 @@ import {
   type OpenVikingRuntimeState,
 } from "./memory-model-configuration.ts";
 import { DEFAULT_OPENVIKING_REQUEST_TIMEOUT_MS } from "./openviking-protocol.ts";
-import { effectivePiProjectionEntries, entriesBeforeCurrentPrompt } from "./pi-session-protocol.ts";
+import {
+  createOpenAICompletionsPayloadProof,
+  openAICompletionsPayloadMatches,
+  type ProviderPayloadProof,
+} from "./provider-payload-proof.ts";
+import {
+  entriesBeforeCurrentPrompt,
+  isMessageSource,
+  isOpaqueProviderSegment,
+  sanitizeFullOutputLocators,
+  type PiProtocolProfile,
+  type SourceEntry,
+} from "./pi-session-protocol.ts";
+
+/** 当前 suite 所选 PiProtocolProfile；行为由 scripts/validate-source-archive.mjs 的探针固定。 */
+const PI_PROTOCOL_PROFILE: PiProtocolProfile = {
+  id: "pi-provider-protocol-v1",
+  contextEntries: (entries, leafId) => buildContextEntries([...entries] as never[], leafId) as SourceEntry[],
+  providerMessages: (entry) => convertToLlm(sessionEntryToContextMessages(entry as never)) as never[],
+};
+
+interface PendingRequestProof {
+  assembly: AssemblyProof;
+  payload: ProviderPayloadProof;
+}
+
+interface LatchedGenerationFault {
+  generation: string | undefined;
+  stage: "working-context" | "archive" | "source-index" | "provider-proof";
+  sessionKey?: string;
+  fault: ContextFault;
+}
 
 const SCHEMA_VERSION = 1;
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
@@ -239,6 +278,16 @@ function payloadSummary(payload: unknown): Record<string, unknown> {
     toolsHash: hash(tools ?? []),
   };
 }
+function payloadCarriesNonce(value: unknown, nonce: string, seen = new Set<unknown>()): boolean {
+  if (typeof value === "string") return value.includes(nonce);
+  if (!value || typeof value !== "object") return false;
+  if (seen.has(value)) return false;
+  seen.add(value);
+  if (Array.isArray(value)) return value.some((item) => payloadCarriesNonce(item, nonce, seen));
+  return Object.values(value as Record<string, unknown>).some((item) => payloadCarriesNonce(item, nonce, seen));
+}
+
+
 function payloadUsesEnhancedContext(value: unknown, seen = new WeakSet<object>()): boolean {
   if (typeof value === "string") return value.includes("# Enhanced session context");
   if (!value || typeof value !== "object") return false;
@@ -248,20 +297,19 @@ function payloadUsesEnhancedContext(value: unknown, seen = new WeakSet<object>()
   return Object.values(value as Record<string, unknown>).some((item) => payloadUsesEnhancedContext(item, seen));
 }
 
-type MemoryUiState = "initializing" | "activating" | "active" | "native";
+type MemoryUiState = "initializing" | "active" | "faulted";
 
 const MEMORY_UI_TEXT: Record<MemoryUiState, string> = {
   initializing: "增强记忆 · 初始化中",
-  activating: "增强记忆 · 生效中",
   active: "增强记忆",
-  native: "Pi 原生",
+  faulted: "增强记忆 · 故障",
 };
 
 function formatMemoryModelState(
   configPath: string,
   setting: MemoryModelSetting | undefined,
   state: OpenVikingRuntimeState | undefined,
-  contextPath: "Pi 原生" | "增强记忆",
+  authorization: "初始化中" | "增强记忆" | "已阻断",
 ): string {
   const configured = setting ? `${setting.provider}/${setting.model}` : "not configured";
   const running = state?.activeProvider && state.activeModel ? `${state.activeProvider}/${state.activeModel}` : "no VLM loaded";
@@ -282,7 +330,7 @@ function formatMemoryModelState(
     `Service readiness: ${state?.ready ? "ready" : state?.phase ?? "launcher unavailable"}`,
     `Configuration: ${configurationStatus}`,
     state?.configurationError ? `Last cold-start configuration error: ${state.configurationError}` : undefined,
-    `Context path: ${contextPath}`,
+    `Extension authorization: ${authorization}`,
   ].filter((line): line is string => Boolean(line)).join("\n");
 }
 
@@ -310,8 +358,7 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
   let workingContextTransition: Promise<void> = Promise.resolve();
   let coordinator: SessionMemoryCoordinator | undefined;
   let coordinatorIdentity: string | undefined;
-  let archiveUnavailable = false;
-  let failureNotified = false;
+  const latchedGenerationFaults = new Map<string, LatchedGenerationFault>();
   let archiveRunning = false;
   let sourceIndexUnavailable = sourceRecall === undefined;
   let sourceIndexFailureNotified = false;
@@ -320,18 +367,18 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
     coordinator: SessionMemoryCoordinator;
     snapshot: SessionRouteSnapshot;
     trigger: string;
+    ctx: ExtensionContext;
+    generation: string | undefined;
   }> = [];
   const archiveIdleWaiters = new Set<() => void>();
   const queuedArchives = new Set<string>();
   let lastMemoryModelConfigDiagnosticKey: string | undefined;
   let memoryModelConfigCheck: Promise<void> | undefined;
   let memoryEnhancementAvailable = false;
-  let lastContextPath: "Pi 原生" | "增强记忆" = "Pi 原生";
+  let lastAuthorization: "初始化中" | "增强记忆" | "已阻断" = "初始化中";
   let renderedMemoryUiState: MemoryUiState | undefined;
-  let memoryFallbackRequired = false;
-  let latestMemoryUiRouteFingerprint: string | undefined;
-  let providerContextDecision: "pi-native" | "enhanced" = "pi-native";
-  let forceNativeUntilAgentSettled = false;
+  let contextAuthorizationOutcome: "pending" | "allowed" | "blocked" = "pending";
+  let pendingAssemblyProof: PendingRequestProof | undefined;
   let shuttingDown = false;
   let archiveStopped = false;
   let memoryModelWatchEpoch = 0;
@@ -413,6 +460,7 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
   }
   function transitionWorkingContext(nextGeneration?: string): Promise<boolean> {
     const transition = async (): Promise<boolean> => {
+      clearFaultForNewGeneration(nextGeneration);
       if (nextGeneration && !shuttingDown && workingContextOptimizer && workingContextGeneration === nextGeneration) return true;
       const previous = workingContextOptimizer;
       workingContextOptimizer = undefined;
@@ -444,14 +492,79 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
     return `${state.launchId}\0${state.childPid}`;
   }
 
-  function setContextPath(path: "Pi 原生" | "增强记忆"): void {
-    lastContextPath = path;
+  function setAuthorization(value: "初始化中" | "增强记忆" | "已阻断"): void {
+    lastAuthorization = value;
+  }
+
+  /** 未到达 before_provider_request 的 constructed 输出记为 unobserved。 */
+  function retireUnobservedProof(reason: string): void {
+    if (!pendingAssemblyProof) return;
+    const nonce = pendingAssemblyProof.assembly.nonce;
+    pendingAssemblyProof = undefined;
+    writeRecord("constructed_output_unobserved", { nonce, reason });
   }
 
   function setMemoryUiState(ctx: ExtensionContext, state: MemoryUiState): void {
     if (renderedMemoryUiState === state) return;
     renderedMemoryUiState = state;
     if (ctx.hasUI) ctx.ui.setStatus("pi-context-memory", MEMORY_UI_TEXT[state]);
+  }
+
+  function currentSessionKey(ctx: ExtensionContext): string | undefined {
+    const identity = sessionIdentity(ctx);
+    return identity ? `${identity.sessionId}\0${identity.sessionFile}` : undefined;
+  }
+
+  function generationFaultKey(generation: string | undefined, sessionKey: string | undefined): string {
+    return `${generation ?? "unavailable"}\0${sessionKey ?? "runtime"}`;
+  }
+
+  function applicableGenerationFault(ctx: ExtensionContext): LatchedGenerationFault | undefined {
+    const runtimeFault = latchedGenerationFaults.get(generationFaultKey(workingContextGeneration, undefined));
+    if (runtimeFault) return runtimeFault;
+    return latchedGenerationFaults.get(generationFaultKey(workingContextGeneration, currentSessionKey(ctx)));
+  }
+
+  function latchGenerationFault(
+    ctx: ExtensionContext,
+    stage: LatchedGenerationFault["stage"],
+    fault: ContextFault,
+    options: { generation?: string; sessionScoped?: boolean } = {},
+  ): void {
+    const generation = options.generation ?? workingContextGeneration;
+    if (generation !== workingContextGeneration) {
+      writeRecord("generation_fault_ignored", { generation, currentGeneration: workingContextGeneration, stage, fault: fault.kind });
+      return;
+    }
+    const sessionKey = options.sessionScoped ? currentSessionKey(ctx) : undefined;
+    const key = generationFaultKey(generation, sessionKey);
+    if (latchedGenerationFaults.has(key)) return;
+    latchedGenerationFaults.set(key, { generation, stage, fault, sessionKey });
+    contextAuthorizationOutcome = "blocked";
+    retireUnobservedProof(`${stage} fault`);
+    setAuthorization("已阻断");
+    setMemoryUiState(ctx, "faulted");
+    writeRecord("generation_fault_latched", {
+      generation,
+      sessionKey: sessionKey ? hash(sessionKey) : undefined,
+      stage,
+      fault: fault.kind,
+      detail: fault.detail,
+    });
+  }
+
+  function clearFaultForNewGeneration(nextGeneration: string | undefined): void {
+    if (!nextGeneration) return;
+    for (const [key, fault] of latchedGenerationFaults) {
+      if (fault.generation === nextGeneration) continue;
+      writeRecord("generation_fault_replaced", {
+        previousGeneration: fault.generation,
+        nextGeneration,
+        stage: fault.stage,
+        fault: fault.fault.kind,
+      });
+      latchedGenerationFaults.delete(key);
+    }
   }
 
   async function reportMemoryModelConfigError(ctx: ExtensionContext, checkEpoch: number): Promise<void> {
@@ -476,15 +589,12 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
         memoryEnhancementAvailable = Boolean(generation && generationReady && root);
         if (memoryEnhancementAvailable) {
           if (!wasAvailable || previousGeneration !== generation) {
-            memoryFallbackRequired = false;
-            latestMemoryUiRouteFingerprint = undefined;
-            setMemoryUiState(ctx, "activating");
+            setMemoryUiState(ctx, "initializing");
             scheduleWorkingContext(ctx, sessionRouteSnapshot(ctx), "runtime_ready");
           }
         } else {
-          memoryFallbackRequired = state?.phase !== "starting" && state?.phase !== "restarting";
-          latestMemoryUiRouteFingerprint = undefined;
-          setMemoryUiState(ctx, memoryFallbackRequired ? "native" : "initializing");
+          const runtimeStarting = state?.phase === "starting" || state?.phase === "restarting";
+          setMemoryUiState(ctx, runtimeStarting ? "initializing" : "faulted");
         }
       }
     }
@@ -504,7 +614,7 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
         writeRecord("memory_model_config_error", { error: diagnosticMessage, contentFingerprint });
         const continuation = runtimeWorkingContextGeneration(state)
           ? "The running OpenViking instance remains available until restart."
-          : "Pi will continue with its native context.";
+          : "Enhanced requests remain blocked until memory runtime validation succeeds.";
         if (ctx.hasUI) ctx.ui.notify(`${diagnosticMessage}\n${continuation}`, "warning");
       }
     } else {
@@ -517,7 +627,7 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
     if (shuttingDown || memoryModelConfigCheck || (!force && memoryEnhancementAvailable)) return;
     const checkEpoch = memoryModelWatchEpoch;
     memoryModelRecheckRequested = false;
-    if (!memoryEnhancementAvailable && renderedMemoryUiState !== "native") setMemoryUiState(ctx, "initializing");
+    if (!memoryEnhancementAvailable && renderedMemoryUiState !== "faulted") setMemoryUiState(ctx, "initializing");
     memoryModelConfigCheck = reportMemoryModelConfigError(ctx, checkEpoch).catch(() => undefined).finally(() => {
       memoryModelConfigCheck = undefined;
       if (memoryModelRecheckRequested && latestMemoryModelContext && !shuttingDown) {
@@ -532,7 +642,11 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
     if (!identity) return undefined;
     const key = `${identity.sessionId}\0${identity.sessionFile}`;
     if (!coordinator || coordinatorIdentity !== key) {
-      coordinator = new SessionMemoryCoordinator(identity, new FileLongTermMemory(archiveRoot(ctx), archiveCopyTimeoutMs));
+      coordinator = new SessionMemoryCoordinator(
+        identity,
+        new FileLongTermMemory(archiveRoot(ctx), archiveCopyTimeoutMs),
+        PI_PROTOCOL_PROFILE,
+      );
       coordinatorIdentity = key;
     }
     return coordinator;
@@ -542,12 +656,17 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
     snapshot: SessionRouteSnapshot | undefined,
     trigger: string,
   ): void {
-    if (shuttingDown || !memoryEnhancementAvailable || !workingContextOptimizer || !snapshot || snapshot.entries.length === 0) return;
+    if (shuttingDown
+      || applicableGenerationFault(ctx)
+      || !memoryEnhancementAvailable
+      || !workingContextOptimizer
+      || !snapshot
+      || snapshot.entries.length === 0) return;
     const activeCoordinator = currentCoordinator(ctx);
     if (!activeCoordinator) return;
     let route: SessionRouteIdentity;
     try {
-      if (!effectivePiProjectionEntries(snapshot.entries).some((entry) => entry.text.length > 0)) return;
+      if (!activeCoordinator.projectCurrentRoute(snapshot).projections.some(isMessageSource)) return;
       route = activeCoordinator.identifyCurrentRoute(snapshot);
     } catch (error) {
       writeRecord("working_context_rejected", {
@@ -556,14 +675,8 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
       });
       return;
     }
-    latestMemoryUiRouteFingerprint = route.fingerprint;
-    if (!memoryFallbackRequired && providerContextDecision !== "enhanced") setMemoryUiState(ctx, "activating");
-    void workingContextOptimizer.prepare(route, snapshot.entries).then(
+    void workingContextOptimizer.prepare(route, activeCoordinator.projectCurrentRoute(snapshot).projections).then(
       (prepared) => {
-        if (latestMemoryUiRouteFingerprint === route.fingerprint) {
-          memoryFallbackRequired = false;
-          if (!shuttingDown && providerContextDecision !== "enhanced") setMemoryUiState(ctx, "activating");
-        }
         writeRecord("working_context_ready", {
           trigger,
           sessionId: route.sessionId,
@@ -577,17 +690,15 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
         });
       },
       (error) => {
-        if (latestMemoryUiRouteFingerprint === route.fingerprint) {
-          memoryFallbackRequired = true;
-          if (!shuttingDown) setMemoryUiState(ctx, "native");
-        }
+        const detail = error instanceof Error ? error.message : String(error);
+        latchGenerationFault(ctx, "working-context", { kind: "service", detail });
         writeRecord("working_context_error", {
           trigger,
           sessionId: route.sessionId,
           sessionFile: route.sessionFile,
           leafId: route.leafId,
           routeFingerprint: route.fingerprint,
-          error: error instanceof Error ? error.message : String(error),
+          error: detail,
         });
       },
     );
@@ -629,6 +740,8 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
     activeCoordinator: SessionMemoryCoordinator,
     snapshot: SessionRouteSnapshot,
     trigger: string,
+    ctx: ExtensionContext,
+    generation: string | undefined,
   ): Promise<void> {
     try {
       if (archiveDelayMs > 0) await new Promise((resolveDelay) => setTimeout(resolveDelay, archiveDelayMs));
@@ -637,19 +750,20 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
         return;
       }
       const result = await activeCoordinator.archiveCurrentRoute(snapshot);
-      archiveUnavailable = false;
-      failureNotified = false;
       writeRecord("archive_complete", {
         trigger,
         sessionId: snapshot.sessionId,
         leafId: snapshot.leafId,
         sourceCount: snapshot.entries.length,
-        largeResults: result.archivedToolCallIds.length,
+        largeResults: result.archivedFullOutputEntryIds.length,
       });
       if (!shuttingDown) sourceIndexes.scheduleBackground(activeCoordinator, snapshot, trigger);
     } catch (error) {
-      archiveUnavailable = true;
       const message = error instanceof Error ? error.message : String(error);
+      latchGenerationFault(ctx, "archive", { kind: "source-barrier", detail: message }, {
+        generation,
+        sessionScoped: true,
+      });
       writeRecord("archive_error", { trigger, sessionId: snapshot.sessionId, error: message });
     }
   }
@@ -663,7 +777,7 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
       return;
     }
     archiveRunning = true;
-    void runArchive(job.coordinator, job.snapshot, job.trigger).finally(() => {
+    void runArchive(job.coordinator, job.snapshot, job.trigger, job.ctx, job.generation).finally(() => {
       queuedArchives.delete(job.key);
       archiveRunning = false;
       pumpArchiveQueue();
@@ -683,11 +797,9 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
   }
 
   function scheduleArchive(ctx: ExtensionContext, trigger: string): void {
-    if (shuttingDown || archiveStopped) return;
-    if (archiveUnavailable && !failureNotified && ctx.hasUI) {
-      ctx.ui.notify("Source archiving is unavailable; Pi will continue normally.", "warning");
-      failureNotified = true;
-    }
+    if (shuttingDown
+      || archiveStopped
+      || applicableGenerationFault(ctx)) return;
     if (sourceIndexUnavailable && !sourceIndexFailureNotified && ctx.hasUI) {
       ctx.ui.notify("Session recall indexing is unavailable; Pi will continue normally.", "warning");
       sourceIndexFailureNotified = true;
@@ -701,7 +813,14 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
     const key = `${snapshot.sessionId}\0${snapshot.leafId ?? ""}`;
     if (queuedArchives.has(key)) return;
     queuedArchives.add(key);
-    archiveQueue.push({ key, coordinator: activeCoordinator, snapshot, trigger });
+    archiveQueue.push({
+      key,
+      coordinator: activeCoordinator,
+      snapshot,
+      trigger,
+      ctx,
+      generation: workingContextGeneration,
+    });
     pumpArchiveQueue();
   }
 
@@ -716,7 +835,7 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
         const setting = await validateMemoryModelSetting(root);
         const state = await readRuntimeState(root);
         lastMemoryModelConfigDiagnosticKey = undefined;
-        ctx.ui.notify(formatMemoryModelState(configPath, setting, state, lastContextPath), "info");
+        ctx.ui.notify(formatMemoryModelState(configPath, setting, state, lastAuthorization), "info");
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         if (root && message.startsWith("Invalid memory model configuration at ")) {
@@ -735,22 +854,21 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
       const uiStateBeforeRestart = renderedMemoryUiState;
       try {
         root = await locateProjectRoot(ctx.cwd);
-        providerContextDecision = "pi-native";
-        setContextPath("Pi 原生");
+        contextAuthorizationOutcome = "pending";
+        retireUnobservedProof("lifecycle reset");
+        setAuthorization("初始化中");
         if (memoryModelConfigCheck) await memoryModelConfigCheck;
         setMemoryUiState(ctx, "initializing");
         const state = await requestOpenVikingRestart(root);
         const generation = runtimeWorkingContextGeneration(state);
         const generationReady = await transitionWorkingContext(generation);
         memoryEnhancementAvailable = Boolean(generation && generationReady);
-        latestMemoryUiRouteFingerprint = undefined;
         if (memoryEnhancementAvailable) {
-          memoryFallbackRequired = false;
-          setMemoryUiState(ctx, "activating");
+          setMemoryUiState(ctx, "initializing");
           scheduleWorkingContext(ctx, sessionRouteSnapshot(ctx), "restart");
         } else {
-          memoryFallbackRequired = state.phase !== "starting" && state.phase !== "restarting";
-          setMemoryUiState(ctx, memoryFallbackRequired ? "native" : "initializing");
+          const runtimeStarting = state.phase === "starting" || state.phase === "restarting";
+          setMemoryUiState(ctx, runtimeStarting ? "initializing" : "faulted");
         }
         writeRecord("openviking_restart_complete", {
           provider: state.activeProvider,
@@ -764,16 +882,10 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
         const generation = runtimeWorkingContextGeneration(state);
         const generationReady = await transitionWorkingContext(generation);
         memoryEnhancementAvailable = Boolean(generation && generationReady);
-        latestMemoryUiRouteFingerprint = undefined;
         if (memoryEnhancementAvailable) {
-          memoryFallbackRequired = false;
-          const restoredState = uiStateBeforeRestart === "active" || uiStateBeforeRestart === "activating"
-            ? uiStateBeforeRestart
-            : "activating";
-          setMemoryUiState(ctx, restoredState);
+          setMemoryUiState(ctx, uiStateBeforeRestart === "active" ? "active" : "initializing");
         } else {
-          memoryFallbackRequired = true;
-          setMemoryUiState(ctx, "native");
+          setMemoryUiState(ctx, "faulted");
         }
         if (root && message.startsWith("Invalid memory model configuration at ")) {
           const contentFingerprint = await memoryModelConfigContentFingerprint(root);
@@ -782,17 +894,17 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
         writeRecord("openviking_restart_error", { error: message });
         ctx.ui.notify(message, "error");
       } finally {
-        providerContextDecision = "pi-native";
-        setContextPath("Pi 原生");
+        contextAuthorizationOutcome = "pending";
+        retireUnobservedProof("lifecycle reset");
+        setAuthorization("初始化中");
       }
     },
   });
 
   pi.on("session_start", (_event, ctx) => {
-    providerContextDecision = "pi-native";
-    setContextPath("Pi 原生");
-    memoryFallbackRequired = false;
-    latestMemoryUiRouteFingerprint = undefined;
+    contextAuthorizationOutcome = "pending";
+    retireUnobservedProof("lifecycle reset");
+    setAuthorization("初始化中");
     scheduleMemoryModelConfigCheck(ctx);
   });
 
@@ -811,7 +923,8 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
       if (!snapshot || !activeCoordinator) {
         throw new Error("Session recall requires a persisted Pi session");
       }
-      await activeCoordinator.archiveCurrentRoute(snapshot);
+      try {
+        await activeCoordinator.archiveCurrentRoute(snapshot);
 
       if (params.action === "read_source") {
         const entryId = params.entry_id?.trim();
@@ -823,10 +936,9 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
             details: { action: params.action, entryId, available: false },
           };
         }
-        const expansion = expandSource(
-          resolved.authoritativeEntry,
-          params.max_chars ?? RECALL_LIMITS.expansionDefaultChars,
-        );
+        const maxChars = params.max_chars ?? RECALL_LIMITS.expansionDefaultChars;
+        const fullOutput = await activeCoordinator.readCurrentFullOutput(snapshot, entryId, maxChars);
+        const expansion = expandSource(resolved.projection, maxChars, fullOutput);
         writeRecord("source_recall_expand", {
           sessionId: snapshot.sessionId,
           entryId,
@@ -886,6 +998,20 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
         };
       } catch (error) {
         throw new Error(`Session recall is unavailable: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (!signal?.aborted
+          && !message.includes("requires entry_id")
+          && !message.includes("requires query")) {
+          latchGenerationFault(
+            ctx,
+            params.action === "search" ? "source-index" : "archive",
+            { kind: params.action === "search" ? "service" : "source-barrier", detail: message },
+            { sessionScoped: true },
+          );
+        }
+        throw error;
       }
     },
   });
@@ -901,8 +1027,9 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
   });
 
   pi.on("before_agent_start", (event, ctx) => {
-    providerContextDecision = "pi-native";
-    setContextPath("Pi 原生");
+    contextAuthorizationOutcome = "pending";
+    retireUnobservedProof("lifecycle reset");
+    setAuthorization("初始化中");
     scheduleMemoryModelConfigCheck(ctx);
     const workingSnapshot = sessionRouteSnapshot(ctx);
     scheduleWorkingContext(ctx, workingSnapshot, "before_agent_start");
@@ -928,61 +1055,136 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
   });
 
   pi.on("context", async (event, ctx) => {
-    let adoptedMessages = event.messages;
-    let routeFingerprint: string | undefined;
-    let preparedContextHash: string | undefined;
+    retireUnobservedProof("superseded by a new context request");
+    const snapshot = sessionRouteSnapshot(ctx);
+    const activeCoordinator = currentCoordinator(ctx);
     const generationCurrent = memoryEnhancementAvailable
       && Boolean(workingContextOptimizer && workingContextGeneration);
-    if (!forceNativeUntilAgentSettled && generationCurrent && workingContextOptimizer) {
-      const snapshot = sessionRouteSnapshot(ctx);
-      const activeCoordinator = currentCoordinator(ctx);
-      if (snapshot && activeCoordinator) {
-        try {
+
+    let authorization: ContextAuthorization<unknown>;
+    const activeFault = applicableGenerationFault(ctx);
+    if (activeFault) {
+      authorization = { kind: "block", fault: activeFault.fault };
+    } else if (!generationCurrent || !workingContextOptimizer) {
+      authorization = { kind: "block", fault: { kind: "not-ready", detail: "Enhanced memory generation is not active" } };
+    } else if (!snapshot || !activeCoordinator) {
+      authorization = { kind: "block", fault: { kind: "route", detail: "The current Pi session route is unavailable" } };
+    } else {
+      try {
+        const currentProjection = activeCoordinator.projectCurrentRoute(snapshot);
+        let currentFault: ContextFault | undefined = currentProjection.projections
+          .some((projection) => isOpaqueProviderSegment(projection) && projection.reason === "tool-protocol")
+          ? { kind: "tool-protocol", detail: "The current Pi route contains an incomplete or mismatched ToolBatch" }
+          : undefined;
+        if (!currentFault && currentProjection.fullOutputCandidates.length > 0) {
+          try {
+            if (!await hasAuthoritativeSessionFile(snapshot)) {
+              throw new Error("Full output requires a persisted authoritative Pi session");
+            }
+            await activeCoordinator.archiveCurrentRoute(snapshot);
+          } catch (error) {
+            currentFault = {
+              kind: "source-barrier",
+              detail: error instanceof Error ? error.message : String(error),
+            };
+          }
+        }
+        if (currentFault) {
+          authorization = { kind: "block", fault: currentFault };
+        } else {
           const historicalSnapshot = snapshotBeforeCurrentPrompt(snapshot);
           const route = activeCoordinator.identifyCurrentRoute(historicalSnapshot);
-          routeFingerprint = route.fingerprint;
-          let prepared = workingContextOptimizer.getReady(route);
-          if (!prepared) prepared = await workingContextOptimizer.waitForReady(route, DEFAULT_IN_FLIGHT_READY_WAIT_MS, ctx.signal);
-          if (prepared) {
-            adoptedMessages = applyPreparedWorkingContext(event.messages, prepared);
-            preparedContextHash = hash(prepared.content);
-          }
-        } catch (error) {
-          writeRecord("working_context_rejected", {
-            trigger: "context",
-            error: error instanceof Error ? error.message : String(error),
+          authorization = await workingContextOptimizer.authorize({
+            generation: workingContextGeneration,
+            route,
+            projections: activeCoordinator.projectCurrentRoute(historicalSnapshot).projections,
+            messages: sanitizeFullOutputLocators(
+              event.messages as unknown[],
+              currentProjection.fullOutputCandidates,
+            ),
+            signal: ctx.signal,
           });
         }
+      } catch (error) {
+        authorization = {
+          kind: "block",
+          fault: { kind: "route", detail: error instanceof Error ? error.message : String(error) },
+        };
       }
     }
-    const firstAdoptedMessage = adoptedMessages[0] as unknown;
-    const adopted = Boolean(
-      firstAdoptedMessage
-      && typeof firstAdoptedMessage === "object"
-      && (firstAdoptedMessage as Record<string, unknown>).role === "custom"
-      && (firstAdoptedMessage as Record<string, unknown>).customType === "pi-context-memory",
-    );
-    providerContextDecision = adopted ? "enhanced" : "pi-native";
-    setContextPath(adopted ? "增强记忆" : "Pi 原生");
-    if (adopted) {
-      memoryFallbackRequired = false;
-      setMemoryUiState(ctx, "active");
-    } else if (!memoryFallbackRequired && memoryEnhancementAvailable) {
-      setMemoryUiState(ctx, "activating");
+
+    let requestProof: PendingRequestProof | undefined;
+    if (authorization.kind === "allow") {
+      const model = ctx.model;
+      const payloadProof = model?.api === "openai-completions"
+        ? createOpenAICompletionsPayloadProof(
+          model.provider,
+          model.id,
+          convertToLlm(authorization.enhancedContext as never[]) as unknown[],
+        )
+        : undefined;
+      if (!payloadProof) {
+        authorization = {
+          kind: "block",
+          fault: {
+            kind: "opaque-content-unrepresentable",
+            detail: `No verified Provider payload adapter is available for ${model?.api ?? "unknown API"}`,
+          },
+        };
+      } else {
+        requestProof = { assembly: authorization.proof, payload: payloadProof };
+      }
     }
-    writeRecord("context", {
-      messages: event.messages.map((message) => messageSummary(message)),
-      messagesHash: hash(event.messages),
-      messagesBytes: bytes(event.messages),
-      adoptedMessagesHash: adopted ? hash(adoptedMessages) : undefined,
-      adoptedMessagesBytes: adopted ? bytes(adoptedMessages) : undefined,
-      contextPath: adopted ? "enhanced" : "pi-native",
-      routeFingerprint,
-      preparedContextHash,
+
+    if (authorization.kind === "block") {
+      if (!applicableGenerationFault(ctx)
+        && ["service", "source-barrier", "tool-protocol"].includes(authorization.fault.kind)) {
+        latchGenerationFault(ctx, "working-context", authorization.fault, {
+          sessionScoped: authorization.fault.kind !== "service",
+        });
+      }
+      contextAuthorizationOutcome = "blocked";
+      setAuthorization("已阻断");
+      setMemoryUiState(ctx, "faulted");
+      writeRecord("context_blocked", {
+        fault: authorization.fault.kind,
+        detail: authorization.fault.detail,
+        messagesHash: hash(event.messages),
+        ...branchSnapshot(ctx),
+      });
+      maybeFail("context");
+      // 本扩展停止自身构造与确认；最终 transport 是否发生由职责外观测决定。
+      ctx.abort();
+      return undefined;
+    }
+
+    if (!requestProof) {
+      contextAuthorizationOutcome = "blocked";
+      setAuthorization("已阻断");
+      setMemoryUiState(ctx, "faulted");
+      writeRecord("context_blocked", { fault: "service", detail: "Provider payload proof construction failed" });
+      ctx.abort();
+      return undefined;
+    }
+    contextAuthorizationOutcome = "allowed";
+    pendingAssemblyProof = requestProof;
+    setAuthorization("增强记忆");
+    setMemoryUiState(ctx, "active");
+    writeRecord("context_allowed", {
+      nonce: authorization.proof.nonce,
+      generation: authorization.proof.generation,
+      routeFingerprint: authorization.proof.routeFingerprint,
+      leafId: authorization.proof.leafId,
+      enhancedContentHash: authorization.proof.enhancedContentHash,
+      messagesHash: requestProof.payload.messagesHash,
+      messageCount: requestProof.payload.messageCount,
+      payloadProofAdapter: requestProof.payload.adapterId,
+      inputMessagesHash: hash(event.messages),
+      adoptedMessagesBytes: bytes(authorization.enhancedContext),
       ...branchSnapshot(ctx),
     });
     maybeFail("context");
-    return adopted ? { messages: adoptedMessages } : undefined;
+    return { messages: authorization.enhancedContext as never };
   });
 
   pi.on("before_provider_headers", (event, ctx) => {
@@ -993,25 +1195,72 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
   pi.on("before_provider_request", (event, ctx) => {
     providerRequestIndex += 1;
     const payloadHasEnhancedContext = payloadUsesEnhancedContext(event.payload);
-    const enhanced = providerContextDecision === "enhanced" && payloadHasEnhancedContext;
-    setContextPath(enhanced ? "增强记忆" : "Pi 原生");
-    if (enhanced) setMemoryUiState(ctx, "active");
-    else if (providerContextDecision === "enhanced") {
-      memoryFallbackRequired = true;
-      setMemoryUiState(ctx, "native");
+    const proof = pendingAssemblyProof;
+    pendingAssemblyProof = undefined;
+
+    // 只核对本 handler 执行时实际可见的 payload；最终采用由职责外观测分类。
+    let hookOutcome: "verified" | "rejected" | "no-constructed-output";
+    let rejectionReason: string | undefined;
+    if (!proof) {
+      hookOutcome = "no-constructed-output";
+      if (payloadHasEnhancedContext) rejectionReason = "enhanced content without a current proof";
+    } else if (!payloadHasEnhancedContext) {
+      hookOutcome = "rejected";
+      rejectionReason = "handler payload no longer carries the constructed enhanced content";
+    } else if (!payloadCarriesNonce(event.payload, proof.assembly.nonce)) {
+      hookOutcome = "rejected";
+      rejectionReason = "handler payload does not carry the expected nonce";
+    } else if (!payloadCarriesEnhancedContent(
+      event.payload,
+      proof.assembly.nonce,
+      proof.assembly.enhancedContentHash,
+    )) {
+      hookOutcome = "rejected";
+      rejectionReason = "handler payload changed the constructed enhanced content";
+    } else if (workingContextGeneration !== proof.assembly.generation) {
+      hookOutcome = "rejected";
+      rejectionReason = "runtime generation changed after the context decision";
+    } else if (ctx.model?.provider !== proof.payload.provider
+      || ctx.model.id !== proof.payload.model
+      || ctx.model.api !== proof.payload.api) {
+      hookOutcome = "rejected";
+      rejectionReason = "task Provider, model, or API changed after the context decision";
+    } else if (!openAICompletionsPayloadMatches(event.payload, proof.assembly.nonce, proof.payload)) {
+      hookOutcome = "rejected";
+      rejectionReason = "handler payload changed the constructed Provider message sequence";
+    } else {
+      hookOutcome = "verified";
     }
+
+    if (hookOutcome === "verified") {
+      setAuthorization("增强记忆");
+      setMemoryUiState(ctx, "active");
+    } else if (hookOutcome === "rejected") {
+      latchGenerationFault(
+        ctx,
+        "provider-proof",
+        { kind: "service", detail: rejectionReason ?? "Provider proof rejected" },
+        { generation: proof?.assembly.generation, sessionScoped: true },
+      );
+      setAuthorization("已阻断");
+      setMemoryUiState(ctx, "faulted");
+    }
+
     writeRecord("before_provider_request", {
       requestIndex: providerRequestIndex,
       provider: ctx.model?.provider,
       model: ctx.model?.id,
-      contextPath: enhanced ? "enhanced" : "pi-native",
-      contextDecision: providerContextDecision,
+      // hook 时点事实，不表示最终 Provider 采用
+      hookOutcome,
+      rejectionReason,
+      nonce: proof?.assembly.nonce,
+      contextAuthorization: contextAuthorizationOutcome,
       payloadHasEnhancedContext,
-      contextDecisionMismatch: payloadHasEnhancedContext !== (providerContextDecision === "enhanced"),
       ...payloadSummary(event.payload),
       ...branchSnapshot(ctx),
     });
     maybeFail("before_provider_request");
+    if (hookOutcome === "rejected") ctx.abort();
   });
 
   pi.on("after_provider_response", (event, ctx) => {
@@ -1062,7 +1311,8 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
       ...branchSnapshot(ctx),
     });
     maybeFail("turn_end");
-    providerContextDecision = "pi-native";
+    contextAuthorizationOutcome = "pending";
+    retireUnobservedProof("lifecycle reset");
     scheduleArchive(ctx, "turn_end");
     scheduleWorkingContext(ctx, sessionRouteSnapshot(ctx), "turn_end");
   });
@@ -1073,13 +1323,11 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
   });
 
   pi.on("agent_settled", (_event, ctx) => {
-    forceNativeUntilAgentSettled = false;
     writeRecord("agent_settled", branchSnapshot(ctx));
     maybeFail("agent_settled");
   });
 
   pi.on("session_before_compact", (event, ctx) => {
-    if (event.reason === "overflow" && event.willRetry) forceNativeUntilAgentSettled = true;
     writeRecord("session_before_compact", {
       reason: event.reason,
       willRetry: event.willRetry,
@@ -1092,8 +1340,9 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
   });
 
   pi.on("session_compact", (event, ctx) => {
-    providerContextDecision = "pi-native";
-    setContextPath("Pi 原生");
+    contextAuthorizationOutcome = "pending";
+    retireUnobservedProof("lifecycle reset");
+    setAuthorization("初始化中");
     writeRecord("session_compact", {
       reason: event.reason,
       willRetry: event.willRetry,
@@ -1120,8 +1369,9 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
   });
 
   pi.on("session_tree", (event, ctx) => {
-    providerContextDecision = "pi-native";
-    setContextPath("Pi 原生");
+    contextAuthorizationOutcome = "pending";
+    retireUnobservedProof("lifecycle reset");
+    setAuthorization("初始化中");
     writeRecord("session_tree", {
       newLeafId: event.newLeafId,
       oldLeafId: event.oldLeafId,
@@ -1135,6 +1385,9 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
   });
 
   pi.on("model_select", (event, ctx) => {
+    contextAuthorizationOutcome = "pending";
+    retireUnobservedProof("task model changed");
+    setAuthorization("初始化中");
     writeRecord("model_select", {
       source: event.source,
       previousModel: event.previousModel ? `${event.previousModel.provider}/${event.previousModel.id}` : undefined,
@@ -1145,8 +1398,9 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
   });
 
   pi.on("session_shutdown", async (event, ctx) => {
-    providerContextDecision = "pi-native";
-    setContextPath("Pi 原生");
+    contextAuthorizationOutcome = "pending";
+    retireUnobservedProof("lifecycle reset");
+    setAuthorization("初始化中");
     if (ctx.hasUI) ctx.ui.setStatus("pi-context-memory", undefined);
     writeRecord("session_shutdown", { reason: event.reason, targetSessionFile: event.targetSessionFile, ...branchSnapshot(ctx) });
     maybeFail("session_shutdown");

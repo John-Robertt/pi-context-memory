@@ -65,9 +65,9 @@ recall_session(action="search", query="早期数据库约束", limit=5)
 recall_session(action="read_source", entry_id="<search 返回的 entry ID>")
 ```
 
-搜索数量、查询、预览和展开边界由 `recall-and-provenance.ts` 的 `RECALL_LIMITS` 与工具 schema 共同拥有；OpenViking 只负责候选排序，预览来自与当前 Pi entry 精确核对的本地来源副本，`read_source` 展开当前 Pi 权威 entry。`read_source` 不依赖 OpenViking，因此已经取得 entry ID 时，即使后端随后不可用仍可尝试展开当前来源。
+搜索数量、查询、预览和展开边界由 `recall-and-provenance.ts` 的 `RECALL_LIMITS` 与工具 schema 共同拥有；OpenViking 只负责候选排序，预览来自与当前 Pi entry 精确核对的本地来源副本。`read_source` 展开当前 Pi 权威 taskContent；同一来源存在稳定 `fullOutputRef` 时，先重验 blob 大小和 SHA-256，再在同一字符上限内附加有界完整输出正文。`read_source` 不依赖 OpenViking，因此已经取得 entry ID 时，即使后端随后不可用仍可尝试展开当前来源。
 
-自动增强不调用显式召回工具，也不把 OpenViking摘要提升为事实权威。它只替换当前 prompt 之前的历史，当前 turn 保持 Pi 原生；关键事实仍可通过 `recall_session` 展开到当前 Pi entry。
+自动增强不调用显式召回工具，也不把 OpenViking 摘要提升为事实权威。它只替换当前 prompt 之前的历史，当前 turn 保持 Pi Provider 基线；关键事实仍可通过 `recall_session` 展开到当前 Pi entry。
 
 ## 4. 数据与恢复
 
@@ -95,9 +95,9 @@ viking://resources/pi-context-memory/
 - `memory_model_config_error`：保存脱敏配置诊断；同一错误在 Pi 中只提示一次；
 - `openviking_restart_complete|error`：保存运行配置指纹或脱敏错误；
 - `working_context_ready|error|rejected`：保存路线指纹、派生 session、token、内容哈希或脱敏错误；
-- `context`：保存原始与实际采用消息的哈希、字节、路线指纹及 `enhanced|pi-native` 路径。
+- `context_allowed|context_blocked`：分别保存构造证明或阻断原因；`before_provider_request` 保存 `hookOutcome`、`contextAuthorization` 与 payload 哈希，最终 transport 由职责外观测确认。
 
-真实采用诊断从 [`../../validation/suite.json`](../../validation/suite.json) 派生任务与记忆模型，只需选择 `accepted` 或 `skipped` 场景；runner 核对 `PCR_MEMORY_MODEL_SETTINGS` 解析到的配置（未设置时才是用户 JSONC）与同一环境下 runtime 的 active/target 坐标，不一致时拒绝运行。开发验证可让 launcher 与 runner 使用同一个 `.artifacts/` 隔离配置，无需修改用户文件。任务与记忆请求使用 suite 当前选择的同一模型来源，实际 API 和 Provider 请求由运行 artifact 补全：
+真实 hook 与任务响应诊断从 [`../../validation/suite.json`](../../validation/suite.json) 派生任务与记忆模型，只需选择 `accepted` 或 `skipped` 场景；runner 核对 `PCR_MEMORY_MODEL_SETTINGS` 解析到的配置（未设置时才是用户 JSONC）与同一环境下 runtime 的 active/target 坐标，不一致时拒绝运行。该入口只证明本扩展 handler 时点与后续任务响应，不把扩展日志提升为最终 transport 采用；最终采用需由 Provider transport artifact 独立确认。开发验证可让 launcher 与 runner 使用同一个 `.artifacts/` 隔离配置，无需修改用户文件。任务与记忆请求使用 suite 当前选择的同一模型来源，实际 API 和 Provider 请求由运行 artifact 补全：
 
 ```bash
 PCR_REAL_ADOPTION_SCENARIO=accepted \

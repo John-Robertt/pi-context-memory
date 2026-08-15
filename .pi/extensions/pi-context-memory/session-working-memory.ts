@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 
-import type { SourceEntry } from "./long-term-memory.ts";
+import { taskText } from "./recall-and-provenance.ts";
 import {
   DEFAULT_OPENVIKING_REQUEST_TIMEOUT_MS,
   OpenVikingHttpClient,
@@ -10,7 +10,13 @@ import {
   normalizeTaskState,
   type NormalizedSessionContext,
 } from "./openviking-protocol.ts";
-import { effectivePiProjectionEntries } from "./pi-session-protocol.ts";
+import {
+  isControlBoundary,
+  isMessageSource,
+  isOpaqueProviderSegment,
+  type MemoryProjection,
+  type MessageSource,
+} from "./pi-session-protocol.ts";
 import type { SessionRouteIdentity } from "./session-memory-coordination.ts";
 
 const MAX_ENTRY_CHARS = 24_000;
@@ -67,7 +73,7 @@ interface PrepareJob {
   kind: "prepare";
   key: string;
   route: SessionRouteIdentity;
-  entries: readonly SourceEntry[];
+  projections: readonly MemoryProjection[];
   signal?: AbortSignal;
   resolve: (prepared: PreparedSessionMemory) => void;
   reject: (error: unknown) => void;
@@ -110,23 +116,38 @@ function boundedMiddle(value: string, maxChars: number): string {
   return `${value.slice(0, half)}${marker}${value.slice(-half)}`;
 }
 
-export function projectRouteEntries(entries: readonly SourceEntry[]): OpenVikingProjection[] {
-  const projections: OpenVikingProjection[] = [];
-  const effectiveEntries = effectivePiProjectionEntries(entries);
+/**
+ * append 只使用 MessageSource 的 taskContent、完成状态与 source ID；
+ * ControlBoundary 只贡献无正文的路线身份，不产生可检索内容。
+ */
+export function projectMemorySources(projections: readonly MemoryProjection[]): OpenVikingProjection[] {
+  const result: OpenVikingProjection[] = [];
   let turnId = "route-start";
-  for (const entry of effectiveEntries) {
-    if (!entry.text) continue;
-    if (entry.projectionKind === "user_query") turnId = entry.source.id;
-    projections.push({
-      role: entry.projectionRole,
-      content: boundedMiddle(`[Pi entry ${entry.source.id}; ${entry.source.type}]\n${entry.text}`, MAX_ENTRY_CHARS),
-      created_at: entry.source.timestamp,
+  for (const projection of projections) {
+    if (isControlBoundary(projection)) {
+      turnId = projection.id;
+      continue;
+    }
+    if (!isMessageSource(projection)) continue;
+    const text = taskText(projection);
+    if (!text) continue;
+    if (projection.role === "user") turnId = projection.id;
+    result.push({
+      role: projection.role === "assistant" ? "assistant" : "user",
+      content: boundedMiddle(`[Pi entry ${projection.id}]\n${text}`, MAX_ENTRY_CHARS),
+      created_at: projection.timestamp,
       turn_id: turnId,
-      message_kind: entry.projectionKind,
-      source_message_ids: [entry.source.id],
+      message_kind: messageKindOf(projection),
+      source_message_ids: [projection.id],
     });
   }
-  return projections;
+  return result;
+}
+
+function messageKindOf(source: MessageSource): OpenVikingProjection["message_kind"] {
+  if (source.role === "toolResult") return "tool_transport";
+  if (source.role === "assistant") return "assistant_step";
+  return "user_query";
 }
 
 function sameProjection(left: OpenVikingProjection, right: OpenVikingProjection): boolean {
@@ -137,10 +158,19 @@ function isProjectionPrefix(prefix: readonly OpenVikingProjection[], route: read
   return prefix.length <= route.length && prefix.every((projection, index) => sameProjection(projection, route[index]));
 }
 
-function assertRouteInput(route: SessionRouteIdentity, entries: readonly SourceEntry[]): void {
-  if (route.entryIds.length !== entries.length) throw new Error("Working memory route entry count differs from its identity");
-  for (let index = 0; index < entries.length; index += 1) {
-    if (route.entryIds[index] !== entries[index].id) throw new Error("Working memory route entries differ from its identity");
+/** 投影身份必须来自权威路线且唯一；Provider 视图顺序由 PiProtocolProfile 决定。 */
+function assertRouteInput(route: SessionRouteIdentity, projections: readonly MemoryProjection[]): void {
+  const routeIds = new Set(route.entryIds);
+  const projectionIds = new Set<string>();
+  for (const projection of projections) {
+    const ids = isOpaqueProviderSegment(projection) ? projection.entryIds : [projection.id];
+    for (const id of ids) {
+      if (!routeIds.has(id)) {
+        throw new Error("Working memory projection is not part of its route identity");
+      }
+      if (projectionIds.has(id)) throw new Error("Working memory projection identity is duplicated");
+      projectionIds.add(id);
+    }
   }
 }
 
@@ -210,10 +240,10 @@ export class OpenVikingSessionMemory {
 
   prepare(
     route: SessionRouteIdentity,
-    entries: readonly SourceEntry[],
+    projections: readonly MemoryProjection[],
     signal?: AbortSignal,
   ): Promise<PreparedSessionMemory> {
-    assertRouteInput(route, entries);
+    assertRouteInput(route, projections);
     if (this.shutdownController.signal.aborted) return Promise.reject(new Error("Session Working Memory has stopped"));
     const existing = this.getReady(route);
     if (existing) return Promise.resolve(existing);
@@ -237,7 +267,7 @@ export class OpenVikingSessionMemory {
       kind: "prepare",
       key: route.fingerprint,
       route: structuredClone(route),
-      entries: entries.map((entry) => structuredClone(entry)),
+      projections: projections.map((projection) => structuredClone(projection)),
       signal,
       resolve: resolveJob,
       reject: rejectJob,
@@ -271,7 +301,7 @@ export class OpenVikingSessionMemory {
         continue;
       }
       try {
-        const prepared = await this.prepareFast(job.route, job.entries, job.signal);
+        const prepared = await this.prepareFast(job.route, job.projections, job.signal);
         this.ready.set(job.key, prepared.active);
         this.trimReady();
         if (prepared.flight) this.settleAfterFlight(job, prepared);
@@ -281,7 +311,7 @@ export class OpenVikingSessionMemory {
         }
       } catch (error) {
         this.ready.delete(job.key);
-        this.discardMirrorsForRoute(job.route, job.entries);
+        this.discardMirrorsForRoute(job.route, job.projections);
         this.pending.delete(job.key);
         job.reject(error);
       }
@@ -302,7 +332,7 @@ export class OpenVikingSessionMemory {
 
   private async prepareFast(
     route: SessionRouteIdentity,
-    entries: readonly SourceEntry[],
+    projections: readonly MemoryProjection[],
     signal?: AbortSignal,
   ): Promise<FastPreparation> {
     const operationSignal = signal
@@ -310,7 +340,7 @@ export class OpenVikingSessionMemory {
       : this.shutdownController.signal;
     operationSignal.throwIfAborted();
 
-    const routeProjections = projectRouteEntries(entries);
+    const routeProjections = projectMemorySources(projections);
     let mirror = this.mirrors
       .filter((candidate) => candidate.sessionId === route.sessionId
         && candidate.sessionFile === route.sessionFile
@@ -526,8 +556,8 @@ export class OpenVikingSessionMemory {
     throw new Error("OpenViking working memory task timed out");
   }
 
-  private discardMirrorsForRoute(route: SessionRouteIdentity, entries: readonly SourceEntry[]): void {
-    const routeProjections = projectRouteEntries(entries);
+  private discardMirrorsForRoute(route: SessionRouteIdentity, projections: readonly MemoryProjection[]): void {
+    const routeProjections = projectMemorySources(projections);
     for (const mirror of [...this.mirrors]) {
       if (mirror.sessionId !== route.sessionId
         || mirror.sessionFile !== route.sessionFile

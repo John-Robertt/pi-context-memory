@@ -1,11 +1,11 @@
 import { createHash, randomUUID } from "node:crypto";
 
-import type { SessionIdentity, SourceEntry, SourceRecord } from "./long-term-memory.ts";
+import { isMessageSourceRecord, type SessionIdentity, type SourceRecord } from "./long-term-memory.ts";
+import type { MessageSource } from "./pi-session-protocol.ts";
 import {
   DEFAULT_OPENVIKING_REQUEST_TIMEOUT_MS,
   OpenVikingHttpClient,
 } from "./openviking-protocol.ts";
-import { normalizePiEntry } from "./pi-session-protocol.ts";
 const DEFAULT_NAMESPACE = "viking://resources/pi-context-memory";
 export const RECALL_LIMITS = {
   queryChars: 2_000,
@@ -53,8 +53,22 @@ function sha256(value: string): string {
   return createHash("sha256").update(value).digest("hex");
 }
 
-export function sourceText(entry: SourceEntry): string {
-  return normalizePiEntry(entry).text;
+/** 索引与展开只使用 MessageSource 的 taskContent；不读取原始 entry，也不解释正文语义。 */
+export function taskText(source: MessageSource): string {
+  const parts: string[] = [];
+  for (const block of source.taskContent) {
+    if (!block || typeof block !== "object") continue;
+    const value = block as Record<string, unknown>;
+    if (value.type === "text" && typeof value.text === "string") parts.push(value.text);
+    else if (value.type === "toolCall" && typeof value.name === "string") {
+      parts.push(`Tool call ${value.name}: ${JSON.stringify(value.arguments ?? {})}`);
+    }
+  }
+  return parts.join("\n");
+}
+
+function recordText(record: SourceRecord): string {
+  return isMessageSourceRecord(record) ? taskText(record.projection) : "";
 }
 
 function bounded(value: string, maxChars: number): { content: string; truncated: boolean } {
@@ -67,11 +81,14 @@ function bounded(value: string, maxChars: number): { content: string; truncated:
 }
 
 function indexedContent(record: SourceRecord): string {
-  const body = bounded(sourceText(record.entry), RECALL_LIMITS.sourceIndexChars);
+  if (!isMessageSourceRecord(record)) {
+    throw new Error(`Only a message source can be indexed: ${record.source.entryId}`);
+  }
+  const body = bounded(taskText(record.projection), RECALL_LIMITS.sourceIndexChars);
   return [
     "# Pi session source",
-    `entry_type: ${record.entry.type}`,
-    `timestamp: ${record.entry.timestamp}`,
+    `role: ${record.projection.role}`,
+    `normalization: ${record.normalizationVersion}`,
     "",
     body.content,
     body.truncated ? "\n[index projection truncated]" : "",
@@ -240,7 +257,7 @@ export class OpenVikingSourceRecall {
     const errors: string[] = [];
     for (const record of records) {
       signal?.throwIfAborted();
-      if (sourceText(record.entry).trim().length === 0) continue;
+      if (recordText(record).trim().length === 0) continue;
       try {
         await this.ensureSource(record, signal);
       } catch (error) {
@@ -260,7 +277,7 @@ export class OpenVikingSourceRecall {
   ): Promise<RecallSearchResult> {
     const currentByUri = new Map(
       currentSources
-        .filter((record) => sourceText(record.entry).trim().length > 0)
+        .filter((record) => recordText(record).trim().length > 0)
         .map((record) => [this.sourceUri(identity, record.source.entryId), record] as const),
     );
     if (currentByUri.size === 0) {
@@ -298,7 +315,7 @@ export class OpenVikingSourceRecall {
       seen.add(candidate.uri);
       currentRouteCandidates += 1;
       if (hits.length >= limit) continue;
-      const preview = bounded(sourceText(source.entry), RECALL_LIMITS.previewChars);
+      const preview = bounded(recordText(source), RECALL_LIMITS.previewChars);
       hits.push({
         entryId: source.source.entryId,
         score: candidate.score,
@@ -314,9 +331,25 @@ export class OpenVikingSourceRecall {
   }
 }
 
-export function expandSource(entry: SourceEntry, maxChars: number): SourceExpansion {
-  const content = bounded(JSON.stringify(entry, null, 2), maxChars);
-  return { entryId: entry.id, content: content.content, truncated: content.truncated };
+/** 展开规范化任务内容，并在存在稳定 fullOutputRef 时附加经完整性核验的有界正文。 */
+export function expandSource(
+  source: MessageSource,
+  maxChars: number,
+  fullOutput?: { content: string; truncated: boolean },
+): SourceExpansion {
+  const sections = [`role: ${source.role}`];
+  if (source.completion) sections.push(`completion: ${JSON.stringify(source.completion)}`);
+  sections.push("", taskText(source));
+  if (fullOutput) {
+    sections.push("", "full_output:", fullOutput.content);
+    if (fullOutput.truncated) sections.push("[full output truncated]");
+  }
+  const content = bounded(sections.join("\n"), maxChars);
+  return {
+    entryId: source.id,
+    content: content.content,
+    truncated: content.truncated || Boolean(fullOutput?.truncated),
+  };
 }
 
 export function formatSearchResult(result: RecallSearchResult): string {

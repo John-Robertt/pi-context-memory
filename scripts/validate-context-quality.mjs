@@ -325,19 +325,22 @@ async function runArm(name, model, openViking) {
     const { sessionFile: _sessionFile, sessionId: _sessionId, ...qualityStats } = stats.data;
     const text = response.data.text ?? "";
     const observations = readObservations(observationLog);
-    const adopted = name === "native" || observations.some((event) => event.type === "before_provider_request" && event.contextPath === "enhanced");
+    const hookVerified = name === "native" || observations.some((event) =>
+      event.type === "before_provider_request"
+      && event.hookOutcome === "verified"
+      && event.contextAuthorization === "allowed");
     const condition = readObservations(conditionLog).at(-1);
     return {
       text,
       textSha256: sha256(text),
       checker: checker(text),
-      adopted,
+      hookVerified,
       model: state.model ? `${state.model.provider}/${state.model.id}` : undefined,
       condition,
       stats: qualityStats,
       observations: {
         workingContextReady: observations.filter((event) => event.type === "working_context_ready").length,
-        enhancedProviderRequests: observations.filter((event) => event.type === "before_provider_request" && event.contextPath === "enhanced").length,
+        hookVerifiedRequests: observations.filter((event) => event.type === "before_provider_request" && event.hookOutcome === "verified").length,
       },
     };
   } catch (error) {
@@ -495,7 +498,7 @@ try {
     credentialIsolated,
     nativeQuality: nativePassed,
     enhancedQuality: enhancedPassed,
-    enhancedContextAdopted: enhanced.adopted && enhanced.observations.enhancedProviderRequests > 0,
+    enhancedContextHookVerified: enhanced.hookVerified && enhanced.observations.hookVerifiedRequests > 0,
     realWorkingMemoryReady: enhanced.observations.workingContextReady > 0,
     memoryUsageAttributed: memoryTokenUsage.length === 2
       && memoryTokenUsage.some((row) => row.token_type === "input" && row.token_count > 0)

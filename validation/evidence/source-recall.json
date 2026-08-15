@@ -1,17 +1,19 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "generatedBy": "scripts/validate-source-recall.mjs",
-  "runId": "source-recall-2026-08-15T04-17-14-199Z",
-  "recordedAt": "2026-08-15T04:17:42.292Z",
+  "scope": "local",
+  "runId": "source-recall-2026-08-15T16-15-03-529Z",
+  "recordedAt": "2026-08-15T16:15:35.465Z",
   "piVersion": "0.84.2",
+  "nodeVersion": "24.15.0",
   "openVikingVersion": "0.4.13",
   "openVikingConfig": {
-    "templatePath": "validation/fixtures/openviking-source-recall.json",
-    "templateSha256": "3192252aa9b87a6cdd481b273142c7e3a3692e3bd253800c1bbb9d200ab591d0",
+    "templatePath": "config/openviking.json",
+    "templateSha256": "d5abacdcf5268ad5a7caa7fb9e6eb193ddb3016b16096b891f44e13a36c430e2",
     "effective": {
-      "defaultAccount": "source-recall-validation",
+      "defaultAccount": "pi-context-memory",
       "defaultUser": "pi-context-memory",
-      "storageWorkspace": ".artifacts/source-recall/source-recall-2026-08-15T04-17-14-199Z/openviking-data",
+      "storageWorkspace": ".artifacts/source-recall/source-recall-2026-08-15T16-15-03-529Z/openviking-data",
       "embedding": {
         "dense": {
           "cache_dir": "./.cache/openviking/models",
@@ -38,89 +40,124 @@
       "watchSchedulerEnabled": false,
       "server": {
         "host": "127.0.0.1",
-        "port": 55319,
+        "port": 56888,
         "agent_evolution": {
           "enabled": false
         }
       }
     },
-    "effectiveSha256": "49e8438aed45b6f17bd509f66653c3ab853eb78b37ddad10e15baf6188148c51",
+    "effectiveSha256": "2426072a0aeeab161eb0a6e72219c2f60e2aa30d463ecf7dbf7313734618afb5",
     "controlledByRunner": true,
     "denseEmbeddingProvider": "local"
   },
   "implementation": {
-    "sourceManifestSha256": "2ac42ed5e65aff7e18e7877876550b5298a26329615316a887c95d1144ab9164",
+    "sourceManifestSha256": "716874b74fc9419c5fe3526d089616015a4a02d37f9602c9d4668fa7845e01ce",
     "files": [
       {
         "path": ".pi/extensions/pi-context-memory/index.ts",
-        "sha256": "36710855109325128fa00ddd44c0b1bb7d926040a9f9431e57e0f003c4e2c748"
+        "sha256": "095151fe50af068ac1c086f37ef6bfe68b5b78cf8170271be8e52dad0937cc88"
       },
       {
         "path": ".pi/extensions/pi-context-memory/long-term-memory.ts",
-        "sha256": "2ccf1fa89d0eff97dc021a13d78ecf1cd22ce1257d6c45fcf96af99ba511dabe"
+        "sha256": "1337a8f94c5774dafac722c67e90da94e16ab67be701c6dab7af1a3e2181718e"
       },
       {
         "path": ".pi/extensions/pi-context-memory/memory-model-configuration.ts",
-        "sha256": "241cce1184190c94837dbcc4976c5e7411d87947279444d6abbefb26af140eea"
+        "sha256": "1e24578fb9ba72c80d08f30d3da5ff777bcdc6258288893f9501521b87af8017"
       },
       {
         "path": ".pi/extensions/pi-context-memory/openviking-protocol.ts",
-        "sha256": "072f287089aa8593eea47428c9a0b986beaa2634b2ddf43a6d3f06b5c7ffd89c"
+        "sha256": "ca435ae48adf4e7d3f0051e0b3e89bb018095ce0493dcc647efc1e9f0a9b5a08"
       },
       {
         "path": ".pi/extensions/pi-context-memory/pi-session-protocol.ts",
-        "sha256": "b9eccbcf704078778e5c7b7bb8f404b85a2e15180626b86deb82279b231a7a98"
+        "sha256": "56dbacf9a4974c46e7c65b56dc7d0a340e079136bf9459cce7271e6faf5db7c5"
+      },
+      {
+        "path": ".pi/extensions/pi-context-memory/provider-payload-proof.ts",
+        "sha256": "af7d12bdf21cc988fd59b2670281b4ea486a454960f99e0a51b430a74da2396b"
       },
       {
         "path": ".pi/extensions/pi-context-memory/recall-and-provenance.ts",
-        "sha256": "6303fe0902240b19ce6b1f082783c55583eb8a4733a16ad8702a39ccbf40e1af"
+        "sha256": "c4d30cf8a86b8487d882778b33c68ad9d5b62b68d4a3ecb4578b1c677584011f"
       },
       {
         "path": ".pi/extensions/pi-context-memory/session-memory-coordination.ts",
-        "sha256": "9d02cdeb8168a7ab39501cc41d9fcb6e9b3add6c5e467dbe9cc47fe44332d2a4"
+        "sha256": "a9e0e4f67d3839f5a955f07d867f2a963e3156766c266dfb866372a52b70e1d6"
       },
       {
         "path": ".pi/extensions/pi-context-memory/session-working-memory.ts",
-        "sha256": "56c1bbcd04a3920f47fd2c296d75ef747ff3f84a0322d2d0bd8a25b994f371b2"
+        "sha256": "6c7432288aa112743b10a6f4fc43c5a475d1f8f1ca7039f090c8140a687021bf"
       },
       {
         "path": ".pi/extensions/pi-context-memory/working-context-optimization.ts",
-        "sha256": "64e14b83b20d28cf964ad0801b182a18187355f395403a3df90c5e97903a9e91"
+        "sha256": "cef566e580e81c92ac3af3ece3d08cda84d4e91798051be17ae9248c0543ef6e"
+      },
+      {
+        "path": "config/openviking-adapter-contract.json",
+        "sha256": "a66331136c045734d10d9c790dc137358de7deb59c2da41b62f9b95eb970c00a"
+      },
+      {
+        "path": "config/openviking.json",
+        "sha256": "d5abacdcf5268ad5a7caa7fb9e6eb193ddb3016b16096b891f44e13a36c430e2"
       },
       {
         "path": "pyproject.toml",
-        "sha256": "5412a67094ec9413d831e51d95487244d2d6071eec899fdbb0bf41363767ed1d"
+        "sha256": "c4258b0c6ff676eeaf22e0a022575cb12c1dcad4d6538cfee54091b2d04c1d5c"
+      },
+      {
+        "path": "scripts/check-maintenance-sources.mjs",
+        "sha256": "a75dcb7a9184532d75f91644842a4fac2699830de4009256f2b74c47af38d568"
       },
       {
         "path": "scripts/check-validation-evidence.mjs",
-        "sha256": "1b64785fecbf855d28a79e7d642c9c4339d610ef5761d53b073f68e7c06743c5"
+        "sha256": "0a226ec103c8f8a1cee6913c556d812ffaf0850f81f1963e4df374f738cdb32b"
       },
       {
         "path": "scripts/install-dependencies.mjs",
-        "sha256": "3350d7ca57ab3731bf68ca62a37492b6e2c1ab0ccd5952b51e49022b718a6e7e"
+        "sha256": "761e97f9f30111ae277e4bcabe96838ceba5b33ac71fd43ea9b4a09dd97ba191"
       },
       {
         "path": "scripts/validate-source-recall.mjs",
-        "sha256": "1a1555b1b1bc33265271c5c19b44f62dc446db122e1fc9b8f53a421c0c8a89e6"
+        "sha256": "af27925d9e9889ba524b025e9f1d20cb329499458b4dbe1a47960a0b5a726c42"
       },
       {
         "path": "scripts/validation-evidence.mjs",
-        "sha256": "b2ae8a7bcd06f0b11316f4493aa35b660055a88f2279604cf4494c8490c43c08"
+        "sha256": "fa21427c80c256a18f8c3438396b1be7e7ee8f800f25875fffdc8718a99e3ffb"
       },
       {
-        "path": "scripts/validation-model-config.mjs",
-        "sha256": "bf39bf91ec6816eea77aad3d9a4986c452bf37155099ad429a17b90fefd538eb"
+        "path": "scripts/validation-suite.mjs",
+        "sha256": "2765892ccbc87857965e22ff8a2163bc0bf4d089fe04bc913c1ce5d78f3e58f5"
       },
       {
         "path": "uv.lock",
         "sha256": "910184bff539fd56b4b7f8fc2ee46439f3113c7394c1538d60ef3a5e3c78f094"
-      },
-      {
-        "path": "validation/fixtures/openviking-source-recall.json",
-        "sha256": "3192252aa9b87a6cdd481b273142c7e3a3692e3bd253800c1bbb9d200ab591d0"
       }
     ],
-    "gitCommit": "971f6fccb88c8cdfb09683da3c6e7f973f25c8c0",
+    "specificationManifestSha256": "59fb322626ba1b2bdc57a91ed404228a217a456499453e74423e0a677a1c61fb",
+    "specificationFiles": [
+      {
+        "path": ".python-version",
+        "sha256": "7b55f8e67b5623c4bef3fa691288da9437d79d3aba156de48d481db32ac7d16d"
+      },
+      {
+        "path": "config/toolchain.json",
+        "sha256": "90e66463054e506385a7f0076063b3e9b532b7cd41de85045f800176dc8b8993"
+      },
+      {
+        "path": "docs/validation/README.md",
+        "sha256": "68f66a21b9cb6457fd2b8a4a125ac9888164b1aefda6a1a43a4593dca5a0db48"
+      },
+      {
+        "path": "docs/validation/source-recall.md",
+        "sha256": "37014ca33951ff9fdf48240859f4e273f44c7747b07e24c8f438c4bae4b2ef35"
+      },
+      {
+        "path": "validation/suite.json",
+        "sha256": "2f34c5cec5f73f972887aaeb0ad7decf734500911f7ea0412061d33deb3d139b"
+      }
+    ],
+    "gitCommit": "60fce6465b6450f4bc132468d64d2260b434452b",
     "workingTreeDirty": true
   },
   "passed": true,
@@ -162,16 +199,13 @@
     "insecureRemoteRejected": true
   },
   "candidateCounts": {
-    "indexedResources": 50,
+    "indexedResources": 49,
     "sentinelBackendCandidates": 3,
     "sentinelCurrentRouteCandidates": 3,
     "branchBackendCandidates": 3,
     "branchCurrentRouteCandidates": 3
   },
-  "sourceHashes": {
-    "common": "324159a626da348ee862d85646962e3112ec41009c059984c2bd4caead9cce3e",
-    "branchB": "8ac3fd3ec7e424cead4ed9300a7e147a75b3ac82ddb2375a6face8b7d3c07931"
-  },
+  "sourceHashes": {},
   "limitations": [
     "The local scope covers source coordination and OpenViking retrieval with local dense embeddings.",
     "Automatic Working Memory and context adoption have separate local evidence; real Provider task quality and complete API cost remain in the paired experiment.",

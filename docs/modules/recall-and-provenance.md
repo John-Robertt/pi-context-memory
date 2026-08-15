@@ -15,7 +15,7 @@
 - 同步一组已归档来源；
 - 在指定 session URI 范围内取得有限语义候选；
 - 将候选 URI 映射到调用方提供的当前路线来源集合；
-- 构造有界搜索预览，并把已核对候选展开为 Pi 权威 entry；
+- 构造有界搜索预览，并把已核对候选展开为 Pi 权威 taskContent；同来源存在稳定 `fullOutputRef` 时附加经大小与哈希复核的有界完整输出；
 
 本模块消费 OpenViking 适配契约提供的资源与检索能力，不直接拥有版本兼容规则。
 
@@ -36,7 +36,7 @@ entry 子树彼此独立；文件固定为 `source.md`。上传必须使用 `pro
 1. OpenViking只产生候选，不决定来源是否有效；
 2. OpenViking查询目标必须是当前 branch 已确认来源的精确 URI 列表；
 3. 候选 leaf URI 必须与当前路线重新计算的 URI 完全匹配；
-4. 最终事实内容必须来自当前 Pi 权威 message entry，不采用 OpenViking abstract；
+4. 最终事实内容来自当前 Pi 权威 message entry 重新投影的 taskContent；完整工具输出只来自同 entry 已核验的 `fullOutputRef`，不采用 OpenViking abstract；
 5. compaction、branch summary 文本及其 `fromId` 废弃 branch 不建立事实索引；
 6. 后端错误、索引准备中和正常空结果不能互相伪装；
 7. 已存在 URI 的内容与同一 Pi entry 不一致时拒绝覆盖；

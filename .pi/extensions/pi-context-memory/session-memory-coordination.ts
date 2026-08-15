@@ -2,11 +2,19 @@ import { createHash } from "node:crypto";
 
 import {
   FileLongTermMemory,
+  isMessageSourceRecord,
   type SessionIdentity,
-  type SourceEntry,
   type SourceRecord,
 } from "./long-term-memory.ts";
-import { isSourceEntry, largeResultOf } from "./pi-session-protocol.ts";
+import {
+  isMessageSource,
+  isSourceEntry,
+  projectRoute,
+  sameMessageSource,
+  type MessageSource,
+  type PiProtocolProfile,
+  type SourceEntry,
+} from "./pi-session-protocol.ts";
 
 export const DEFAULT_REQUIRED_SOURCE_INDEX_TIMEOUT_MS = 5_000;
 export interface SessionRouteSnapshot extends SessionIdentity {
@@ -250,19 +258,34 @@ export class SessionSourceIndexCoordinator {
 
 export interface ResolvedSource {
   record: SourceRecord;
-  authoritativeEntry: SourceEntry;
+  projection: MessageSource;
 }
 
 
 export class SessionMemoryCoordinator {
   private readonly identity: SessionIdentity;
   private readonly memory: FileLongTermMemory;
-  private archivedSourceIds: Promise<Set<string>> | undefined;
+  private readonly profile: PiProtocolProfile;
 
-  constructor(identity: SessionIdentity, memory: FileLongTermMemory) {
+  constructor(identity: SessionIdentity, memory: FileLongTermMemory, profile: PiProtocolProfile) {
     if (!identity.sessionId || !identity.sessionFile) throw new Error("A persisted Pi session identity is required");
     this.identity = identity;
     this.memory = memory;
+    this.profile = profile;
+  }
+
+  /** 当前路线的记忆投影；opaque 段只存在于请求内存，不参与归档。 */
+  projectCurrentRoute(snapshot: SessionRouteSnapshot) {
+    this.assertCurrentRoute(snapshot);
+    return projectRoute(this.profile, snapshot.entries, snapshot.leafId);
+  }
+
+  private currentMessageSources(snapshot: SessionRouteSnapshot): Map<string, MessageSource> {
+    const sources = new Map<string, MessageSource>();
+    for (const projection of this.projectCurrentRoute(snapshot).projections) {
+      if (isMessageSource(projection)) sources.set(projection.id, projection);
+    }
+    return sources;
   }
 
   assertCurrentRoute(snapshot: SessionRouteSnapshot): void {
@@ -307,48 +330,39 @@ export class SessionMemoryCoordinator {
     };
   }
 
-  private knownSourceIds(): Promise<Set<string>> {
-    this.archivedSourceIds ??= this.memory.listSources(this.identity).then(
-      (records) => new Set(records.map((record) => record.source.entryId)),
-    );
-    return this.archivedSourceIds;
-  }
-
+  /**
+   * 归档当前路线：MessageSource 与 ControlBoundary 进入来源，OpaqueProviderSegment 不归档。
+   * 完整输出在来源记录存在后复制，并把 fullOutputRef 原子发布进同一份记录。
+   */
   async archiveCurrentRoute(
     snapshot: SessionRouteSnapshot,
-  ): Promise<{ archivedToolCallIds: string[] }> {
-    this.assertCurrentRoute(snapshot);
-    const archivedSourceIds = await this.knownSourceIds();
-    const missingEntries = snapshot.entries.filter((entry) => !archivedSourceIds.has(entry.id));
-    if (missingEntries.length > 0) {
-      await this.memory.archiveSources(this.identity, missingEntries);
-      for (const entry of missingEntries) archivedSourceIds.add(entry.id);
-    }
+  ): Promise<{ archivedFullOutputEntryIds: string[] }> {
+    const { profileId, projections, fullOutputCandidates } = this.projectCurrentRoute(snapshot);
+    await this.memory.archiveSources(this.identity, profileId, projections);
 
-    const archivedToolCallIds: string[] = [];
-    for (const entry of snapshot.entries) {
-      const largeResult = largeResultOf(entry);
-      if (!largeResult) continue;
-      if (await this.memory.hasLargeResult(this.identity, entry.id)) continue;
-      await this.memory.archiveLargeResult(
-        this.identity,
-        entry,
-        largeResult.toolCallId,
-        largeResult.fullOutputPath,
-      );
-      archivedToolCallIds.push(largeResult.toolCallId);
+    const archivedFullOutputEntryIds: string[] = [];
+    for (const candidate of fullOutputCandidates) {
+      if (await this.memory.hasFullOutput(this.identity, candidate.entryId)) {
+        if (!await this.memory.ensureFullOutputRecoverable(this.identity, candidate.entryId)) {
+          throw new Error(`Full output is not recoverable for entry ${candidate.entryId}`);
+        }
+        continue;
+      }
+      await this.memory.archiveFullOutput(this.identity, candidate);
+      archivedFullOutputEntryIds.push(candidate.entryId);
     }
-    return { archivedToolCallIds };
+    return { archivedFullOutputEntryIds };
   }
 
+  /** 只返回仍属于当前路线、且与当前 Pi entry 重新规范化结果精确一致的来源。 */
   async listCurrentSources(snapshot: SessionRouteSnapshot): Promise<SourceRecord[]> {
-    this.assertCurrentRoute(snapshot);
+    const current = this.currentMessageSources(snapshot);
     const records: SourceRecord[] = [];
-    for (const entry of snapshot.entries) {
-      const record = await this.memory.readSource(this.identity, entry.id);
+    for (const [entryId, projection] of current) {
+      const record = await this.memory.readSource(this.identity, entryId);
       if (!record) continue;
-      if (JSON.stringify(record.entry) !== JSON.stringify(entry)) {
-        throw new Error(`Archived source differs from Pi authority for entry ${entry.id}`);
+      if (!isMessageSourceRecord(record) || !sameMessageSource(record.projection, projection)) {
+        throw new Error(`Archived source differs from Pi authority for entry ${entryId}`);
       }
       records.push(record);
     }
@@ -359,14 +373,23 @@ export class SessionMemoryCoordinator {
     snapshot: SessionRouteSnapshot,
     entryId: string,
   ): Promise<ResolvedSource | undefined> {
-    this.assertCurrentRoute(snapshot);
-    const authoritativeEntry = snapshot.entries.find((entry) => entry.id === entryId);
-    if (!authoritativeEntry) return undefined;
+    const projection = this.currentMessageSources(snapshot).get(entryId);
+    if (!projection) return undefined;
     const record = await this.memory.readSource(this.identity, entryId);
     if (!record) return undefined;
-    if (JSON.stringify(record.entry) !== JSON.stringify(authoritativeEntry)) {
+    if (!isMessageSourceRecord(record) || !sameMessageSource(record.projection, projection)) {
       throw new Error(`Archived source differs from Pi authority for entry ${entryId}`);
     }
-    return { record, authoritativeEntry };
+    return { record, projection };
+  }
+
+  async readCurrentFullOutput(
+    snapshot: SessionRouteSnapshot,
+    entryId: string,
+    maxChars: number,
+  ) {
+    const resolved = await this.resolveCurrentSource(snapshot, entryId);
+    if (!resolved?.record.fullOutputRef) return undefined;
+    return this.memory.readFullOutputText(this.identity, entryId, maxChars);
   }
 }
