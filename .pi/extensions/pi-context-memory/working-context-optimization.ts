@@ -7,6 +7,8 @@ import {
 import {
   currentUserMessageIndex,
   isOpaqueProviderSegment,
+  messageMatchesSourceTask,
+  type CurrentTurnToolSources,
   type MemoryProjection,
 } from "./pi-session-protocol.ts";
 import {
@@ -16,9 +18,48 @@ import {
   type SessionWorkingMemoryOptions,
 } from "./session-working-memory.ts";
 import type { SessionRouteIdentity } from "./session-memory-coordination.ts";
+import {
+  OPENAI_COMPLETIONS_PAYLOAD_PROOF_ADAPTER,
+  openAICompletionsToolPayloadUpperBoundBytes,
+} from "./provider-payload-proof.ts";
 
 const DEFAULT_MAX_CONTEXT_CHARS = 48_000;
+const MIN_WORKING_CONTEXT_CHARS = 256;
+const PROVIDER_MESSAGE_SERIALIZATION_FACTOR = 2;
+const PROVIDER_FRAMING_TOKEN_RESERVE = 256;
+const TRANSPORT_MARGIN_TOKEN_RESERVE = 512;
+const PROJECTED_EDGE_CHARS = 160;
 export const DEFAULT_IN_FLIGHT_READY_WAIT_MS = 1_000;
+
+export interface ProviderPayloadProfile {
+  schemaVersion: 1;
+  identity: string;
+  provider: string;
+  model: string;
+  api: string;
+  payloadAdapter: typeof OPENAI_COMPLETIONS_PAYLOAD_PROOF_ADAPTER;
+  baseUrlHash: string;
+  compatHash: string;
+  contextWindowTokens: number;
+  maxOutputTokens: number;
+  systemPromptHash: string;
+  toolsHash: string;
+  fixedTokenUpperBound: number;
+  messageTokenBudget: number;
+  estimator: "utf8-json-bytes-x2";
+}
+
+export interface ProviderPayloadProfileInput {
+  provider: string;
+  model: string;
+  api: string;
+  baseUrl: string;
+  compat: unknown;
+  contextWindowTokens: number;
+  maxOutputTokens: number;
+  systemPrompt: string;
+  tools: unknown;
+}
 
 export interface WorkingContextOptions extends SessionWorkingMemoryOptions {
   maxContextChars?: number;
@@ -59,10 +100,20 @@ export interface AssemblyProof {
   leafId: string | null;
   openVikingSessionId: string;
   enhancedContentHash: string;
+  providerPayloadProfileId: string;
+  currentTurnKey: string;
+}
+
+export interface CurrentTurnMetrics {
+  rawToolBatches: number;
+  projectedToolBatches: number;
+  projectedSourceEntryIds: readonly string[];
+  providerMessageTokenUpperBound: number;
+  providerMessageTokenBudget: number;
 }
 
 export type ContextAuthorization<T> =
-  | { kind: "allow"; enhancedContext: T[]; proof: AssemblyProof }
+  | { kind: "allow"; enhancedContext: T[]; proof: AssemblyProof; metrics: CurrentTurnMetrics }
   | { kind: "block"; fault: ContextFault };
 
 export interface AuthorizationInput<T> {
@@ -70,12 +121,66 @@ export interface AuthorizationInput<T> {
   route: SessionRouteIdentity;
   projections: readonly MemoryProjection[];
   messages: readonly T[];
+  providerPayloadProfile: ProviderPayloadProfile;
+  toolSources: CurrentTurnToolSources;
+  toProviderMessages(messages: readonly T[]): readonly unknown[];
+  ensureSources(entryIds: readonly string[]): Promise<void>;
   readyWaitMs?: number;
   signal?: AbortSignal;
 }
 
 function sha256(value: unknown): string {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex");
+}
+
+function stable(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stable);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(Object.entries(value as Record<string, unknown>)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, child]) => [key, stable(child)]));
+}
+
+function serializedBytes(value: unknown): number {
+  return Buffer.byteLength(JSON.stringify(stable(value)), "utf8");
+}
+
+export function createProviderPayloadProfile(input: ProviderPayloadProfileInput): ProviderPayloadProfile {
+  if (input.api !== "openai-completions") throw new Error(`No verified Provider payload adapter is available for ${input.api}`);
+  for (const [name, value] of [
+    ["Context window", input.contextWindowTokens],
+    ["Maximum output", input.maxOutputTokens],
+  ] as const) {
+    if (!Number.isSafeInteger(value) || value <= 0) throw new Error(`${name} must be a positive integer`);
+  }
+  const systemPromptTokens = Buffer.byteLength(input.systemPrompt, "utf8");
+  const toolsTokens = openAICompletionsToolPayloadUpperBoundBytes(input.tools);
+  const fixedTokenUpperBound = input.maxOutputTokens
+    + systemPromptTokens
+    + toolsTokens
+    + PROVIDER_FRAMING_TOKEN_RESERVE
+    + TRANSPORT_MARGIN_TOKEN_RESERVE;
+  const messageTokenBudget = input.contextWindowTokens - fixedTokenUpperBound;
+  if (messageTokenBudget < MIN_WORKING_CONTEXT_CHARS) {
+    throw new Error("Provider payload budget leaves no room for a bounded enhanced request");
+  }
+  const identityInput = {
+    schemaVersion: 1,
+    provider: input.provider,
+    model: input.model,
+    api: input.api,
+    payloadAdapter: OPENAI_COMPLETIONS_PAYLOAD_PROOF_ADAPTER,
+    baseUrlHash: sha256(input.baseUrl),
+    compatHash: sha256(stable(input.compat ?? null)),
+    contextWindowTokens: input.contextWindowTokens,
+    maxOutputTokens: input.maxOutputTokens,
+    systemPromptHash: sha256(input.systemPrompt),
+    toolsHash: sha256(stable(input.tools)),
+    fixedTokenUpperBound,
+    messageTokenBudget,
+    estimator: "utf8-json-bytes-x2" as const,
+  };
+  return { ...identityInput, identity: sha256(identityInput) };
 }
 
 /** 在任意 Provider payload 结构中核对 nonce 所属的完整增强内容。 */
@@ -158,6 +263,190 @@ export function formatWorkingContext(
   appendSection(activePrefix, active, true);
   if (result.length > maxChars) throw new Error("Working context exceeded its character limit");
   return result;
+}
+
+interface CurrentTurnUnit<T> {
+  kind: "message" | "tool-batch";
+  raw: readonly T[];
+  projected?: readonly T[];
+  sourceEntryIds: readonly string[];
+  opaque: boolean;
+  projectionFault?: ContextFault;
+}
+
+function record(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" ? value as Record<string, unknown> : undefined;
+}
+
+function contentBlocks(message: unknown): readonly Record<string, unknown>[] | undefined {
+  const content = record(message)?.content;
+  if (typeof content === "string") return [{ type: "text", text: content }];
+  if (!Array.isArray(content) || !content.every((block) => record(block) && typeof record(block)?.type === "string")) {
+    return undefined;
+  }
+  return content as Record<string, unknown>[];
+}
+
+function publicContentProjectable(message: unknown): boolean {
+  const blocks = contentBlocks(message);
+  return Boolean(blocks?.every((block) => ["text", "toolCall", "thinking"].includes(String(block.type))));
+}
+
+function edge(value: string): { head: string; tail: string } {
+  if (value.length <= PROJECTED_EDGE_CHARS * 2) return { head: value, tail: "" };
+  return { head: value.slice(0, PROJECTED_EDGE_CHARS), tail: value.slice(-PROJECTED_EDGE_CHARS) };
+}
+
+function projectionDescriptor(message: Record<string, unknown>, sourceEntryId: string): Record<string, unknown> {
+  const taskContent = (contentBlocks(message) ?? []).filter((block) => block.type === "text" || block.type === "toolCall");
+  const serialized = JSON.stringify(stable(taskContent));
+  const status = Object.fromEntries(["isError", "cancelled", "truncated", "stopReason"]
+    .filter((key) => message[key] !== undefined)
+    .map((key) => [key, message[key]]));
+  return {
+    sourceEntryId,
+    sha256: sha256(stable(taskContent)),
+    sizeBytes: Buffer.byteLength(serialized, "utf8"),
+    ...edge(serialized),
+    ...(Object.keys(status).length > 0 ? { status } : {}),
+  };
+}
+
+function projectedToolBatch<T>(
+  messages: readonly T[],
+  callIds: readonly string[],
+  sources: CurrentTurnToolSources,
+): { messages?: T[]; sourceEntryIds?: string[]; fault?: ContextFault } {
+  const assistant = record(messages[0]);
+  if (!assistant) return { fault: { kind: "source-barrier", detail: "Projected assistant source is unavailable" } };
+  const callSource = sources.callSources[callIds[0]];
+  if (!callSource
+    || !callIds.every((id) => sources.callSources[id]?.id === callSource.id)
+    || !messageMatchesSourceTask(assistant, callSource)) {
+    return { fault: { kind: "source-barrier", detail: "Projected assistant content does not match its authoritative Pi source" } };
+  }
+  const sourceEntryIds = [callSource.id];
+  const assistantDescriptor = projectionDescriptor(assistant, callSource.id);
+  const projectedAssistant = {
+    ...assistant,
+    content: [
+      {
+        type: "text",
+        text: `[pi-context-memory projected tool call]\n${JSON.stringify(assistantDescriptor)}`,
+      },
+      ...(contentBlocks(assistant) ?? [])
+        .filter((block) => block.type === "toolCall")
+        .map((block) => ({
+          type: "toolCall",
+          id: block.id,
+          name: block.name,
+          arguments: {
+            piContextMemoryProjection: {
+              sourceEntryId: callSource.id,
+              sha256: sha256(stable(block.arguments ?? {})),
+              sizeBytes: Buffer.byteLength(JSON.stringify(stable(block.arguments ?? {})), "utf8"),
+              ...edge(JSON.stringify(stable(block.arguments ?? {}))),
+            },
+          },
+        })),
+    ],
+  } as T;
+
+  const projectedResults: T[] = [];
+  for (const message of messages.slice(1)) {
+    const value = record(message);
+    const callId = value?.toolCallId;
+    if (!value || typeof callId !== "string") {
+      return { fault: { kind: "source-barrier", detail: "Projected tool result source is unavailable" } };
+    }
+    const resultSource = sources.resultSources[callId];
+    if (!resultSource || !messageMatchesSourceTask(value, resultSource)) {
+      return { fault: { kind: "source-barrier", detail: `Projected tool result ${callId} does not match its authoritative Pi source` } };
+    }
+    sourceEntryIds.push(resultSource.id);
+    const projected = {
+      ...value,
+      content: [{
+        type: "text",
+        text: `[pi-context-memory projected tool result]\n${JSON.stringify(projectionDescriptor(value, resultSource.id))}`,
+      }],
+    } as Record<string, unknown>;
+    delete projected.details;
+    projectedResults.push(projected as T);
+  }
+  return { messages: [projectedAssistant, ...projectedResults], sourceEntryIds };
+}
+
+function currentTurnUnits<T>(
+  messages: readonly T[],
+  sources: CurrentTurnToolSources,
+): { units?: CurrentTurnUnit<T>[]; fault?: ContextFault } {
+  const currentPromptIndex = currentUserMessageIndex(messages);
+  if (currentPromptIndex < 0) return { fault: { kind: "route", detail: "The current prompt boundary is not representable" } };
+  const current = messages.slice(currentPromptIndex);
+  const units: CurrentTurnUnit<T>[] = [];
+  const seenCallIds = new Set<string>();
+  let index = 0;
+  while (index < current.length) {
+    const message = record(current[index]);
+    if (!message) return { fault: { kind: "opaque-content-unrepresentable", detail: "Current turn contains an unknown message shape" } };
+    const blocks = contentBlocks(message);
+    const calls = message.role === "assistant" && blocks
+      ? blocks.filter((block) => block.type === "toolCall")
+      : [];
+    if (calls.length === 0) {
+      if (message.role === "toolResult") {
+        return { fault: { kind: "tool-protocol", detail: "Current turn contains an orphan tool result" } };
+      }
+      units.push({
+        kind: "message",
+        raw: [current[index]],
+        sourceEntryIds: [],
+        opaque: !publicContentProjectable(message),
+      });
+      index += 1;
+      continue;
+    }
+
+    const callIds = calls.map((block) => typeof block.id === "string" ? block.id : "");
+    if (callIds.some((id) => id.length === 0)
+      || new Set(callIds).size !== callIds.length
+      || callIds.some((id) => seenCallIds.has(id) || sources.ambiguousToolIds.includes(id))) {
+      return { fault: { kind: "tool-protocol", detail: "Current turn contains malformed or duplicate tool calls" } };
+    }
+    callIds.forEach((id) => seenCallIds.add(id));
+    const pending = new Set(callIds);
+    const batch: T[] = [current[index]];
+    let cursor = index + 1;
+    while (cursor < current.length && pending.size > 0) {
+      const result = record(current[cursor]);
+      if (result?.role !== "toolResult" || typeof result.toolCallId !== "string") break;
+      if (!pending.delete(result.toolCallId)) {
+        return { fault: { kind: "tool-protocol", detail: "Current turn contains a duplicate or mismatched tool result" } };
+      }
+      batch.push(current[cursor]);
+      cursor += 1;
+    }
+    if (pending.size > 0) {
+      return { fault: { kind: "tool-protocol", detail: "Current turn contains an incomplete ToolBatch" } };
+    }
+    const projectable = batch.every(publicContentProjectable);
+    const projected = projectable ? projectedToolBatch(batch, callIds, sources) : undefined;
+    units.push({
+      kind: "tool-batch",
+      raw: batch,
+      projected: projected?.messages,
+      sourceEntryIds: projected?.sourceEntryIds ?? [],
+      opaque: !projectable,
+      projectionFault: projected?.fault,
+    });
+    index = cursor;
+  }
+  return { units };
+}
+
+function messageTokenUpperBound(messages: readonly unknown[]): number {
+  return serializedBytes(messages) * PROVIDER_MESSAGE_SERIALIZATION_FACTOR;
 }
 
 function enhancedContent(prepared: PreparedWorkingContext, nonce: string): string {
@@ -245,35 +534,104 @@ export class WorkingContextOptimizer {
           },
         };
       }
-      let prepared = this.getReady(input.route);
-      if (!prepared) {
-        prepared = await this.waitForReady(
+      input.signal?.throwIfAborted();
+      let preparedSession = this.sessionMemory.getReady(input.route);
+      if (!preparedSession) {
+        preparedSession = await this.sessionMemory.waitForReady(
           input.route,
           input.readyWaitMs ?? DEFAULT_IN_FLIGHT_READY_WAIT_MS,
           input.signal,
         );
       }
-      if (!prepared) {
+      if (!preparedSession) {
         return { kind: "block", fault: { kind: "not-ready", detail: "Enhanced memory is not ready for the current route" } };
       }
-      if (prepared.route.fingerprint !== input.route.fingerprint) {
+      if (preparedSession.route.fingerprint !== input.route.fingerprint) {
         return { kind: "block", fault: { kind: "route", detail: "Prepared memory belongs to another route" } };
       }
+      const parsed = currentTurnUnits(input.messages, input.toolSources);
+      if (parsed.fault || !parsed.units) return { kind: "block", fault: parsed.fault ?? { kind: "route", detail: "Current turn is unavailable" } };
+      const toolBatchIndexes = parsed.units
+        .map((unit, index) => ({ unit, index }))
+        .filter((item) => item.unit.kind === "tool-batch");
+      const selected = parsed.units.map((unit) => unit.raw);
       const nonce = randomUUID();
-      const enhancedContext = buildEnhancedContext(input.messages, prepared, nonce);
-      if (!enhancedContext) {
-        return { kind: "block", fault: { kind: "route", detail: "The current prompt boundary is not representable" } };
+      let fitted = this.fitEnhancedContext(
+        preparedSession,
+        selected.flat(),
+        nonce,
+        input.providerPayloadProfile,
+        input.toProviderMessages,
+      );
+      const projectedIndexes = new Set<number>();
+      if (!fitted) {
+        const candidates = toolBatchIndexes
+          .filter(({ unit }) => unit.projected !== undefined)
+          .map(({ unit, index }) => ({
+            unit,
+            index,
+            savings: messageTokenUpperBound(input.toProviderMessages(unit.raw))
+              - messageTokenUpperBound(input.toProviderMessages(unit.projected!)),
+          }))
+          .filter((candidate) => candidate.savings > 0)
+          .sort((left, right) => left.index - right.index);
+        for (const candidate of candidates) {
+          selected[candidate.index] = candidate.unit.projected!;
+          projectedIndexes.add(candidate.index);
+          fitted = this.fitEnhancedContext(
+            preparedSession,
+            selected.flat(),
+            nonce,
+            input.providerPayloadProfile,
+            input.toProviderMessages,
+          );
+          if (fitted) break;
+        }
       }
+      if (!fitted) {
+        const projectionFault = parsed.units.find((unit) => unit.projectionFault)?.projectionFault;
+        if (projectionFault) return { kind: "block", fault: projectionFault };
+        const opaque = parsed.units.some((unit) => unit.opaque)
+          || toolBatchIndexes.some(({ unit }) => unit.projected === undefined);
+        return {
+          kind: "block",
+          fault: {
+            kind: opaque ? "opaque-content-unrepresentable" : "budget",
+            detail: opaque
+              ? "Current Provider-visible content cannot be represented within the Provider payload budget"
+              : "Current turn and the minimum enhanced history exceed the Provider payload budget",
+          },
+        };
+      }
+      const projectedSourceEntryIds = [...new Set([...projectedIndexes]
+        .flatMap((index) => parsed.units![index].sourceEntryIds))];
+      input.signal?.throwIfAborted();
+      if (projectedSourceEntryIds.length > 0) await input.ensureSources(projectedSourceEntryIds);
+      input.signal?.throwIfAborted();
+      const currentTurnKey = sha256(stable({
+        profile: input.providerPayloadProfile.identity,
+        messages: parsed.units.flatMap((unit) => unit.raw),
+        toolSources: input.toolSources,
+      }));
       return {
         kind: "allow",
-        enhancedContext,
+        enhancedContext: fitted.enhancedContext,
         proof: {
           nonce,
           generation: input.generation,
           routeFingerprint: input.route.fingerprint,
           leafId: input.route.leafId,
-          openVikingSessionId: prepared.openVikingSessionId,
-          enhancedContentHash: sha256(enhancedContent(prepared, nonce)),
+          openVikingSessionId: fitted.prepared.openVikingSessionId,
+          enhancedContentHash: sha256(enhancedContent(fitted.prepared, nonce)),
+          providerPayloadProfileId: input.providerPayloadProfile.identity,
+          currentTurnKey,
+        },
+        metrics: {
+          rawToolBatches: toolBatchIndexes.length - projectedIndexes.size,
+          projectedToolBatches: projectedIndexes.size,
+          projectedSourceEntryIds,
+          providerMessageTokenUpperBound: fitted.providerMessageTokenUpperBound,
+          providerMessageTokenBudget: input.providerPayloadProfile.messageTokenBudget,
         },
       };
     } catch (error) {
@@ -285,8 +643,38 @@ export class WorkingContextOptimizer {
     await this.sessionMemory.shutdown(reason);
   }
 
-  private project(prepared: PreparedSessionMemory): PreparedWorkingContext | undefined {
-    const content = formatWorkingContext(prepared.route, prepared.context, this.maxContextChars);
+  private fitEnhancedContext<T>(
+    prepared: PreparedSessionMemory,
+    currentTurn: readonly T[],
+    nonce: string,
+    profile: ProviderPayloadProfile,
+    toProviderMessages: (messages: readonly T[]) => readonly unknown[],
+  ): { prepared: PreparedWorkingContext; enhancedContext: T[]; providerMessageTokenUpperBound: number } | undefined {
+    let low = MIN_WORKING_CONTEXT_CHARS;
+    let high = this.maxContextChars;
+    let best: { prepared: PreparedWorkingContext; enhancedContext: T[]; providerMessageTokenUpperBound: number } | undefined;
+    while (low <= high) {
+      const maxChars = Math.floor((low + high) / 2);
+      const projected = this.project(prepared, maxChars);
+      if (!projected) return undefined;
+      const enhancedContext = buildEnhancedContext(currentTurn, projected, nonce);
+      if (!enhancedContext) return undefined;
+      const providerMessageTokenUpperBound = messageTokenUpperBound(toProviderMessages(enhancedContext));
+      if (providerMessageTokenUpperBound <= profile.messageTokenBudget) {
+        best = { prepared: projected, enhancedContext, providerMessageTokenUpperBound };
+        low = maxChars + 1;
+      } else {
+        high = maxChars - 1;
+      }
+    }
+    return best;
+  }
+
+  private project(
+    prepared: PreparedSessionMemory,
+    maxChars = this.maxContextChars,
+  ): PreparedWorkingContext | undefined {
+    const content = formatWorkingContext(prepared.route, prepared.context, maxChars);
     if (!content) return undefined;
     return {
       route: prepared.route,

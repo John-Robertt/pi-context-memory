@@ -98,7 +98,7 @@ Pi 适配器发现结构化 `fullOutputPath` 时，只用该结构化值和当�
 
 ### 4.3 Provider payload profile
 
-Pi 集成为当前任务 Provider、模型与 API 发布版本化 `ProviderPayloadProfile`，统一描述模型上下文窗口、可请求输出上限、system prompt 与 tool schema 的规范化大小、协议 framing、传输余量和估算器身份。该 profile 只提供边界事实，不选择保留哪些任务内容；预算分配由工作上下文优化负责。
+Pi 集成为当前任务 Provider、模型、API、base URL/compat 与唯一 PayloadProofAdapter 发布版本化 `ProviderPayloadProfile`，统一描述模型上下文窗口、可请求输出上限、system prompt 与 tool schema 的规范化大小、协议 framing、传输余量和估算器身份。该 profile 只提供边界事实，不选择保留哪些任务内容；预算分配由工作上下文优化负责。`before_provider_request` 对实际可见的 wire system/tools/output 字段重建相同 adapter 事实，不能一致时拒绝证明。
 
 profile 从当前 Pi 模型和本 handler 可见的实际请求接口推导，不读取 footer 百分比，也不由用户记忆模型配置决定。`model_select`、system prompt、active tools、Provider API 或适配版本变化使旧 profile 与预算缓存失效；Provider 请求时点自检核对可见 payload 与 profile 一致，transport 最终采用另由外部观测确定。
 

@@ -2,9 +2,9 @@
   "schemaVersion": 2,
   "generatedBy": "scripts/validate-context-enhancement.mjs",
   "scope": "local",
-  "runId": "context-enhancement-2026-08-15T16-15-03-524Z",
-  "startedAt": "2026-08-15T16:15:03.538Z",
-  "completedAt": "2026-08-15T16:15:11.524Z",
+  "runId": "context-enhancement-2026-08-15T17-30-28-398Z",
+  "startedAt": "2026-08-15T17:30:28.416Z",
+  "completedAt": "2026-08-15T17:30:40.157Z",
   "piVersion": "0.84.2",
   "nodeVersion": "24.15.0",
   "piProtocolProfile": "pi-provider-protocol-v1",
@@ -17,11 +17,11 @@
     "name": "bounded-context-route-continuity"
   },
   "implementation": {
-    "sourceManifestSha256": "653cb71989b5a0abb02c2bdaa14b6c8a8177d36a3bce2e40b4d2f736733ab196",
+    "sourceManifestSha256": "955eb58459a1bfa53283eda5f5bbef95ebdb84a4ee593a33c2c9cf1ff82337cd",
     "files": [
       {
         "path": ".pi/extensions/pi-context-memory/index.ts",
-        "sha256": "095151fe50af068ac1c086f37ef6bfe68b5b78cf8170271be8e52dad0937cc88"
+        "sha256": "6c4b6c4a64e7a2b2e354e23882f7759b697c3abfd656503d293c3bff86de7c82"
       },
       {
         "path": ".pi/extensions/pi-context-memory/long-term-memory.ts",
@@ -37,15 +37,15 @@
       },
       {
         "path": ".pi/extensions/pi-context-memory/pi-session-protocol.ts",
-        "sha256": "56dbacf9a4974c46e7c65b56dc7d0a340e079136bf9459cce7271e6faf5db7c5"
+        "sha256": "9cf2c0716b50870928ba5290c52dd8b426b01da8de86f833e68f327603e2401e"
       },
       {
         "path": ".pi/extensions/pi-context-memory/provider-payload-proof.ts",
-        "sha256": "af7d12bdf21cc988fd59b2670281b4ea486a454960f99e0a51b430a74da2396b"
+        "sha256": "254a012c081d193f8c8296afdeeac723fd0d7324449c4597e0cd26ec1b12fa01"
       },
       {
         "path": ".pi/extensions/pi-context-memory/session-memory-coordination.ts",
-        "sha256": "a9e0e4f67d3839f5a955f07d867f2a963e3156766c266dfb866372a52b70e1d6"
+        "sha256": "0d7d550a31834832a185c3de5df419c62aa5988d76cf4954da7222ff3b0fce68"
       },
       {
         "path": ".pi/extensions/pi-context-memory/session-working-memory.ts",
@@ -53,7 +53,7 @@
       },
       {
         "path": ".pi/extensions/pi-context-memory/working-context-optimization.ts",
-        "sha256": "cef566e580e81c92ac3af3ece3d08cda84d4e91798051be17ae9248c0543ef6e"
+        "sha256": "963a5fd37c1e21f91b3afeecbad44e32a1665b6e6f22e60573d5743ca4c8b668"
       },
       {
         "path": "config/openviking-adapter-contract.json",
@@ -77,11 +77,11 @@
       },
       {
         "path": "scripts/validate-context-enhancement.mjs",
-        "sha256": "1b560936f78af82634b8a810067ed14daa48a5a97c00a94aa9840875c0bdbb88"
+        "sha256": "73ffb13c366b492bf2ee3a2d89528c29d5cf568508de5cfdb07a822b84c8138c"
       },
       {
         "path": "scripts/validation-evidence.mjs",
-        "sha256": "fa21427c80c256a18f8c3438396b1be7e7ee8f800f25875fffdc8718a99e3ffb"
+        "sha256": "c5dd77c7ab4b42f1c426eb48bd44af1d643ef991734a6c9b0686afe93a2b0145"
       },
       {
         "path": "scripts/validation-suite.mjs",
@@ -115,7 +115,7 @@
         "sha256": "2f34c5cec5f73f972887aaeb0ad7decf734500911f7ea0412061d33deb3d139b"
       }
     ],
-    "gitCommit": "60fce6465b6450f4bc132468d64d2260b434452b",
+    "gitCommit": "b15c9905e23a20ddf608e644433afbdddde65600",
     "workingTreeDirty": true
   },
   "passed": true,
@@ -136,6 +136,17 @@
     "sourceIdsPreserved": true,
     "compactionBoundary": true,
     "currentTurnPreserved": true,
+    "currentTurnProjected": true,
+    "currentTurnProjectionProtocolComplete": true,
+    "currentTurnProjectionSourcesRecoverable": true,
+    "currentTurnRawPreserved": true,
+    "currentTurnOldestBatchProjectedFirst": true,
+    "currentTurnDuplicateIdsBlocked": true,
+    "currentTurnModifiedSourceBlocks": true,
+    "currentTurnSourceBarrierBlocks": true,
+    "currentTurnOpaqueOverflowBlocks": true,
+    "providerPayloadProfileIdentity": true,
+    "providerPayloadWireProfileBound": true,
     "proofContentMutationRejected": true,
     "proofToolSequenceBound": true,
     "proofMessageSequenceBound": true,
@@ -161,6 +172,13 @@
     "inFlightContextWaitAdopted": true,
     "desiredConfigDoesNotDisableRuntime": true,
     "providerPayloadCurrentTurn": true,
+    "piCurrentTurnRaw": true,
+    "piCurrentTurnProjected": true,
+    "piCurrentTurnProtocolComplete": true,
+    "piCurrentTurnSourcesRecoverable": true,
+    "piCurrentTurnTransportAdopted": true,
+    "piProviderPayloadProfileMutationBlocked": true,
+    "piModifiedCurrentTurnSourceBlocked": true,
     "localProviderOnly": true,
     "treeLifecycle": true,
     "sessionReplacementLifecycle": true,
@@ -173,16 +191,16 @@
   },
   "details": {
     "routes": {
-      "common": "ec165441f7ecce335499b5f6eeddcd64cd1b543f228bc751baaf155591f5dd1c",
-      "branchA": "ab93bd203f34a0ec4c5b81b3877a9da111e30af57be11b9d2de10e82eeaae781",
-      "branchB": "840e8653cb5fde6c1f296b1d3db022890014490115b96af1846bb31555b1e375",
-      "afterCompaction": "04559982fe60455a3cd4710e1afdb60a713b6fc5cb1869cef1bef355b20cb761"
+      "common": "fecd8af6a7e7db88540dddd6fefb52fd65e8827b8d72b5091980b10483e3020c",
+      "branchA": "6cac54bc57d31447ed9d2532067f6dfdd7ca2305bd45e4561efa608c4f88381c",
+      "branchB": "3acf4e09d7a9c377e52e2f0c27cc4ac9b53cc90d07d5f5b542f7f417041236f7",
+      "afterCompaction": "7542392c54c6f6c143bac8be759716234fc8832fe0d2747d15acdb6ba9ceaaae"
     },
     "openViking": {
-      "sessionsCreated": 26,
-      "sessionsDeleted": 26,
-      "tasks": 13,
-      "requests": 929
+      "sessionsCreated": 28,
+      "sessionsDeleted": 28,
+      "tasks": 15,
+      "requests": 991
     },
     "context": {
       "branchAChars": 1111,
@@ -203,6 +221,35 @@
         "adopted": 29,
         "changed": 0,
         "unobserved": 0
+      },
+      "currentTurnBudget": {
+        "raw": true,
+        "projected": true,
+        "protocolComplete": true,
+        "sourcesRecoverable": true,
+        "transportAdopted": true,
+        "profileMutationBlocked": true,
+        "sourceMutationBlocked": true,
+        "rawMetrics": {
+          "rawToolBatches": 1,
+          "projectedToolBatches": 0,
+          "projectedSourceEntryIds": [],
+          "providerMessageTokenUpperBound": 2962,
+          "providerMessageTokenBudget": 24228
+        },
+        "projectedMetrics": {
+          "rawToolBatches": 0,
+          "projectedToolBatches": 1,
+          "projectedSourceEntryIds": [
+            "9840ee6a",
+            "425955fe",
+            "82febc28",
+            "a27174df"
+          ],
+          "providerMessageTokenUpperBound": 9006,
+          "providerMessageTokenBudget": 24228
+        },
+        "projectedPayloadBytes": 11605
       },
       "authorizationBlock": {
         "contextBlockStopsExtension": true,

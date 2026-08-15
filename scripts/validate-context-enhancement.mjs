@@ -23,10 +23,16 @@ import {
 } from "../.pi/extensions/pi-context-memory/memory-model-configuration.ts";
 import { SessionMemoryCoordinator } from "../.pi/extensions/pi-context-memory/session-memory-coordination.ts";
 import { normalizeCommitResult, normalizeSessionContext } from "../.pi/extensions/pi-context-memory/openviking-protocol.ts";
-import { projectRoute } from "../.pi/extensions/pi-context-memory/pi-session-protocol.ts";
+import {
+  currentTurnToolSources,
+  projectRoute,
+  sanitizeFullOutputLocators,
+} from "../.pi/extensions/pi-context-memory/pi-session-protocol.ts";
 import {
   createOpenAICompletionsPayloadProof,
   openAICompletionsPayloadMatches,
+  openAICompletionsPayloadMatchesProfile,
+  openAICompletionsToolPayloadUpperBoundBytes,
 } from "../.pi/extensions/pi-context-memory/provider-payload-proof.ts";
 import {
   DEFAULT_WORKING_MEMORY_TASK_TIMEOUT_MS,
@@ -34,6 +40,7 @@ import {
 } from "../.pi/extensions/pi-context-memory/session-working-memory.ts";
 import {
   buildEnhancedContext,
+  createProviderPayloadProfile,
   DEFAULT_IN_FLIGHT_READY_WAIT_MS,
   formatWorkingContext,
   payloadCarriesEnhancedContent,
@@ -463,6 +470,32 @@ async function startLocalProvider() {
     const created = Math.floor(Date.now() / 1_000);
     const completionTokens = 4;
     response.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache" });
+    const messages = Array.isArray(body.messages) ? body.messages : [];
+    const lastUser = messages.findLast((message) => message?.role === "user");
+    const currentPrompt = typeof lastUser?.content === "string" ? lastUser.content : JSON.stringify(lastUser?.content ?? "");
+    const toolNames = currentPrompt.includes("current-turn projected tool probe")
+      || currentPrompt.includes("current-turn source mutation probe")
+      ? ["validation_large", "validation_full", "validation_error"]
+      : currentPrompt.includes("current-turn raw tool probe")
+        ? ["validation_small", "validation_error"]
+        : [];
+    const resultNames = new Set(messages
+      .filter((message) => message?.role === "tool")
+      .map((message) => typeof message.tool_call_id === "string"
+        ? toolNames.find((name) => message.tool_call_id.startsWith(`${name}-`))
+        : undefined));
+    if (toolNames.length > 0 && !toolNames.every((name) => resultNames.has(name))) {
+      const toolCalls = toolNames.map((name, index) => ({
+        index,
+        id: `${name}-${state.payloads.length}`,
+        type: "function",
+        function: { name, arguments: "{}" },
+      }));
+      response.write(`data: ${JSON.stringify({ id, object: "chat.completion.chunk", created, model: "local", choices: [{ index: 0, delta: { role: "assistant", content: null, tool_calls: toolCalls }, finish_reason: null }] })}\n\n`);
+      response.write(`data: ${JSON.stringify({ id, object: "chat.completion.chunk", created, model: "local", choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }], usage: { prompt_tokens: state.promptTokens, completion_tokens: completionTokens, total_tokens: state.promptTokens + completionTokens } })}\n\n`);
+      response.end("data: [DONE]\n\n");
+      return;
+    }
     response.write(`data: ${JSON.stringify({ id, object: "chat.completion.chunk", created, model: "local", choices: [{ index: 0, delta: { role: "assistant", content: `local response ${state.payloads.length}` }, finish_reason: null }] })}\n\n`);
     response.write(`data: ${JSON.stringify({ id, object: "chat.completion.chunk", created, model: "local", choices: [{ index: 0, delta: {}, finish_reason: "stop" }], usage: { prompt_tokens: state.promptTokens, completion_tokens: completionTokens, total_tokens: state.promptTokens + completionTokens } })}\n\n`);
     response.end("data: [DONE]\n\n");
@@ -1164,6 +1197,244 @@ async function runPiAdoptionCase(openViking) {
   }
 }
 
+async function runPiCurrentTurnCase(openViking) {
+  const caseDir = join(artifactRoot, "pi-current-turn");
+  const home = join(caseDir, "home");
+  const agentDir = join(caseDir, "pi-agent");
+  const runtimeDir = join(caseDir, "runtime");
+  const observationLog = join(caseDir, "observations.jsonl");
+  const archiveRoot = join(caseDir, "archive");
+  const settingsPath = join(caseDir, "memory-model.jsonc");
+  const providerPath = join(caseDir, "local-provider.ts");
+  const toolsPath = join(caseDir, "current-turn-tools.ts");
+  const payloadMutationPath = join(caseDir, "payload-mutation.ts");
+  const fullOutputPath = join(caseDir, "current-turn-full-output.txt");
+  mkdirSync(home, { recursive: true });
+  mkdirSync(agentDir, { recursive: true });
+  mkdirSync(runtimeDir, { recursive: true });
+  const memorySetting = { provider: "openai", model: "local-memory", api_key: "local-validation" };
+  const settingsFingerprint = createHash("sha256")
+    .update(JSON.stringify(Object.fromEntries(Object.entries(memorySetting).sort(([left], [right]) => left.localeCompare(right)))))
+    .digest("hex");
+  const compiledMemoryConfig = await compileOpenVikingConfig(root, memorySetting, { ...process.env, HOME: home });
+  writeFileSync(settingsPath, `${JSON.stringify({ memoryModel: memorySetting })}\n`, "utf8");
+  const launchId = `context-current-turn-${process.pid}`;
+  writeJson(join(runtimeDir, "launcher.lock"), {
+    schemaVersion: OPENVIKING_RUNTIME_SCHEMA_VERSION,
+    launchId,
+    launcherPid: process.pid,
+  });
+  writeJson(join(runtimeDir, "launcher.json"), {
+    schemaVersion: OPENVIKING_RUNTIME_SCHEMA_VERSION,
+    launchId,
+    launcherPid: process.pid,
+    controlUrl: "http://127.0.0.1:1",
+    operationTimeoutMs: 30_000,
+  });
+  writeJson(join(runtimeDir, "state.json"), {
+    schemaVersion: OPENVIKING_RUNTIME_SCHEMA_VERSION,
+    launchId,
+    launcherPid: process.pid,
+    childPid: process.pid,
+    phase: "ready",
+    ready: true,
+    activeProvider: memorySetting.provider,
+    activeModel: memorySetting.model,
+    activeSettingsFingerprint: settingsFingerprint,
+    activeConfigFingerprint: compiledMemoryConfig.configFingerprint,
+    targetProvider: memorySetting.provider,
+    targetModel: memorySetting.model,
+    targetSettingsFingerprint: settingsFingerprint,
+    targetConfigFingerprint: compiledMemoryConfig.configFingerprint,
+  });
+
+  const provider = await startLocalProvider();
+  writeFileSync(providerPath, `export default function localProvider(pi) {
+  pi.registerProvider("context-enhancement-validation", {
+    name: "Context Enhancement Validation",
+    baseUrl: ${JSON.stringify(provider.baseUrl)},
+    apiKey: "local-validation",
+    api: "openai-completions",
+    models: [{ id: "local", name: "Local", reasoning: false, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 32768, maxTokens: 256 }],
+  });
+}\n`, "utf8");
+
+  writeFileSync(payloadMutationPath, `export default function payloadMutation(pi) {
+  pi.on("context", (event) => {
+    if (!JSON.stringify(event.messages).includes("current-turn source mutation probe")
+      || !event.messages.some((message) => message.role === "toolResult")) return;
+    let changed = false;
+    return { messages: event.messages.map((message) => {
+      if (changed || message.role !== "toolResult") return message;
+      changed = true;
+      return { ...message, content: [{ type: "text", text: "M".repeat(200000) }] };
+    }) };
+  });
+  pi.on("before_provider_request", (event) => {
+    if (!JSON.stringify(event.payload).includes("current-turn profile mutation probe")) return;
+    const payload = event.payload;
+    return {
+      ...payload,
+      messages: payload.messages.map((message) => message.role === "system"
+        ? { ...message, content: message.content + " mutated" }
+        : message),
+      tools: [...(payload.tools ?? []), { type: "function", function: { name: "mutated", description: "mutated", parameters: { type: "object" }, strict: false } }],
+      max_completion_tokens: (payload.max_completion_tokens ?? 0) + 1,
+    };
+  });
+}\n`, "utf8");
+  writeFileSync(toolsPath, `import { writeFileSync } from "node:fs";
+const parameters = { type: "object", properties: {}, additionalProperties: false };
+export default function currentTurnTools(pi) {
+  pi.registerTool({ name: "validation_small", label: "Validation small", description: "Return a small controlled result", parameters,
+    execute: async () => ({ content: [{ type: "text", text: "small controlled result" }], details: {} }) });
+  pi.registerTool({ name: "validation_large", label: "Validation large", description: "Return a 200000 character controlled result", parameters,
+    execute: async () => ({ content: [{ type: "text", text: "L".repeat(200000) }], details: {} }) });
+  pi.registerTool({ name: "validation_full", label: "Validation full", description: "Return a truncated result backed by fullOutputPath", parameters,
+    execute: async () => {
+      writeFileSync(${JSON.stringify(fullOutputPath)}, "full:" + "F".repeat(210000), "utf8");
+      return { content: [{ type: "text", text: "truncated full output at ${fullOutputPath}" }], details: { fullOutputPath: ${JSON.stringify(fullOutputPath)} } };
+    } });
+  pi.registerTool({ name: "validation_error", label: "Validation error", description: "Return a controlled tool error", parameters,
+    execute: async () => ({ content: [{ type: "text", text: "controlled tool error" }], details: {}, isError: true }) });
+}\n`, "utf8");
+
+  const child = spawn("pi", [
+    "--mode", "rpc",
+    "--session-dir", join(caseDir, "session"),
+    "--model", "context-enhancement-validation/local",
+    "--thinking", "off",
+    "--no-context-files", "--no-skills", "--no-prompt-templates", "--no-extensions",
+    "--extension", payloadMutationPath,
+    "--extension", join(root, ".pi/extensions/pi-context-memory/index.ts"),
+    "--extension", providerPath,
+    "--extension", toolsPath,
+  ], {
+    cwd: root,
+    env: {
+      ...process.env,
+      HTTP_PROXY: "",
+      HTTPS_PROXY: "",
+      ALL_PROXY: "",
+      NO_PROXY: "127.0.0.1,localhost",
+      HOME: home,
+      PI_CODING_AGENT_DIR: agentDir,
+      PI_SKIP_VERSION_CHECK: "1",
+      PCR_MEMORY_MODEL_SETTINGS: settingsPath,
+      PCR_OPENVIKING_RUNTIME_DIR: runtimeDir,
+      PCR_OPENVIKING_URL: openViking.baseUrl,
+      PCR_OBSERVATION_LOG: observationLog,
+      PCR_ARCHIVE_DIR: archiveRoot,
+    },
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+  const stderr = [];
+  child.stderr.on("data", (chunk) => stderr.push(Buffer.from(chunk)));
+  const client = new RpcClient(child);
+  const promptAndSettle = async (message) => {
+    const observationOffset = readObservations(observationLog).length;
+    const providerOffset = provider.state.payloads.length;
+    const settledBefore = readObservations(observationLog).filter((event) => event.type === "agent_settled").length;
+    await client.send("prompt", { message });
+    await waitFor(
+      () => readObservations(observationLog).filter((event) => event.type === "agent_settled").length > settledBefore,
+      `current-turn settlement for ${message}`,
+      30_000,
+    );
+    return {
+      observations: readObservations(observationLog).slice(observationOffset),
+      payloads: provider.state.payloads.slice(providerOffset),
+    };
+  };
+  try {
+    await waitFor(() => client.events.some((event) => event.type === "extension_ui_request" && event.method === "setStatus"), "current-turn Pi startup");
+    await promptAndSettle("current-turn warmup");
+    await waitFor(() => readObservations(observationLog).some((event) => event.type === "working_context_ready"), "current-turn working context", 10_000);
+    const rawRun = await promptAndSettle("current-turn raw tool probe");
+    const projectedRun = await promptAndSettle("current-turn projected tool probe");
+    const profileMutationRun = await promptAndSettle("current-turn profile mutation probe");
+    const readyBeforeReplacement = readObservations(observationLog)
+      .filter((event) => event.type === "working_context_ready").length;
+    await client.send("new_session");
+    await promptAndSettle("current-turn replacement warmup");
+    await waitFor(
+      () => readObservations(observationLog).filter((event) => event.type === "working_context_ready").length > readyBeforeReplacement,
+      "current-turn replacement working context",
+      10_000,
+    );
+    const sourceMutationRun = await promptAndSettle("current-turn source mutation probe");
+    const rawContext = rawRun.observations.find((event) =>
+      event.type === "context_allowed" && event.currentTurn?.rawToolBatches === 1);
+    const projectedContext = projectedRun.observations.find((event) =>
+      event.type === "context_allowed" && event.currentTurn?.projectedToolBatches === 1);
+    const rawPayload = rawRun.payloads.at(-1);
+    const projectedPayload = projectedRun.payloads.at(-1);
+    const projectedMessages = Array.isArray(projectedPayload?.messages) ? projectedPayload.messages : [];
+    const callIds = projectedMessages.flatMap((message) =>
+      message.role === "assistant" && Array.isArray(message.tool_calls)
+        ? message.tool_calls.map((call) => call.id)
+        : []);
+    const resultIds = projectedMessages.filter((message) => message.role === "tool").map((message) => message.tool_call_id);
+    const projectedRecords = projectedContext?.currentTurn?.projectedSourceEntryIds?.map((entryId) => JSON.parse(readFileSync(join(
+      archiveRoot,
+      createHash("sha256").update(projectedContext.sessionId).digest("hex"),
+      "sources",
+      `${createHash("sha256").update(entryId).digest("hex")}.json`,
+    ), "utf8"))) ?? [];
+    const largeRecord = projectedRecords.find((record) => JSON.stringify(record.projection?.taskContent).includes("L".repeat(1_000)));
+    const fullRecord = projectedRecords.find((record) => record.fullOutputRef);
+    rmSync(fullOutputPath, { force: true });
+    const fullBlob = fullRecord ? readFileSync(join(
+      archiveRoot,
+      createHash("sha256").update(projectedContext.sessionId).digest("hex"),
+      "large-results",
+      "blobs",
+      fullRecord.fullOutputRef.blobId,
+    ), "utf8") : undefined;
+    const transportAdopted = (run, context) => run.observations.some((event) =>
+      event.type === "before_provider_request"
+      && event.hookOutcome === "verified"
+      && event.currentTurnKey === context?.currentTurnKey
+      && run.payloads.some((payload) => createHash("sha256").update(JSON.stringify(payload)).digest("hex") === event.payloadHash));
+    return {
+      raw: Boolean(rawContext)
+        && JSON.stringify(rawPayload).includes("small controlled result")
+        && JSON.stringify(rawPayload).includes("controlled tool error")
+        && !JSON.stringify(rawPayload).includes("pi-context-memory projected tool result"),
+      projected: Boolean(projectedContext)
+        && JSON.stringify(projectedPayload).includes("pi-context-memory projected tool result")
+        && JSON.stringify(projectedPayload).includes("isError")
+        && !JSON.stringify(projectedPayload).includes(fullOutputPath)
+        && !JSON.stringify(projectedPayload).includes("L".repeat(1_000))
+        && Buffer.byteLength(JSON.stringify(projectedPayload), "utf8") < 32_768,
+      protocolComplete: callIds.length === 3 && JSON.stringify(resultIds) === JSON.stringify(callIds),
+      sourcesRecoverable: Boolean(largeRecord) && fullBlob === `full:${"F".repeat(210_000)}`,
+      transportAdopted: transportAdopted(rawRun, rawContext) && transportAdopted(projectedRun, projectedContext),
+      profileMutationBlocked: profileMutationRun.payloads.length === 0
+        && profileMutationRun.observations.some((event) => event.type === "before_provider_request"
+          && event.hookOutcome === "rejected"
+          && event.rejectionReason === "handler payload does not match the constructed Provider payload profile"),
+      sourceMutationBlocked: sourceMutationRun.observations
+        .filter((event) => event.type === "before_provider_request" && event.hookOutcome === "verified").length === 1
+        && sourceMutationRun.observations.some((event) => event.type === "context_blocked"
+          && event.fault === "source-barrier")
+        && !sourceMutationRun.payloads.some((payload) => JSON.stringify(payload).includes("M".repeat(1_000))),
+      rawMetrics: rawContext?.currentTurn,
+      projectedMetrics: projectedContext?.currentTurn,
+      projectedPayloadBytes: Buffer.byteLength(JSON.stringify(projectedPayload), "utf8"),
+    };
+  } catch (error) {
+    throw new Error(`${error instanceof Error ? error.message : String(error)}\n${Buffer.concat(stderr).toString("utf8").slice(-4_000)}`);
+  } finally {
+    await client.close();
+    await provider.close();
+    writeJson(join(caseDir, "rpc-events.json"), client.events);
+    writeJson(join(caseDir, "provider-payloads.json"), provider.state.payloads);
+    writeFileSync(join(caseDir, "pi-stderr.log"), Buffer.concat(stderr));
+    if (existsSync(observationLog)) writeFileSync(join(caseDir, "observations-copy.jsonl"), readFileSync(observationLog));
+  }
+}
+
 async function runAuthorizationBlockCase() {
   const caseDir = join(artifactRoot, "authorization-block");
   const home = join(caseDir, "home");
@@ -1399,6 +1670,20 @@ try {
       providerViewHash: "opaque",
     }],
     messages: [{ role: "user", content: "current prompt" }],
+    providerPayloadProfile: createProviderPayloadProfile({
+      provider: "validation",
+      model: "local",
+      api: "openai-completions",
+      baseUrl: "http://127.0.0.1/validation",
+      compat: null,
+      contextWindowTokens: 16_384,
+      maxOutputTokens: 256,
+      systemPrompt: "validation",
+      tools: [],
+    }),
+    toolSources: { callSources: {}, resultSources: {}, ambiguousToolIds: [] },
+    toProviderMessages: (messages) => convertToLlm(messages),
+    ensureSources: async () => undefined,
   });
   await opaqueOptimizer.shutdown();
   checks.opaqueHistoryBlocks = opaqueAuthorization.kind === "block"
@@ -1527,6 +1812,317 @@ try {
     && adopted[1] === currentTurn[2]
     && adopted[2] === currentTurn[3]
     && adopted[3] === currentTurn[4];
+
+  const largeOutputPath = join(artifactRoot, "current-turn-full-output.txt");
+  const fullOutputContent = `full-output:${"F".repeat(210_000)}`;
+  writeFileSync(largeOutputPath, fullOutputContent, "utf8");
+  const currentTurnEntries = [
+    {
+      type: "message",
+      id: "current-user",
+      parentId: branchB.at(-1).id,
+      timestamp: "2026-08-14T10:00:00.000Z",
+      message: { role: "user", content: "inspect parallel tool evidence", timestamp: 10 },
+    },
+    {
+      type: "message",
+      id: "current-assistant-tools",
+      parentId: "current-user",
+      timestamp: "2026-08-14T10:00:01.000Z",
+      message: {
+        role: "assistant",
+        content: [
+          { type: "toolCall", id: "large-call", name: "large_tool", arguments: { query: "large" } },
+          { type: "toolCall", id: "full-call", name: "full_tool", arguments: { query: "full" } },
+        ],
+        timestamp: 11,
+      },
+    },
+    {
+      type: "message",
+      id: "current-large-result",
+      parentId: "current-assistant-tools",
+      timestamp: "2026-08-14T10:00:02.000Z",
+      message: {
+        role: "toolResult",
+        toolCallId: "large-call",
+        toolName: "large_tool",
+        content: [{ type: "text", text: `large:${"L".repeat(200_000)}` }],
+        isError: false,
+        timestamp: 12,
+      },
+    },
+    {
+      type: "message",
+      id: "current-full-result",
+      parentId: "current-large-result",
+      timestamp: "2026-08-14T10:00:03.000Z",
+      message: {
+        role: "toolResult",
+        toolCallId: "full-call",
+        toolName: "full_tool",
+        content: [{ type: "text", text: `truncated output at ${largeOutputPath}` }],
+        details: { fullOutputPath: largeOutputPath },
+        isError: true,
+        truncated: true,
+        timestamp: 13,
+      },
+    },
+  ];
+  const currentTurnSnapshot = snapshot(identity, [...branchB, ...currentTurnEntries]);
+  const currentTurnProjection = coordinator.projectCurrentRoute(currentTurnSnapshot);
+  const currentTurnSourcesById = new Map(currentTurnProjection.projections
+    .filter((projection) => projection.kind === "message-source")
+    .map((projection) => [projection.id, projection]));
+  const currentToolSources = currentTurnToolSources(currentTurnSnapshot.entries, currentTurnSourcesById);
+  const currentMessages = sanitizeFullOutputLocators(
+    currentTurnEntries.map((entry) => entry.message),
+    currentTurnProjection.fullOutputCandidates,
+  );
+  const payloadProfileInput = {
+    provider: "context-enhancement-validation",
+    model: "local",
+    api: "openai-completions",
+    baseUrl: "http://127.0.0.1/validation",
+    compat: null,
+    contextWindowTokens: 12_000,
+    maxOutputTokens: 256,
+    systemPrompt: "bounded current-turn validation",
+    tools: [
+      { name: "large_tool", description: "return a large result", parameters: { type: "object" } },
+      { name: "full_tool", description: "return a persisted result", parameters: { type: "object" } },
+    ],
+  };
+  const providerPayloadProfile = createProviderPayloadProfile(payloadProfileInput);
+  const projectedAuthorization = await optimizer.authorize({
+    generation: "validation-generation",
+    route: routeB,
+    projections: branchBProjections,
+    messages: currentMessages,
+    providerPayloadProfile,
+    toolSources: currentToolSources,
+    toProviderMessages: (messages) => convertToLlm(messages),
+    ensureSources: (entryIds) => coordinator.ensureCurrentSourcesRecoverable(currentTurnSnapshot, entryIds),
+  });
+  const projectedProviderMessages = projectedAuthorization.kind === "allow"
+    ? convertToLlm(projectedAuthorization.enhancedContext)
+    : [];
+  const projectedCallIds = projectedProviderMessages
+    .flatMap((message) => message.role === "assistant" && Array.isArray(message.content)
+      ? message.content.filter((block) => block.type === "toolCall").map((block) => block.id)
+      : []);
+  const projectedResultIds = projectedProviderMessages
+    .filter((message) => message.role === "toolResult")
+    .map((message) => message.toolCallId);
+  const projectedLargeSource = await coordinator.resolveCurrentSource(currentTurnSnapshot, "current-large-result");
+  rmSync(largeOutputPath);
+  const recoveredFullOutput = await coordinator.readCurrentFullOutput(currentTurnSnapshot, "current-full-result", 220_000);
+  checks.currentTurnProjected = projectedAuthorization.kind === "allow"
+    && projectedAuthorization.metrics.projectedToolBatches === 1
+    && projectedAuthorization.metrics.rawToolBatches === 0
+    && projectedAuthorization.metrics.providerMessageTokenUpperBound <= providerPayloadProfile.messageTokenBudget
+    && JSON.stringify(projectedProviderMessages).length < 20_000
+    && !JSON.stringify(projectedProviderMessages).includes("L".repeat(1_000));
+  checks.currentTurnProjectionProtocolComplete = JSON.stringify(projectedCallIds) === JSON.stringify(["large-call", "full-call"])
+    && JSON.stringify(projectedResultIds) === JSON.stringify(projectedCallIds)
+    && Boolean(createOpenAICompletionsPayloadProof(
+      payloadProfileInput.provider,
+      payloadProfileInput.model,
+      projectedProviderMessages,
+    ));
+  checks.currentTurnProjectionSourcesRecoverable = projectedAuthorization.kind === "allow"
+    && JSON.stringify(projectedAuthorization.metrics.projectedSourceEntryIds) === JSON.stringify([
+      "current-assistant-tools",
+      "current-large-result",
+      "current-full-result",
+    ])
+    && JSON.stringify(projectedLargeSource?.projection.taskContent).includes("L".repeat(1_000))
+    && recoveredFullOutput?.content === fullOutputContent
+    && recoveredFullOutput.truncated === false;
+
+  let rawSourceBarrierCalls = 0;
+  const rawAuthorization = await optimizer.authorize({
+    generation: "validation-generation",
+    route: routeB,
+    projections: branchBProjections,
+    messages: [
+      currentMessages[0],
+      currentMessages[1],
+      { ...currentMessages[2], content: [{ type: "text", text: "small result" }] },
+      { ...currentMessages[3], content: [{ type: "text", text: "small error" }], details: undefined },
+    ],
+    providerPayloadProfile,
+    toolSources: currentToolSources,
+    toProviderMessages: (messages) => convertToLlm(messages),
+    ensureSources: async () => { rawSourceBarrierCalls += 1; },
+  });
+  checks.currentTurnRawPreserved = rawAuthorization.kind === "allow"
+    && rawAuthorization.metrics.rawToolBatches === 1
+    && rawAuthorization.metrics.projectedToolBatches === 0
+    && rawSourceBarrierCalls === 0
+    && JSON.stringify(convertToLlm(rawAuthorization.enhancedContext)).includes("small result");
+
+  let oldestProjectedSources = [];
+  const oldestMessages = [
+    { role: "user", content: "preserve the most recent complete tool batch" },
+    { role: "assistant", content: [{ type: "toolCall", id: "old-call", name: "old_tool", arguments: {} }] },
+    { role: "toolResult", toolCallId: "old-call", toolName: "old_tool", content: [{ type: "text", text: "O".repeat(12_000) }], isError: false },
+    { role: "assistant", content: [{ type: "toolCall", id: "new-call", name: "new_tool", arguments: {} }] },
+    { role: "toolResult", toolCallId: "new-call", toolName: "new_tool", content: [{ type: "text", text: "N".repeat(2_000) }], isError: false },
+  ];
+  const oldestEntries = oldestMessages.map((message, index) => ({
+    type: "message",
+    id: `oldest-${index}`,
+    parentId: index === 0 ? null : `oldest-${index - 1}`,
+    timestamp: `2026-08-14T10:01:0${index}.000Z`,
+    message,
+  }));
+  const oldestSourcesById = new Map(projectRoute(profile, oldestEntries, oldestEntries.at(-1).id).projections
+    .filter((projection) => projection.kind === "message-source")
+    .map((projection) => [projection.id, projection]));
+  const oldestFirstAuthorization = await optimizer.authorize({
+    generation: "validation-generation",
+    route: routeB,
+    projections: branchBProjections,
+    messages: oldestMessages,
+    providerPayloadProfile,
+    toolSources: currentTurnToolSources(oldestEntries, oldestSourcesById),
+    toProviderMessages: (messages) => convertToLlm(messages),
+    ensureSources: async (entryIds) => { oldestProjectedSources = [...entryIds]; },
+  });
+  const oldestFirstPayload = oldestFirstAuthorization.kind === "allow"
+    ? JSON.stringify(convertToLlm(oldestFirstAuthorization.enhancedContext))
+    : "";
+  checks.currentTurnOldestBatchProjectedFirst = oldestFirstAuthorization.kind === "allow"
+    && oldestFirstAuthorization.metrics.rawToolBatches === 1
+    && oldestFirstAuthorization.metrics.projectedToolBatches === 1
+    && JSON.stringify(oldestProjectedSources) === JSON.stringify(["oldest-1", "oldest-2"])
+    && oldestFirstPayload.includes("N".repeat(1_000))
+    && !oldestFirstPayload.includes("O".repeat(1_000));
+
+  const duplicateMessages = [
+    { role: "user", content: "reject duplicate tool identifiers" },
+    { role: "assistant", content: [{ type: "toolCall", id: "duplicate-call", name: "first", arguments: {} }] },
+    { role: "toolResult", toolCallId: "duplicate-call", toolName: "first", content: [{ type: "text", text: "first" }], isError: false },
+    { role: "assistant", content: [{ type: "toolCall", id: "duplicate-call", name: "second", arguments: {} }] },
+    { role: "toolResult", toolCallId: "duplicate-call", toolName: "second", content: [{ type: "text", text: "second" }], isError: false },
+  ];
+  const duplicateEntries = duplicateMessages.map((message, index) => ({
+    type: "message",
+    id: `duplicate-${index}`,
+    parentId: index === 0 ? null : `duplicate-${index - 1}`,
+    timestamp: `2026-08-14T10:02:0${index}.000Z`,
+    message,
+  }));
+  const duplicateSourcesById = new Map(projectRoute(profile, duplicateEntries, duplicateEntries.at(-1).id).projections
+    .filter((projection) => projection.kind === "message-source")
+    .map((projection) => [projection.id, projection]));
+  const duplicateAuthorization = await optimizer.authorize({
+    generation: "validation-generation",
+    route: routeB,
+    projections: branchBProjections,
+    messages: duplicateMessages,
+    providerPayloadProfile,
+    toolSources: currentTurnToolSources(duplicateEntries, duplicateSourcesById),
+    toProviderMessages: (messages) => convertToLlm(messages),
+    ensureSources: async () => undefined,
+  });
+  checks.currentTurnDuplicateIdsBlocked = duplicateAuthorization.kind === "block"
+    && duplicateAuthorization.fault.kind === "tool-protocol";
+
+  const modifiedSourceAuthorization = await optimizer.authorize({
+    generation: "validation-generation",
+    route: routeB,
+    projections: branchBProjections,
+    messages: currentMessages.map((message, index) => index === 2
+      ? { ...message, content: [{ type: "text", text: `modified:${"M".repeat(200_000)}` }] }
+      : message),
+    providerPayloadProfile,
+    toolSources: currentToolSources,
+    toProviderMessages: (messages) => convertToLlm(messages),
+    ensureSources: async () => undefined,
+  });
+  checks.currentTurnModifiedSourceBlocks = modifiedSourceAuthorization.kind === "block"
+    && modifiedSourceAuthorization.fault.kind === "source-barrier";
+
+  const failedBarrierAuthorization = await optimizer.authorize({
+    generation: "validation-generation",
+    route: routeB,
+    projections: branchBProjections,
+    messages: currentMessages,
+    providerPayloadProfile,
+    toolSources: currentToolSources,
+    toProviderMessages: (messages) => convertToLlm(messages),
+    ensureSources: async () => { throw new Error("Projected source barrier failed"); },
+  });
+  checks.currentTurnSourceBarrierBlocks = failedBarrierAuthorization.kind === "block"
+    && failedBarrierAuthorization.fault.kind === "source-barrier";
+
+  const opaqueAuthorizationWithinBudget = await optimizer.authorize({
+    generation: "validation-generation",
+    route: routeB,
+    projections: branchBProjections,
+    messages: [
+      { role: "user", content: "opaque current prompt" },
+      { role: "assistant", content: [{ type: "toolCall", id: "large-call", name: "large_tool", arguments: {} }] },
+      {
+        role: "toolResult",
+        toolCallId: "large-call",
+        toolName: "large_tool",
+        content: [{ type: "image", mimeType: "image/png", data: "I".repeat(30_000) }],
+        isError: false,
+      },
+    ],
+    providerPayloadProfile,
+    toolSources: currentToolSources,
+    toProviderMessages: (messages) => convertToLlm(messages),
+    ensureSources: async () => undefined,
+  });
+  checks.currentTurnOpaqueOverflowBlocks = opaqueAuthorizationWithinBudget.kind === "block"
+    && opaqueAuthorizationWithinBudget.fault.kind === "opaque-content-unrepresentable";
+  let unsupportedPayloadApiRejected = false;
+  try {
+    createProviderPayloadProfile({ ...payloadProfileInput, api: "changed-api" });
+  } catch {
+    unsupportedPayloadApiRejected = true;
+  }
+  checks.providerPayloadProfileIdentity = unsupportedPayloadApiRejected
+    && createProviderPayloadProfile(payloadProfileInput).identity === providerPayloadProfile.identity
+    && [
+    { ...payloadProfileInput, model: "changed" },
+    { ...payloadProfileInput, baseUrl: "http://127.0.0.1/changed" },
+    { ...payloadProfileInput, compat: { maxTokensField: "max_tokens" } },
+    { ...payloadProfileInput, systemPrompt: "changed system" },
+    { ...payloadProfileInput, tools: [...payloadProfileInput.tools, { name: "changed", description: "changed", parameters: {} }] },
+    ].every((changed) => createProviderPayloadProfile(changed).identity !== providerPayloadProfile.identity);
+  const wireProfileProof = {
+    systemPromptHash: providerPayloadProfile.systemPromptHash,
+    toolsHash: providerPayloadProfile.toolsHash,
+    maxOutputTokens: providerPayloadProfile.maxOutputTokens,
+  };
+  const wireProfilePayload = {
+    messages: [{ role: "system", content: payloadProfileInput.systemPrompt }],
+    tools: payloadProfileInput.tools.map((tool) => ({
+      type: "function",
+      function: { ...tool, strict: false },
+    })),
+    max_completion_tokens: payloadProfileInput.maxOutputTokens,
+  };
+  checks.providerPayloadWireProfileBound = openAICompletionsToolPayloadUpperBoundBytes(payloadProfileInput.tools)
+    === Buffer.byteLength(JSON.stringify(wireProfilePayload.tools), "utf8")
+    && openAICompletionsPayloadMatchesProfile(wireProfilePayload, wireProfileProof)
+    && !openAICompletionsPayloadMatchesProfile({
+      ...wireProfilePayload,
+      messages: [{ role: "system", content: `${payloadProfileInput.systemPrompt} changed` }],
+    }, wireProfileProof)
+    && !openAICompletionsPayloadMatchesProfile({
+      ...wireProfilePayload,
+      tools: [...wireProfilePayload.tools, { type: "function", function: { name: "changed", description: "changed", parameters: {}, strict: false } }],
+    }, wireProfileProof)
+    && !openAICompletionsPayloadMatchesProfile({
+      ...wireProfilePayload,
+      max_completion_tokens: payloadProfileInput.maxOutputTokens + 1,
+    }, wireProfileProof);
   const enhancedContent = adopted[0].content;
   const enhancedContentHash = createHash("sha256").update(JSON.stringify(enhancedContent)).digest("hex");
   checks.proofContentMutationRejected = payloadCarriesEnhancedContent(
@@ -1582,6 +2178,18 @@ try {
   ];
   checks.proofMessageSequenceBound = Boolean(sequenceProof)
     && openAICompletionsPayloadMatches({ model: "local", messages: sequencePayloadMessages }, sequenceNonce, sequenceProof)
+    && !openAICompletionsPayloadMatches(
+      {
+        model: "local",
+        messages: [
+          sequencePayloadMessages[0],
+          { role: "user", content: "injected prefix" },
+          ...sequencePayloadMessages.slice(1),
+        ],
+      },
+      sequenceNonce,
+      sequenceProof,
+    )
     && !openAICompletionsPayloadMatches(
       { model: "local", messages: [sequencePayloadMessages[0], sequencePayloadMessages[1], sequencePayloadMessages[3]] },
       sequenceNonce,
@@ -1827,6 +2435,7 @@ try {
     "DELETE /api/v1/sessions/<session>",
   ].every((entry) => protocol.has(entry)) && commitProtocolFailClosed;
   const piAdoption = await runPiAdoptionCase(openViking);
+  const piCurrentTurn = await runPiCurrentTurnCase(openViking);
   const authorizationBlock = await runAuthorizationBlockCase();
   checks.hookVerifiedAtExtension = piAdoption.hookVerifiedAndTransportAdopted;
   checks.spoofedMarkerCannotAuthorize = piAdoption.spoofedMarkerCannotAuthorize;
@@ -1837,6 +2446,13 @@ try {
   checks.inFlightContextWaitAdopted = piAdoption.inFlightContextWaitAdopted;
   checks.desiredConfigDoesNotDisableRuntime = piAdoption.desiredConfigDoesNotDisableRuntime;
   checks.providerPayloadCurrentTurn = piAdoption.currentTurnOnly;
+  checks.piCurrentTurnRaw = piCurrentTurn.raw;
+  checks.piCurrentTurnProjected = piCurrentTurn.projected;
+  checks.piCurrentTurnProtocolComplete = piCurrentTurn.protocolComplete;
+  checks.piCurrentTurnSourcesRecoverable = piCurrentTurn.sourcesRecoverable;
+  checks.piCurrentTurnTransportAdopted = piCurrentTurn.transportAdopted;
+  checks.piProviderPayloadProfileMutationBlocked = piCurrentTurn.profileMutationBlocked;
+  checks.piModifiedCurrentTurnSourceBlocked = piCurrentTurn.sourceMutationBlocked;
   checks.localProviderOnly = piAdoption.providerRequests > 5 && openViking.state.providerRequests === 0;
   checks.treeLifecycle = piAdoption.lifecycle.treeRoundTrip
     && piAdoption.lifecycle.treeSummaryChoices
@@ -1887,6 +2503,7 @@ try {
       piAdoption.observations.filter((event) => event.type === "before_provider_request" && event.hookOutcome === outcome).length,
     ])),
     transport: piAdoption.transportPartitions,
+    currentTurnBudget: piCurrentTurn,
     authorizationBlock,
     lifecycle: piAdoption.lifecycle,
   };

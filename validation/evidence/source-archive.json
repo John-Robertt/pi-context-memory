@@ -2,16 +2,16 @@
   "schemaVersion": 2,
   "generatedBy": "scripts/validate-source-archive.mjs",
   "scope": "local",
-  "runId": "source-archive-2026-08-15T16-15-03-537Z",
-  "recordedAt": "2026-08-15T16:15:04.381Z",
+  "runId": "source-archive-2026-08-15T17-30-28-399Z",
+  "recordedAt": "2026-08-15T17:30:29.256Z",
   "piVersion": "0.84.2",
   "nodeVersion": "24.15.0",
   "implementation": {
-    "sourceManifestSha256": "249bac39537c882e2a3f2d4480108741ed36cc47bec526d5ac4013df937da355",
+    "sourceManifestSha256": "aa30aab3ee1cb3a08741184b31351d59147039b4d6345ed459719a100326eb5c",
     "files": [
       {
         "path": ".pi/extensions/pi-context-memory/index.ts",
-        "sha256": "095151fe50af068ac1c086f37ef6bfe68b5b78cf8170271be8e52dad0937cc88"
+        "sha256": "6c4b6c4a64e7a2b2e354e23882f7759b697c3abfd656503d293c3bff86de7c82"
       },
       {
         "path": ".pi/extensions/pi-context-memory/long-term-memory.ts",
@@ -27,11 +27,11 @@
       },
       {
         "path": ".pi/extensions/pi-context-memory/pi-session-protocol.ts",
-        "sha256": "56dbacf9a4974c46e7c65b56dc7d0a340e079136bf9459cce7271e6faf5db7c5"
+        "sha256": "9cf2c0716b50870928ba5290c52dd8b426b01da8de86f833e68f327603e2401e"
       },
       {
         "path": ".pi/extensions/pi-context-memory/provider-payload-proof.ts",
-        "sha256": "af7d12bdf21cc988fd59b2670281b4ea486a454960f99e0a51b430a74da2396b"
+        "sha256": "254a012c081d193f8c8296afdeeac723fd0d7324449c4597e0cd26ec1b12fa01"
       },
       {
         "path": ".pi/extensions/pi-context-memory/recall-and-provenance.ts",
@@ -39,7 +39,7 @@
       },
       {
         "path": ".pi/extensions/pi-context-memory/session-memory-coordination.ts",
-        "sha256": "a9e0e4f67d3839f5a955f07d867f2a963e3156766c266dfb866372a52b70e1d6"
+        "sha256": "0d7d550a31834832a185c3de5df419c62aa5988d76cf4954da7222ff3b0fce68"
       },
       {
         "path": ".pi/extensions/pi-context-memory/session-working-memory.ts",
@@ -47,7 +47,7 @@
       },
       {
         "path": ".pi/extensions/pi-context-memory/working-context-optimization.ts",
-        "sha256": "cef566e580e81c92ac3af3ece3d08cda84d4e91798051be17ae9248c0543ef6e"
+        "sha256": "963a5fd37c1e21f91b3afeecbad44e32a1665b6e6f22e60573d5743ca4c8b668"
       },
       {
         "path": "config/openviking-adapter-contract.json",
@@ -71,7 +71,7 @@
       },
       {
         "path": "scripts/validation-evidence.mjs",
-        "sha256": "fa21427c80c256a18f8c3438396b1be7e7ee8f800f25875fffdc8718a99e3ffb"
+        "sha256": "c5dd77c7ab4b42f1c426eb48bd44af1d643ef991734a6c9b0686afe93a2b0145"
       },
       {
         "path": "scripts/validation-suite.mjs",
@@ -97,7 +97,7 @@
         "sha256": "2f34c5cec5f73f972887aaeb0ad7decf734500911f7ea0412061d33deb3d139b"
       }
     ],
-    "gitCommit": "60fce6465b6450f4bc132468d64d2260b434452b",
+    "gitCommit": "b15c9905e23a20ddf608e644433afbdddde65600",
     "workingTreeDirty": true
   },
   "passed": true,

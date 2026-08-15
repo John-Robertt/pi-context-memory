@@ -33,8 +33,10 @@ import {
   type AssemblyProof,
   type ContextAuthorization,
   type ContextFault,
+  createProviderPayloadProfile,
   DEFAULT_IN_FLIGHT_READY_WAIT_MS,
   payloadCarriesEnhancedContent,
+  type ProviderPayloadProfile,
   WorkingContextOptimizer,
 } from "./working-context-optimization.ts";
 import {
@@ -54,10 +56,12 @@ import { DEFAULT_OPENVIKING_REQUEST_TIMEOUT_MS } from "./openviking-protocol.ts"
 import {
   createOpenAICompletionsPayloadProof,
   openAICompletionsPayloadMatches,
+  openAICompletionsPayloadMatchesProfile,
   type ProviderPayloadProof,
 } from "./provider-payload-proof.ts";
 import {
   entriesBeforeCurrentPrompt,
+  currentTurnToolSources,
   isMessageSource,
   isOpaqueProviderSegment,
   sanitizeFullOutputLocators,
@@ -336,6 +340,38 @@ function formatMemoryModelState(
 
 
 export default function piContextMemoryProbe(pi: ExtensionAPI): void {
+  function providerPayloadProfile(ctx: ExtensionContext): ProviderPayloadProfile {
+    const model = ctx.model;
+    if (!model) throw new Error("Task Provider model is unavailable");
+    const toolsByName = new Map(pi.getAllTools().map((tool) => [tool.name, tool]));
+    const tools = pi.getActiveTools().map((name) => {
+      const tool = toolsByName.get(name);
+      if (!tool) throw new Error(`Active Pi tool is unavailable: ${name}`);
+      return { name: tool.name, description: tool.description, parameters: tool.parameters };
+    });
+    return createProviderPayloadProfile({
+      provider: model.provider,
+      model: model.id,
+      api: model.api,
+      baseUrl: model.baseUrl,
+      compat: model.compat ?? null,
+      contextWindowTokens: model.contextWindow,
+      maxOutputTokens: model.maxTokens,
+      systemPrompt: ctx.getSystemPrompt(),
+      tools,
+    });
+  }
+
+  function providerPayloadProfileFault(error: unknown): ContextFault {
+    const detail = error instanceof Error ? error.message : String(error);
+    return {
+      kind: /no verified provider payload adapter/iu.test(detail)
+        ? "opaque-content-unrepresentable"
+        : /budget|context window|maximum output/iu.test(detail) ? "budget" : "service",
+      detail,
+    };
+  }
+
   let openVikingUrl: string | undefined;
   let openVikingEndpointError: string | undefined;
   try {
@@ -1089,11 +1125,22 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
             };
           }
         }
+        let payloadProfile: ProviderPayloadProfile | undefined;
+        if (!currentFault) {
+          try {
+            payloadProfile = providerPayloadProfile(ctx);
+          } catch (error) {
+            currentFault = providerPayloadProfileFault(error);
+          }
+        }
         if (currentFault) {
           authorization = { kind: "block", fault: currentFault };
         } else {
           const historicalSnapshot = snapshotBeforeCurrentPrompt(snapshot);
           const route = activeCoordinator.identifyCurrentRoute(historicalSnapshot);
+          const messageSourcesByEntryId = new Map(currentProjection.projections
+            .filter(isMessageSource)
+            .map((projection) => [projection.id, projection]));
           authorization = await workingContextOptimizer.authorize({
             generation: workingContextGeneration,
             route,
@@ -1102,6 +1149,10 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
               event.messages as unknown[],
               currentProjection.fullOutputCandidates,
             ),
+            providerPayloadProfile: payloadProfile!,
+            toolSources: currentTurnToolSources(snapshot.entries, messageSourcesByEntryId),
+            toProviderMessages: (messages) => convertToLlm(messages as never[]) as unknown[],
+            ensureSources: (entryIds) => activeCoordinator.ensureCurrentSourcesRecoverable(snapshot, entryIds),
             signal: ctx.signal,
           });
         }
@@ -1176,6 +1227,9 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
       routeFingerprint: authorization.proof.routeFingerprint,
       leafId: authorization.proof.leafId,
       enhancedContentHash: authorization.proof.enhancedContentHash,
+      providerPayloadProfileId: authorization.proof.providerPayloadProfileId,
+      currentTurnKey: authorization.proof.currentTurnKey,
+      currentTurn: authorization.metrics,
       messagesHash: requestProof.payload.messagesHash,
       messageCount: requestProof.payload.messageCount,
       payloadProofAdapter: requestProof.payload.adapterId,
@@ -1197,6 +1251,15 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
     const payloadHasEnhancedContext = payloadUsesEnhancedContext(event.payload);
     const proof = pendingAssemblyProof;
     pendingAssemblyProof = undefined;
+    let currentProviderPayloadProfile: ProviderPayloadProfile | undefined;
+    let currentProviderPayloadProfileId: string | undefined;
+    let providerPayloadProfileError: string | undefined;
+    try {
+      currentProviderPayloadProfile = providerPayloadProfile(ctx);
+      currentProviderPayloadProfileId = currentProviderPayloadProfile.identity;
+    } catch (error) {
+      providerPayloadProfileError = error instanceof Error ? error.message : String(error);
+    }
 
     // 只核对本 handler 执行时实际可见的 payload；最终采用由职责外观测分类。
     let hookOutcome: "verified" | "rejected" | "no-constructed-output";
@@ -1225,6 +1288,18 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
       || ctx.model.api !== proof.payload.api) {
       hookOutcome = "rejected";
       rejectionReason = "task Provider, model, or API changed after the context decision";
+    } else if (currentProviderPayloadProfileId !== proof.assembly.providerPayloadProfileId) {
+      hookOutcome = "rejected";
+      rejectionReason = providerPayloadProfileError
+        ? `Provider payload profile is unavailable: ${providerPayloadProfileError}`
+        : "Provider payload profile changed after the context decision";
+    } else if (!openAICompletionsPayloadMatchesProfile(event.payload, {
+      systemPromptHash: currentProviderPayloadProfile!.systemPromptHash,
+      toolsHash: currentProviderPayloadProfile!.toolsHash,
+      maxOutputTokens: currentProviderPayloadProfile!.maxOutputTokens,
+    })) {
+      hookOutcome = "rejected";
+      rejectionReason = "handler payload does not match the constructed Provider payload profile";
     } else if (!openAICompletionsPayloadMatches(event.payload, proof.assembly.nonce, proof.payload)) {
       hookOutcome = "rejected";
       rejectionReason = "handler payload changed the constructed Provider message sequence";
@@ -1254,6 +1329,9 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
       hookOutcome,
       rejectionReason,
       nonce: proof?.assembly.nonce,
+      providerPayloadProfileId: proof?.assembly.providerPayloadProfileId,
+      currentProviderPayloadProfileId,
+      currentTurnKey: proof?.assembly.currentTurnKey,
       contextAuthorization: contextAuthorizationOutcome,
       payloadHasEnhancedContext,
       ...payloadSummary(event.payload),

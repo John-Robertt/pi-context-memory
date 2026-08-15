@@ -80,11 +80,11 @@ CurrentTurn
 
 保留策略只依据来源顺序、大小、预算和协议状态，不另行推测工具内容价值：
 
-1. 单批次超过 raw 上限时先形成 projected；
-2. 计算完整 CurrentTurn 与预留项后的总量；
-3. 超预算时按最旧批次优先，把仍为 raw 的完整批次逐个替换为 projected；
-4. 每次替换后重新计算，直到满足预算或没有可替换批次；
-5. 全部批次使用最小合法投影后仍超限时返回 `context-budget`。
+1. 计算完整 CurrentTurn、最小合法增强历史与预留项后的总量；
+2. 预算内的完整批次保持 raw；
+3. 超预算时按最旧批次优先，把仍为 raw 且投影能够缩小输入的完整批次逐个替换为 projected；
+4. 每次替换后重新计算，并把剩余空间分配给有界增强历史；
+5. 全部可投影批次使用最小合法投影后仍超限时返回 `context-budget`。
 
 近期批次预算允许时保持 raw：复制 Pi Provider 基线，只规范化已验证 locator。assistant thinking、其它扩展公开 custom content 和未来版本新增的 Pi 可见 opaque block 都按基线保留；projected 只能替换本扩展具有结构化表示的完整单元。
 
@@ -106,6 +106,8 @@ CurrentTurn
 
 projected ToolBatch 只能引用长时记忆已确认可恢复的来源；任何含 FullOutputCandidate 的 raw ToolBatch、bash 或其它 CurrentTurn 内容也必须先取得稳定 fullOutputRef，因为 Pi 本机路径已从任务内容移除。工作上下文构造不自行写文件或调用 OpenViking；它向 Session 记忆协调返回所需来源集合，由协调模块完成屏障后重新构造或继续。普通、未截断且预算内的 raw 内容不要求来源屏障。
 
+来源绑定同时核对全回合唯一的 call/result ID，以及 event message 的规范化 taskContent、完成状态和 Pi 权威 `MessageSource` 哈希。前置 context handler 改变正文或状态后，批次可以在预算内 raw 保留，但不能引用修改前的来源形成 projected；必须投影时返回来源错误。
+
 ## 6. 预算与选择顺序
 
 预算只由 `ProviderPayloadProfile` 与本次规范化输入计算：
@@ -115,7 +117,7 @@ inputBudget = contextWindow - outputReserve - transportMargin
 enhancedBudget = inputBudget - systemPromptCost - activeToolSchemaCost - providerFramingCost
 ```
 
-`outputReserve` 取受支持 Provider API 实际请求的输出上限；其它扣减使用 profile 的版本化保守估算。每项消息大小取 adapter 估算与 UTF-8 安全上界中的较大值。profile 无法限界、最终输出设置扩大、system/tools 变化或结果超过预算时返回失败。Pi footer 百分比和记忆模型上下文窗口不参与授权计算。
+`outputReserve` 取受支持 Provider API 实际请求的输出上限；其它扣减使用 profile 的版本化保守估算。当前受支持 adapter 先生成 Provider message 序列，再以规范化 JSON 的 UTF-8 字节数两倍作为消息上界；tool schema 按完整 API wrapper 的 UTF-8 字节上界计算，system prompt 另按 UTF-8 字节和固定 framing/transport 余量扣减。handler 对实际 wire system、tools 和输出字段重建同一 profile。profile 无法限界、adapter/base URL/compat 变化、最终输出设置扩大、system/tools 变化或结果超过预算时返回失败。Pi footer 百分比和记忆模型上下文窗口不参与授权计算。
 
 模块同时从会改变 checkpoint retention/output 边界的预算事实生成 `retentionBudgetIdentity`：MemoryRuntimeProfile.maxInput、预算版本、任务模型 context window/output reserve、system/tool 规范化成本、Provider framing/transport margin 和 estimator 版本。它不包含本次 CurrentTurn、system/tool 正文哈希或其它与历史空间无关字段；相同 identity 表示可共享同一检查点生成边界，不表示最终请求证明相同。
 
@@ -143,7 +145,7 @@ enhancedBudget = inputBudget - systemPromptCost - activeToolSchemaCost - provide
 - 请求 nonce；
 - 来源集合；
 - 预算版本；
-- ProviderPayloadProfile 身份（任务 Provider、模型、API 与适配版本）。
+- ProviderPayloadProfile 身份（任务 Provider、模型、API、base URL/compat 与适配版本）。
 
 证明随隐藏增强消息进入 Provider 序列化结果，并供 Pi 集成在自己的 `before_provider_request` handler 时点核验。该证明不声明控制后续扩展或 Provider transport；用户文本不能伪造。
 

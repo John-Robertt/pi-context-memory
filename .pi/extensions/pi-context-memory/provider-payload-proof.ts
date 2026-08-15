@@ -11,6 +11,12 @@ export interface ProviderPayloadProof {
   messageCount: number;
 }
 
+export interface OpenAICompletionsPayloadProfileProof {
+  systemPromptHash: string;
+  toolsHash: string;
+  maxOutputTokens: number;
+}
+
 interface CanonicalMessage {
   role: "user" | "assistant" | "toolResult";
   content: unknown;
@@ -28,6 +34,29 @@ function stable(value: unknown): unknown {
 
 function hash(value: unknown): string {
   return createHash("sha256").update(JSON.stringify(stable(value))).digest("hex");
+}
+
+/** 支持 adapter 的完整 tool wrapper 字节上界；strict=false 比不发送 strict 更大。 */
+export function openAICompletionsToolPayloadUpperBoundBytes(tools: unknown): number {
+  if (!Array.isArray(tools)) throw new Error("OpenAI completions tools must be an array");
+  const payloadTools = tools.map((tool) => {
+    if (!tool || typeof tool !== "object") throw new Error("OpenAI completions tool is malformed");
+    const value = tool as Record<string, unknown>;
+    if (typeof value.name !== "string"
+      || typeof value.description !== "string"
+      || !value.parameters
+      || typeof value.parameters !== "object") throw new Error("OpenAI completions tool is malformed");
+    return {
+      type: "function",
+      function: {
+        name: value.name,
+        description: value.description,
+        parameters: value.parameters,
+        strict: false,
+      },
+    };
+  });
+  return Buffer.byteLength(JSON.stringify(stable(payloadTools)), "utf8");
 }
 
 function textContent(text: string): unknown[] {
@@ -173,10 +202,60 @@ export function openAICompletionsPayloadMatches(
   if (value.model !== proof.model) return false;
   const messages = value.messages;
   if (!Array.isArray(messages)) return false;
+  if (messages.some((message) => message
+    && typeof message === "object"
+    && (message as Record<string, unknown>).role === "developer")) return false;
   const start = messages.findIndex((message) => JSON.stringify(message).includes(nonce));
   if (start < 0) return false;
+  const prefix = messages.slice(0, start);
+  if (prefix.length !== 1
+    || !prefix[0]
+    || typeof prefix[0] !== "object"
+    || (prefix[0] as Record<string, unknown>).role !== "system") return false;
   const constructed = messages.slice(start);
   if (constructed.length !== proof.messageCount) return false;
   const canonical = constructed.map(canonicalOpenAIMessage);
   return !canonical.some((message) => message === undefined) && hash(canonical) === proof.messagesHash;
+}
+
+/** 核对本 handler 实际可见的 OpenAI payload 中所有 ProviderPayloadProfile 预算事实。 */
+export function openAICompletionsPayloadMatchesProfile(
+  payload: unknown,
+  proof: OpenAICompletionsPayloadProfileProof,
+): boolean {
+  if (!payload || typeof payload !== "object") return false;
+  const value = payload as Record<string, unknown>;
+  const messages = value.messages;
+  if (!Array.isArray(messages)) return false;
+  const systemMessages = messages.filter((message) => message
+    && typeof message === "object"
+    && (message as Record<string, unknown>).role === "system");
+  if (systemMessages.length !== 1) return false;
+  const systemMessage = systemMessages[0] as Record<string, unknown>;
+  if (!hasOnlyKeys(systemMessage, ["role", "content"]) || typeof systemMessage.content !== "string") return false;
+
+  const rawTools = value.tools === undefined ? [] : value.tools;
+  if (!Array.isArray(rawTools)) return false;
+  const tools = rawTools.map((tool) => {
+    if (!tool || typeof tool !== "object") return undefined;
+    const outer = tool as Record<string, unknown>;
+    if (!hasOnlyKeys(outer, ["type", "function"]) || outer.type !== "function") return undefined;
+    const fn = outer.function;
+    if (!fn || typeof fn !== "object") return undefined;
+    const definition = fn as Record<string, unknown>;
+    if (!hasOnlyKeys(definition, ["name", "description", "parameters", "strict"])
+      || typeof definition.name !== "string"
+      || typeof definition.description !== "string"
+      || !definition.parameters
+      || typeof definition.parameters !== "object"
+      || (definition.strict !== undefined && definition.strict !== false)) return undefined;
+    return { name: definition.name, description: definition.description, parameters: definition.parameters };
+  });
+  if (tools.some((tool) => tool === undefined)) return false;
+
+  const maxOutput = value.max_completion_tokens ?? value.max_tokens;
+  if (value.max_completion_tokens !== undefined && value.max_tokens !== undefined) return false;
+  return maxOutput === proof.maxOutputTokens
+    && hash(systemMessage.content) === proof.systemPromptHash
+    && hash(tools) === proof.toolsHash;
 }

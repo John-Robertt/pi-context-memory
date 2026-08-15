@@ -36,6 +36,8 @@ Pi 集成先建立 Provider 基线，再按结构/元数据/所有者/协议关�
 - OpenViking Session append、commit、task polling 和 context assembly；
 - 当前 prompt 之前历史的有界增强消息；
 - Provider 基线与记忆投影双边界：`pi-session-protocol.ts` 复用 Pi 的 `buildContextEntries`/`sessionEntryToContextMessages`/`convertToLlm` 建立基线，并从结构证据产生 `MessageSource`、`ControlBoundary` 与 `OpaqueProviderSegment`；
+- 当前任务 Provider、模型、API、base URL/compat、payload adapter、context window、输出上限、system prompt 和 active tools 形成版本化 `ProviderPayloadProfile`；同一 profile 同时约束增强历史与 CurrentTurn，进入授权证明，并在 hook 对实际 wire system/tools/output 字段重新核对；
+- 当前 user prompt 后的 assistant/tool messages 按 Provider 基线解析为不可拆 `ToolBatch`；call/result ID 在全回合唯一，event taskContent/完成状态与 Pi 权威来源一致时才可 projected；预算内批次保持 raw，超预算时按最旧批次优先形成保持调用/结果协议外壳的确定性 projected 批次，opaque、协议不完整或来源不匹配内容 fail-closed；
 - 来源归档、召回索引与 OpenViking append 全部以 `MessageSource` 的 taskContent、完成状态与两个哈希为准；`fullOutputRef` 在 blob 完整写入后原子发布进同一来源记录，每次请求来源屏障都重验 blob 大小与 SHA-256；权威 entry 明示 locator 的请求在 allow 前完成该来源屏障并精确脱敏，opaque 单元无法发布稳定引用时 fail-closed；
 - 归档格式身份不匹配时丢弃该 session 归档目录并从当前 branch 重建，不存在读取其它格式的路径。
 
@@ -48,16 +50,15 @@ Pi 集成先建立 Provider 基线，再按结构/元数据/所有者/协议关�
 - [`validation/evidence/source-archive.json`](../validation/evidence/source-archive.json)：Provider 基线、完整 ToolBatch、孤立/重复/不完整/opaque 与 summary 边界、来源隔离、branch 过滤、toolResult/Bash locator 脱敏、完整输出原子发布与有界恢复、复制超时单一错误出口和归档格式重建；
 - [`validation/evidence/source-recall.json`](../validation/evidence/source-recall.json)：来源索引、当前路线过滤、taskContent 展开和权威核对；
 - [`validation/evidence/memory-model-runtime.json`](../validation/evidence/memory-model-runtime.json)：配置转换、进程所有权、三态词汇、配置与运行实例分离和重启行为；
-- [`validation/evidence/context-enhancement.json`](../validation/evidence/context-enhancement.json)：`allow | block`、opaque 历史阻断、block 后扩展停止、完整增强内容与有序 Provider 消息 proof 变更拒绝、hook outcome 分账、记录型 Provider transport 观测、backend/archive 故障同代际锁存与新代际恢复、overflow 重试及 Pi tree/session/compaction 生命周期。
+- [`validation/evidence/context-enhancement.json`](../validation/evidence/context-enhancement.json)：`allow | block`、opaque 历史阻断、block 后扩展停止、完整增强内容与有序 Provider 消息 proof 变更拒绝、wire ProviderPayloadProfile 变更拒绝、hook outcome 分账、记录型 Provider transport 观测、backend/archive 故障同代际锁存与新代际恢复、overflow 重试及 Pi tree/session/compaction 生命周期；隔离的本地实际 Pi 回合覆盖 raw 与 projected 多工具协议、200,000 字节结果、错误、fullOutputPath、来源恢复、前置 handler 内容/profile 改写阻断和最终 Provider 输入有界。
 
 [`validation/evidence/context-quality.json`](../validation/evidence/context-quality.json) 仍为 stale：其预置 session、禁用工具、单 prompt、单次固定答案 fixture 不符合真实复杂长任务目标，不构成当前产品结论。
 
 现有 evidence 尚未证明：
 
 - 声明支持的实际记忆 Provider/模型/API 组合完成能力探针、Working Memory 和请求授权纵向链路；
-- current turn 多工具与大输出在 ProviderPayloadProfile 预算内保持协议完整、来源可恢复且输入有界；
 - 慢速后台 refresh 与任务并行，只有必要 refresh 形成等待；RefreshTarget、MemoryCheckpoint 与 VerifiedActiveDelta 在预算、branch 和迟到结果下保持隔离；
-- ProviderPayloadProfile 预算与 `(增强)` footer 语义成立；
+- `(增强)` footer 语义成立；任务 ProviderPayloadProfile 的真实 API 适配仍需对应实际 Provider 证据；
 - compaction/tree handler 返回、实际宿主结果和兼容性结论由真实 Pi 组合分别证明，已有 summary 文本不污染本扩展记忆；
 - 三类真实复杂长任务分别达到 suite policy 的 `eligibleTarget` 且全部完成；
 - 完整 API 成本优势。
@@ -66,29 +67,28 @@ Pi 集成先建立 Provider 基线，再按结构/元数据/所有者/协议关�
 
 ## 5. 当前主导约束
 
-当前主导约束是 **current turn 尚未进入统一 Provider 预算**。
+当前主导约束是 **运行时只凭启动器 service readiness 建立工作上下文代际，尚未证明实际记忆 Provider/模型具备生产所需能力**。
 
-请求授权、hook 时点和 transport 观测已经分开并通过本地实际 Pi 生命周期验证；当前限制转移到 `buildEnhancedContext`：它把当前 prompt 后的 assistant/tool messages 原样拼入增强输入。以一个 200,000 字节工具结果实际调用该函数，输入为 200,260 字节，构造结果为 200,576 字节，证明现实现不会治理单回合大输出。该缺口直接限制工具输出压力任务，且比 checkpoint、footer、summary 或成本实验更早决定复杂长任务能否继续。
+CurrentTurn 已进入统一 ProviderPayloadProfile 预算，并由本地实际 Pi 回合证明 raw/projected 多工具协议、200,000 字节结果、来源恢复和 transport 采用。当前 `runtimeWorkingContextGeneration` 仍只检查启动器 `ready`、child PID 与 active Provider/model，再以 launch ID 和 PID 建立代际；这些事实不能区分“OpenViking 服务可连接”与“配置的记忆模型能够完成受约束的 Working Memory、任务轮询和来源核验 assembly”。受控 runtime evidence 也只证明配置和进程边界，不能把该组合纳入 actual 支持范围。
 
-当前行动必须先让 ProviderPayloadProfile、ToolBatch 原子性、raw/projected 选择和来源屏障形成最小纵向闭环；成本归属仍不是当前执行入口。
+这个缺口位于所有 checkpoint、慢 refresh、复杂长任务和成本结论之前：没有绑定进程、配置、MemoryRuntimeProfile 与真实响应的能力证明，请求授权可能建立在不可用或不符合 profile 的记忆运行时上。当前行动必须先建立实际能力探针和有界租约；成本归属仍不是当前执行入口。
 
 ## 6. 当前交付边界
 
-**目标**：让当前 prompt 后的 assistant/tool 消息与跨轮增强历史共同服从一个 ProviderPayloadProfile，在保持 Pi Provider 协议、完整 ToolBatch 和可恢复来源的前提下形成有界请求。
+**目标**：只有当前受管 OpenViking 子进程上的实际记忆 Provider/模型完成生产同协议能力探针后，才发布可供工作上下文使用的运行代际。
 
 **需要完成**：
 
-- Pi 集成从当前任务模型/API、context window、输出设置、system prompt、active tools、framing 和 transport margin 发布版本化 ProviderPayloadProfile；
-- 工作上下文优化把 assistant tool calls 与全部对应结果组织为不可拆 ToolBatch，只依据结构、顺序、大小、状态和来源选择 raw 或 projected；
-- 预算内且无待发布完整输出的批次保持 Pi Provider 基线；需要 projected 的批次保留调用/结果配对、状态、固定 head/tail、哈希和稳定来源入口；
-- `fullOutputPath` 在 fullOutputRef 原子发布前不能获得 allow；含 image/unsupported public block 的单元原样 opaque，预算无法容纳时返回 `opaque-content-unrepresentable`；
-- 授权证明绑定 ProviderPayloadProfile、CurrentTurnKey、最终有序消息和内容哈希，hook 只核对本扩展时点，transport 继续独立观测；
-- runner 实际驱动 Pi 多工具、快速返回、大输出、错误、截断/fullOutputPath、raw/projected 与来源屏障失败分支，并证明输入有界、协议完整和 block 后停止。
+- 为 suite 已选定的精确记忆 Provider、模型和 API 定义内部版本化 `MemoryRuntimeProfile`，把每个运行字段映射到最终请求或客户端策略，不允许用户任意透传或备用 Provider/model；
+- 启动按“预检—受管进程 ready—隔离 Session 能力探针—发布能力证明”完成；探针使用生产 Session append/commit/task polling/context assembly 契约并核对来源；
+- 能力证明绑定 launch ID、child PID、配置指纹、Provider、模型、API、MemoryRuntimeProfile、adapter、探针版本、真实响应/usage 和 `validUntil`；只有当前有效证明才能形成工作上下文代际；
+- accepted 业务 refresh 完整成功可以续租；进入 renewal lead 后共享后台续租，过期或失败准确锁存故障，不以 health/model 对象存在代替能力；
+- runner 在真实受管 OpenViking 上证明 profile 字段实际生效、没有 fallback、成功/失败/过期/显式新代际恢复边界，并保存 actual artifact。
 
-**完成条件**：本地实际 Pi + 记录型 Provider 的 current-turn 控制流指标全部通过；原始和 projected 批次均实际发生，投影省略内容可从当前 session 来源恢复，超预算或来源未就绪只产生本扩展 block，不引入其它请求路径。
+**完成条件**：当前 suite 记忆坐标在真实受管 OpenViking 上完成能力探针并发布可追溯租约；工作上下文代际只接受匹配且未过期的证明，配置、进程、profile、Provider/model/API 或探针版本变化均使旧证明失效；失败不 fallback，显式新代际可恢复。
 
-MemoryCheckpoint/VerifiedActiveDelta、慢 refresh、footer、summary 宿主兼容性、真实复杂任务和成本实验不进入本次交付；current turn 闭环成立后重新调查下一主导约束。
+MemoryCheckpoint/VerifiedActiveDelta 的增量策略、慢 refresh 并行、footer、summary 宿主兼容性、真实复杂任务和成本实验不进入本次交付；能力门成立后重新调查下一主导约束。
 
 ## 7. 唯一下一执行入口
 
-1. 以 `ProviderPayloadProfile` 和不可拆 `ToolBatch` 为最小数据边界，实现 current turn 的 raw/projected 预算治理与来源屏障；先让一个包含并行调用、200,000 字节结果、错误结果和 fullOutputPath 的真实 Pi 回合在记录型 Provider 中保持有界且协议完整，再覆盖 opaque 超预算与来源失败的 block。只完成本节 current-turn 纵向闭环，不并行推进 checkpoint/refresh、footer、summary、真实复杂任务或成本实验。
+1. 以 [`system/memory-model-runtime.md`](system/memory-model-runtime.md) 的 `MemoryRuntimeProfile` 和能力证明为唯一数据边界，先让 suite 当前记忆 Provider/模型/API 在真实受管 OpenViking 隔离 Session 中完成 append、commit、task polling、来源核验 assembly 和租约发布；再让扩展只凭匹配的当前能力证明建立工作上下文代际，并覆盖失败、过期、配置/进程变化与显式新代际恢复。只完成实际能力门纵向闭环，不并行推进 checkpoint/refresh、footer、summary、复杂任务或成本实验。

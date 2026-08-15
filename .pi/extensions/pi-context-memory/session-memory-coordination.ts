@@ -354,6 +354,27 @@ export class SessionMemoryCoordinator {
     return { archivedFullOutputEntryIds };
   }
 
+  /**
+   * 为即将进入 Provider 的投影建立来源屏障。只核对调用方实际省略的 entry，
+   * raw ToolBatch 不需要等待来源归档。
+   */
+  async ensureCurrentSourcesRecoverable(
+    snapshot: SessionRouteSnapshot,
+    entryIds: readonly string[],
+  ): Promise<void> {
+    const required = [...new Set(entryIds)];
+    if (required.length === 0) return;
+    await this.archiveCurrentRoute(snapshot);
+    const fullOutputEntryIds = new Set(this.projectCurrentRoute(snapshot).fullOutputCandidates.map((item) => item.entryId));
+    for (const entryId of required) {
+      const resolved = await this.resolveCurrentSource(snapshot, entryId);
+      if (!resolved) throw new Error(`Projected source is unavailable for entry ${entryId}`);
+      if (fullOutputEntryIds.has(entryId) && !resolved.record.fullOutputRef) {
+        throw new Error(`Projected full output is unavailable for entry ${entryId}`);
+      }
+    }
+  }
+
   /** 只返回仍属于当前路线、且与当前 Pi entry 重新规范化结果精确一致的来源。 */
   async listCurrentSources(snapshot: SessionRouteSnapshot): Promise<SourceRecord[]> {
     const current = this.currentMessageSources(snapshot);

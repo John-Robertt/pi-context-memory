@@ -74,6 +74,13 @@ export interface PiProtocolProjection {
   fullOutputCandidates: readonly FullOutputCandidate[];
 }
 
+/** 当前回合 ToolBatch 与可恢复 Pi 来源的绑定；投影前仍须核对公开正文与完成状态。 */
+export interface CurrentTurnToolSources {
+  callSources: Readonly<Record<string, MessageSource>>;
+  resultSources: Readonly<Record<string, MessageSource>>;
+  ambiguousToolIds: readonly string[];
+}
+
 const PROVIDER_ROLES = new Set<ProviderRole>(["user", "assistant", "toolResult"]);
 
 /** 可投影为任务内容的公开 block；thinking 是结构化私有内容，省略但不使整单元 opaque。 */
@@ -377,6 +384,18 @@ export function sameMessageSource(left: MessageSource, right: MessageSource): bo
     && JSON.stringify(left.completion ?? null) === JSON.stringify(right.completion ?? null);
 }
 
+/** event message 只有与 Pi 权威来源的公开任务内容及完成状态一致时才可被来源替代。 */
+export function messageMatchesSourceTask(message: unknown, source: MessageSource): boolean {
+  if (!message || typeof message !== "object") return false;
+  const providerMessage = message as ProviderMessage;
+  if (providerMessage.role !== source.role) return false;
+  const blocks = blocksOf(providerMessage);
+  if (!blocks) return false;
+  const taskContent = blocks.filter((block) => TASK_BLOCK_TYPES.has(block.type as string));
+  const completion = completionOf(providerMessage);
+  return stableHash({ taskContent, completion }) === source.taskContentHash;
+}
+
 export function entriesBeforeCurrentPrompt(entries: readonly SourceEntry[]): readonly SourceEntry[] {
   for (let index = entries.length - 1; index >= 0; index -= 1) {
     const entry = entries[index];
@@ -392,4 +411,58 @@ export function currentUserMessageIndex(messages: readonly unknown[]): number {
     if (message && typeof message === "object" && (message as Record<string, unknown>).role === "user") return index;
   }
   return -1;
+}
+
+/**
+ * 从最后一个用户 entry 起，只按 toolCall/toolResult 的公开结构建立来源绑定。
+ * 只有已形成 MessageSource 的 entry 才可进入投影；opaque 单元因而只能 raw 保留。
+ */
+export function currentTurnToolSources(
+  entries: readonly SourceEntry[],
+  sourcesByEntryId: ReadonlyMap<string, MessageSource>,
+): CurrentTurnToolSources {
+  let currentPromptIndex = -1;
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const entry = entries[index];
+    if (entry.type !== "message" || !entry.message || typeof entry.message !== "object") continue;
+    if ((entry.message as Record<string, unknown>).role === "user") {
+      currentPromptIndex = index;
+      break;
+    }
+  }
+  if (currentPromptIndex < 0) return { callSources: {}, resultSources: {}, ambiguousToolIds: [] };
+
+  const callSources: Record<string, MessageSource> = {};
+  const resultSources: Record<string, MessageSource> = {};
+  const ambiguousToolIds = new Set<string>();
+  const bind = (target: Record<string, MessageSource>, toolId: string, source: MessageSource) => {
+    if (target[toolId] || ambiguousToolIds.has(toolId)) {
+      delete target[toolId];
+      ambiguousToolIds.add(toolId);
+      return;
+    }
+    target[toolId] = source;
+  };
+  for (const entry of entries.slice(currentPromptIndex + 1)) {
+    const source = sourcesByEntryId.get(entry.id);
+    if (!source
+      || entry.type !== "message"
+      || !entry.message
+      || typeof entry.message !== "object") continue;
+    const message = entry.message as Record<string, unknown>;
+    if (message.role === "assistant" && Array.isArray(message.content)) {
+      for (const block of message.content) {
+        if (!block || typeof block !== "object") continue;
+        const value = block as Record<string, unknown>;
+        if (value.type === "toolCall" && typeof value.id === "string" && value.id.length > 0) {
+          bind(callSources, value.id, source);
+        }
+      }
+    } else if (message.role === "toolResult"
+      && typeof message.toolCallId === "string"
+      && message.toolCallId.length > 0) {
+      bind(resultSources, message.toolCallId, source);
+    }
+  }
+  return { callSources, resultSources, ambiguousToolIds: [...ambiguousToolIds].sort() };
 }

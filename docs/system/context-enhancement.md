@@ -91,7 +91,7 @@ Pi 集成先验证 context 时刻的完整 `SessionRouteSnapshot`，再以当前
 批次处理只有两种合法结果：
 
 - **raw**：保留整个批次的 Pi Provider 基线消息结构与顺序，只执行已知 locator 的精确规范化，不生成语义投影；
-- **projected**：移除整个协议批次，以一个隐藏增强投影表示其任务语义和来源。
+- **projected**：保留调用/结果的 Provider 协议外壳与顺序，用本地确定性投影替换批次 taskContent，并为每个被省略单元提供稳定来源入口。
 
 系统不保留孤立 tool call 或 tool result，也不在批次内部按字符截断协议消息。
 
