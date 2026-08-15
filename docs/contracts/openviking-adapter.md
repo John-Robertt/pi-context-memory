@@ -103,9 +103,9 @@ Working Memory overview 是派生文本，不以固定语言、标题、数量�
 
 用户 JSONC 是扩展拥有的稳定最小配置面，只包含当前需要选择的 Provider、模型、`api_key` 和必要连接字段。[`../../config/openviking-adapter-contract.json`](../../config/openviking-adapter-contract.json) 是配置桥唯一受审查的 Provider 字段、凭据规则、VLM schema 指纹和受控适配器类契约；它不是 OpenViking registry 或产品支持矩阵。扩展把精确 Provider/模型/API 映射到内置 `MemoryRuntimeProfile`，并只声明用户目标、profile 和实际纵向证据全部一致的支持项。
 
-`api_key` 普通字符串作为直接凭据，完整 `$NAME` 或 `${NAME}` 由 OpenViking 配置加载器从启动器环境展开。要求凭据的来源缺失字段或引用变量未设置时，在停止旧实例前失败；无需 API key 的来源可以使用其原生认证。
+`api_key` 普通字符串作为直接凭据；完整 `$NAME` 或 `${NAME}` 只在预检编译边界从 Launcher 环境解析。要求凭据的来源缺失字段或引用变量未设置时，在停止旧实例前失败。配置桥只生成固定 `${PCR_OPENVIKING_MEMORY_API_KEY}` 引用；实际值由 Launcher 保留在内存，并仅在 spawn 时赋给受管 OpenViking 子进程的同名内部变量。Launcher 不复制其它宿主环境；需要 ambient 变量的原生认证必须先增加独立受审查接口，不能从当前无 key 配置隐式获得。OpenViking 只负责按其配置加载契约展开固定引用，不解析用户配置语义。
 
-凭据不进入运行状态、诊断、日志、evidence 或 Pi session。Python 配置桥、TypeScript 用户配置校验和适配器 runner 都消费同一受审查契约；OpenViking VLM schema 指纹不匹配时停止配置适配。上游新增 Provider 不会自动进入契约或支持矩阵；已有契约项只有在其 schema、字段和行为探针仍一致时继续有效。
+实际凭据值只进入用户直接填写的配置、预检编译过程内存，以及受管 OpenViking 子进程的固定内部环境变量；使用环境引用时，生成配置和用户配置均不保存实际值。本系统不把记忆凭据注入任务 Pi；受管 OpenViking 不继承用户引用变量、ambient Provider key 或其它宿主环境，spawn 时只注入当前编译结果携带的内部值。凭据值不进入运行状态、诊断、日志、evidence 或 Pi session。Python 配置桥、TypeScript 用户配置校验和适配器 runner 都消费同一受审查契约；OpenViking VLM schema 指纹不匹配时停止配置适配。上游新增 Provider 不会自动进入契约或支持矩阵；已有契约项只有在其 schema、字段和行为探针仍一致时继续有效。
 
 `MemoryRuntimeProfile` 的字段与责任由 [`../system/memory-model-runtime.md`](../system/memory-model-runtime.md) 唯一定义；本契约负责把每个字段明确映射到 OpenViking 配置、最终记忆请求或客户端运行策略并证明其生效。运行配置不得依赖 OpenViking 隐式默认值，不配置 backup Provider/model，也不接受用户任意请求体透传。任一字段无法证明时，该组合保持 unsupported。
 

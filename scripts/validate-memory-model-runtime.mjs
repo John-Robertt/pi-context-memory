@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { createHash } from "node:crypto";
 import { createServer, request as httpRequest } from "node:http";
 import { spawn, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, symlinkSync, writeFileSync } from "node:fs";
@@ -7,9 +8,12 @@ import { fileURLToPath } from "node:url";
 
 import {
   atomicWriteJson,
+  COMPILED_OPENVIKING_CREDENTIAL,
   compileOpenVikingConfig,
   OPENVIKING_CONFIG_BRIDGE_TIMEOUT_MS,
   OPENVIKING_RUNTIME_SCHEMA_VERSION,
+  OPENVIKING_MEMORY_API_KEY_ENV,
+  OPENVIKING_MEMORY_API_KEY_REFERENCE,
   describeMemoryModelCapabilities,
   ensureMemoryModelConfig,
   memoryModelConfigContentFingerprint,
@@ -50,6 +54,13 @@ const VALIDATION_API_KEY_ENV = "MEMORY_MODEL_RUNTIME_API_KEY";
 const VALIDATION_API_KEY_REFERENCE = `$${VALIDATION_API_KEY_ENV}`;
 const VALIDATION_API_KEY_BRACED_REFERENCE = `\${${VALIDATION_API_KEY_ENV}}`;
 const VALIDATION_API_KEY = "validation-only-not-a-provider-key";
+const SECOND_VALIDATION_API_KEY_ENV = "MEMORY_MODEL_RUNTIME_SECOND_API_KEY";
+const SECOND_VALIDATION_API_KEY_REFERENCE = `$${SECOND_VALIDATION_API_KEY_ENV}`;
+const SECOND_VALIDATION_API_KEY = "second-validation-only-not-a-provider-key";
+const DIRECT_VALIDATION_API_KEY = "direct-validation-only-not-a-provider-key";
+const AMBIENT_OPENROUTER_SENTINEL = "ambient-openrouter-must-not-reach-child";
+const UNRELATED_PROVIDER_API_KEY_ENV = "ANTHROPIC_API_KEY";
+const UNRELATED_PROVIDER_SENTINEL = "unrelated-provider-must-not-reach-child";
 mkdirSync(artifactRoot, { recursive: true });
 
 function writeJson(path, value) {
@@ -141,20 +152,40 @@ function validationEnvironment(caseDir, baseConfigPath, fakeServer) {
     PCR_OPENVIKING_LAUNCHER_INFO: join(caseDir, "runtime", "launcher.json"),
     PCR_OPENVIKING_STATE: join(caseDir, "runtime", "state.json"),
     PCR_OPENVIKING_SERVER: fakeServer,
+    PCR_OPENVIKING_CHILD_ENV_REPORT: join(caseDir, "child-environment.json"),
     [VALIDATION_API_KEY_ENV]: VALIDATION_API_KEY,
+    [SECOND_VALIDATION_API_KEY_ENV]: SECOND_VALIDATION_API_KEY,
+    OPENROUTER_API_KEY: AMBIENT_OPENROUTER_SENTINEL,
+    [UNRELATED_PROVIDER_API_KEY_ENV]: UNRELATED_PROVIDER_SENTINEL,
     PCR_OPENVIKING_READINESS_TIMEOUT_MS: "1200",
     PCR_OPENVIKING_STOP_TIMEOUT_MS: "800",
-    PCR_OPENVIKING_CHILD_STDIO: "ignore",
+    PCR_OPENVIKING_CHILD_STDIO: "capture",
   };
 }
 
 function createFakeServer(path) {
-  writeFileSync(path, `#!/usr/bin/env node
-import { readFileSync } from "node:fs";
+  writeFileSync(path, `#!${process.execPath}
+import { createHash } from "node:crypto";
+import { readFileSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
+import { dirname, join } from "node:path";
 const configPath = process.argv[process.argv.indexOf("--config") + 1];
 const config = JSON.parse(readFileSync(configPath, "utf8"));
 const model = config.vlm?.model ?? "source-recall-only";
+if (model === "final-direct") {
+  const credential = process.env[${JSON.stringify(OPENVIKING_MEMORY_API_KEY_ENV)}] ?? "";
+  const split = Math.max(1, Math.floor(credential.length / 2));
+  process.stderr.write(credential.slice(0, split));
+  setTimeout(() => process.stderr.write(credential.slice(split)), 10);
+}
+const childEnvironmentReport = join(dirname(dirname(configPath)), "child-environment.json");
+if (childEnvironmentReport) writeFileSync(childEnvironmentReport, JSON.stringify({
+  credentialEnvironmentVariablesPresent: ${JSON.stringify([VALIDATION_API_KEY_ENV, SECOND_VALIDATION_API_KEY_ENV])}.filter((name) => Object.hasOwn(process.env, name)),
+  internalCredentialPresent: Object.hasOwn(process.env, ${JSON.stringify(OPENVIKING_MEMORY_API_KEY_ENV)}),
+  internalCredentialSha256: process.env[${JSON.stringify(OPENVIKING_MEMORY_API_KEY_ENV)}] ? createHash("sha256").update(process.env[${JSON.stringify(OPENVIKING_MEMORY_API_KEY_ENV)}]).digest("hex") : undefined,
+  ambientOpenRouterCredentialPresent: Object.hasOwn(process.env, "OPENROUTER_API_KEY"),
+  unrelatedProviderCredentialPresent: Object.hasOwn(process.env, ${JSON.stringify(UNRELATED_PROVIDER_API_KEY_ENV)}),
+}));
 if (model === "exit-early") process.exit(17);
 const started = Date.now();
 const server = createServer((request, response) => {
@@ -395,6 +426,15 @@ async function validateConfiguration() {
   const deterministicSetting = { provider: "volcengine", model: "validation-model", api_key: VALIDATION_API_KEY_REFERENCE };
   const deterministicFingerprint = compiled[0].configFingerprint
     === (await compileOpenVikingConfig(root, deterministicSetting, env)).configFingerprint;
+  const rotatedCredential = await compileOpenVikingConfig(root, deterministicSetting, {
+    ...env,
+    [VALIDATION_API_KEY_ENV]: SECOND_VALIDATION_API_KEY,
+  });
+  const credentialRotationChangesConfigFingerprint = compiled[0].settingsFingerprint === rotatedCredential.settingsFingerprint
+    && compiled[0].configFingerprint !== rotatedCredential.configFingerprint
+    && JSON.stringify(compiled[0].config) === JSON.stringify(rotatedCredential.config)
+    && !JSON.stringify([compiled[0], rotatedCredential]).includes(VALIDATION_API_KEY)
+    && !JSON.stringify([compiled[0], rotatedCredential]).includes(SECOND_VALIDATION_API_KEY);
   const missingCredentialRejected = Boolean(await expectFailure(() => compileOpenVikingConfig(
     root,
     { provider: "openai", model: "validation" },
@@ -422,30 +462,34 @@ async function validateConfiguration() {
     { ...openRouterSetting, api_key: VALIDATION_API_KEY_BRACED_REFERENCE },
     env,
   );
-  const apiKeyFormsPreserved = directApiKey.config.vlm.api_key === "literal-validation-key"
-    && referencedApiKey.config.vlm.api_key === VALIDATION_API_KEY_REFERENCE
-    && bracedReferencedApiKey.config.vlm.api_key === VALIDATION_API_KEY_BRACED_REFERENCE
+  const apiKeyFormsResolved = [directApiKey, referencedApiKey, bracedReferencedApiKey]
+    .every((item) => item.config.vlm.api_key === OPENVIKING_MEMORY_API_KEY_REFERENCE)
+    && directApiKey[COMPILED_OPENVIKING_CREDENTIAL]?.value === "literal-validation-key"
+    && referencedApiKey[COMPILED_OPENVIKING_CREDENTIAL]?.value === VALIDATION_API_KEY
+    && bracedReferencedApiKey[COMPILED_OPENVIKING_CREDENTIAL]?.value === VALIDATION_API_KEY
+    && directApiKey.credentialEnvironmentVariable === null
+    && referencedApiKey.credentialEnvironmentVariable === VALIDATION_API_KEY_ENV
+    && bracedReferencedApiKey.credentialEnvironmentVariable === VALIDATION_API_KEY_ENV
+    && new Set([
+      directApiKey.settingsFingerprint,
+      referencedApiKey.settingsFingerprint,
+      bracedReferencedApiKey.settingsFingerprint,
+    ]).size === 3
     && new Set([
       directApiKey.configFingerprint,
       referencedApiKey.configFingerprint,
       bracedReferencedApiKey.configFingerprint,
-    ]).size === 3;
-  const referenceConfigPath = join(caseDir, "reference-openviking.json");
-  const bracedReferenceConfigPath = join(caseDir, "braced-reference-openviking.json");
-  writeJson(referenceConfigPath, referencedApiKey.config);
-  writeJson(bracedReferenceConfigPath, bracedReferencedApiKey.config);
-  const loaderProbe = spawnSync(
-    pythonCommand,
-    [
-      "-c",
-      "import json,sys; from pathlib import Path; from openviking_cli.utils.config.config_loader import load_json_config; print(json.dumps([load_json_config(Path(path))['vlm']['api_key'] for path in sys.argv[1:]]))",
-      referenceConfigPath,
-      bracedReferenceConfigPath,
-    ],
-    { cwd: root, encoding: "utf8", env },
-  );
-  const environmentReferencesExpanded = loaderProbe.status === 0
-    && JSON.parse(loaderProbe.stdout).every((value) => value === VALIDATION_API_KEY);
+    ]).size === 2;
+  const credentialsBoundToInternalEnvironment = [directApiKey, referencedApiKey, bracedReferencedApiKey]
+    .every((item) => item.config.vlm.api_key === OPENVIKING_MEMORY_API_KEY_REFERENCE
+      && Boolean(item[COMPILED_OPENVIKING_CREDENTIAL]?.value));
+  const generatedConfigExcludesCredentialValues = [directApiKey, referencedApiKey, bracedReferencedApiKey]
+    .every((item) => {
+      const serialized = JSON.stringify(item.config);
+      return !serialized.includes("literal-validation-key")
+        && !serialized.includes(VALIDATION_API_KEY)
+        && !serialized.includes(VALIDATION_API_KEY_ENV);
+    });
   const missingReferencedCredentialRejected = Boolean(await expectFailure(() => compileOpenVikingConfig(
     root,
     { ...openRouterSetting, api_key: "$MISSING_MEMORY_MODEL_RUNTIME_API_KEY" },
@@ -463,10 +507,11 @@ async function validateConfiguration() {
     && !credentialDiagnostic.includes(VALIDATION_API_KEY_REFERENCE);
   const codexSetting = { provider: "openai-codex", model: "validation-model" };
   const codexNativeConfig = await compileOpenVikingConfig(root, codexSetting, env);
-  const codexNativeCredentialPreserved = !Object.hasOwn(codexNativeConfig.config.vlm, "api_key");
-  const apiKeysBoundToSettings = compiled.every((item) => item.provider === "openai-codex" || item.provider === "litellm"
-    ? !Object.hasOwn(item.config.vlm, "api_key")
-    : item.config.vlm.api_key === VALIDATION_API_KEY_REFERENCE);
+  const codexNativeCredentialConfigurationPreserved = !Object.hasOwn(codexNativeConfig.config.vlm, "api_key");
+  const apiKeysBoundToSettings = compiled.every((item) => item[COMPILED_OPENVIKING_CREDENTIAL]
+    ? item.config.vlm.api_key === OPENVIKING_MEMORY_API_KEY_REFERENCE
+      && item[COMPILED_OPENVIKING_CREDENTIAL].value === VALIDATION_API_KEY
+    : !Object.hasOwn(item.config.vlm, "api_key"));
 
   const isolatedHome = join(caseDir, "user-home");
   const templateEnv = {
@@ -599,10 +644,12 @@ async function validateConfiguration() {
       generatedConfigParsed,
       providerDefaultsNotOverridden,
       deterministicFingerprint,
-      environmentReferencesExpanded,
-      apiKeyFormsPreserved,
+      credentialRotationChangesConfigFingerprint,
+      credentialsBoundToInternalEnvironment,
+      generatedConfigExcludesCredentialValues,
+      apiKeyFormsResolved,
       apiKeysBoundToSettings,
-      codexNativeCredentialPreserved,
+      codexNativeCredentialConfigurationPreserved,
       credentialDiagnosticsRedacted,
       piCredentialInjectedIntoIsolatedEnvironment,
       missingReferencedCredentialRejected,
@@ -661,7 +708,7 @@ async function validateLauncherAndCommands() {
   await writeMemoryModelConfig(env.PCR_MEMORY_MODEL_SETTINGS, {
     provider: "openai",
     model: "initial-model",
-    api_key: VALIDATION_API_KEY,
+    api_key: VALIDATION_API_KEY_REFERENCE,
     api_base: "https://example.invalid/v1",
   });
   const launcher = startLauncher(env);
@@ -676,9 +723,17 @@ async function validateLauncherAndCommands() {
     }, "initial OpenViking readiness");
     const generatedRuntimeSource = readFileSync(env.PCR_OPENVIKING_GENERATED_CONFIG, "utf8");
     const initialLauncherInfo = await readLauncherInfo(root, env);
-    const runtimeCredentialsProtected = (statSync(env.PCR_MEMORY_MODEL_SETTINGS).mode & 0o777) === 0o600
-      && (statSync(env.PCR_OPENVIKING_GENERATED_CONFIG).mode & 0o777) === 0o600
-      && generatedRuntimeSource.includes(VALIDATION_API_KEY)
+    const childEnvironment = JSON.parse(readFileSync(env.PCR_OPENVIKING_CHILD_ENV_REPORT, "utf8"));
+    const childCredentialEnvironmentIsolated = !childEnvironment.credentialEnvironmentVariablesPresent?.includes(VALIDATION_API_KEY_ENV)
+      && childEnvironment.internalCredentialPresent === true
+      && childEnvironment.internalCredentialSha256 === createHash("sha256").update(VALIDATION_API_KEY).digest("hex")
+      && childEnvironment.ambientOpenRouterCredentialPresent === false
+      && childEnvironment.unrelatedProviderCredentialPresent === false;
+    const configurationFilesRestricted = (statSync(env.PCR_MEMORY_MODEL_SETTINGS).mode & 0o777) === 0o600
+      && (statSync(env.PCR_OPENVIKING_GENERATED_CONFIG).mode & 0o777) === 0o600;
+    const runtimeCredentialValuesNotPersisted = generatedRuntimeSource.includes(OPENVIKING_MEMORY_API_KEY_REFERENCE)
+      && !generatedRuntimeSource.includes(VALIDATION_API_KEY)
+      && !generatedRuntimeSource.includes(VALIDATION_API_KEY_ENV)
       && !JSON.stringify(initial).includes(VALIDATION_API_KEY)
       && !JSON.stringify(initialLauncherInfo).includes(VALIDATION_API_KEY);
     const firstChildPid = initial.childPid;
@@ -901,13 +956,44 @@ async function validateLauncherAndCommands() {
       && sourceOnly.activeProvider === undefined
       && sourceOnly.activeModel === undefined
       && sourceOnly.configurationError === undefined;
-    await writeMemoryModelConfig(env.PCR_MEMORY_MODEL_SETTINGS, { provider: "openai", model: "final", api_base: "https://example.invalid/v1" });
+    const sourceOnlyEnvironment = JSON.parse(readFileSync(env.PCR_OPENVIKING_CHILD_ENV_REPORT, "utf8"));
+    const removedReferenceRemainsExcluded = sourceOnlyEnvironment.credentialEnvironmentVariablesPresent?.length === 0
+      && sourceOnlyEnvironment.internalCredentialPresent === false;
+    const sourceOnlyCredentialEnvironmentEmpty = sourceOnlyEnvironment.internalCredentialPresent === false
+      && sourceOnlyEnvironment.ambientOpenRouterCredentialPresent === false
+      && sourceOnlyEnvironment.unrelatedProviderCredentialPresent === false;
+    await writeMemoryModelConfig(env.PCR_MEMORY_MODEL_SETTINGS, {
+      provider: "openai",
+      model: "final-reference",
+      api_key: SECOND_VALIDATION_API_KEY_REFERENCE,
+      api_base: "https://example.invalid/v1",
+    });
+    await requestOpenVikingRestart(root, env);
+    const rotatedEnvironment = JSON.parse(readFileSync(env.PCR_OPENVIKING_CHILD_ENV_REPORT, "utf8"));
+    const rotatedCredentialReferencesExcluded = [VALIDATION_API_KEY_ENV, SECOND_VALIDATION_API_KEY_ENV]
+      .every((name) => !rotatedEnvironment.credentialEnvironmentVariablesPresent?.includes(name))
+      && rotatedEnvironment.internalCredentialPresent === true
+      && rotatedEnvironment.internalCredentialSha256 === createHash("sha256").update(SECOND_VALIDATION_API_KEY).digest("hex");
+    await writeMemoryModelConfig(env.PCR_MEMORY_MODEL_SETTINGS, {
+      provider: "openai",
+      model: "final-direct",
+      api_key: DIRECT_VALIDATION_API_KEY,
+      api_base: "https://example.invalid/v1",
+    });
     const finalState = await requestOpenVikingRestart(root, env);
+    const directEnvironment = JSON.parse(readFileSync(env.PCR_OPENVIKING_CHILD_ENV_REPORT, "utf8"));
+    const referencedCredentialsRemainExcludedWithDirectKey = [VALIDATION_API_KEY_ENV, SECOND_VALIDATION_API_KEY_ENV]
+      .every((name) => !directEnvironment.credentialEnvironmentVariablesPresent?.includes(name))
+      && directEnvironment.internalCredentialPresent === true
+      && directEnvironment.internalCredentialSha256 === createHash("sha256").update(DIRECT_VALIDATION_API_KEY).digest("hex");
     const ownedChild = finalState.childPid;
     launcher.kill("SIGTERM");
     launcher.kill("SIGHUP");
     await waitForExit(launcher);
-    const launcherLogsExcludeCredentials = !Buffer.concat(launcherOutput).toString("utf8").includes(VALIDATION_API_KEY);
+    const launcherLog = Buffer.concat(launcherOutput).toString("utf8");
+    const launcherLogsExcludeCredentials = [VALIDATION_API_KEY, SECOND_VALIDATION_API_KEY, DIRECT_VALIDATION_API_KEY]
+      .every((credential) => !launcherLog.includes(credential));
+    const childCredentialOutputRedacted = launcherLogsExcludeCredentials && launcherLog.includes("<redacted>");
     const stopped = JSON.parse(readFileSync(env.PCR_OPENVIKING_STATE, "utf8"));
     const staleRuntimeSuppressed = await readRuntimeState(root, env) === undefined;
     const signalCleansOwnedChild = !processAlive(ownedChild)
@@ -924,8 +1010,15 @@ async function validateLauncherAndCommands() {
         targetPortPreflightPreservesInstance,
         preflightPreservesInstance,
         orderedRestart,
-        runtimeCredentialsProtected,
+        childCredentialEnvironmentIsolated,
+        removedReferenceRemainsExcluded,
+        sourceOnlyCredentialEnvironmentEmpty,
+        rotatedCredentialReferencesExcluded,
+        referencedCredentialsRemainExcludedWithDirectKey,
+        configurationFilesRestricted,
+        runtimeCredentialValuesNotPersisted,
         launcherLogsExcludeCredentials,
+        childCredentialOutputRedacted,
         operationDeadlinePublished,
         operationDeadlineCoversFailureCleanup,
         wrongLaunchRejected,
@@ -1018,7 +1111,7 @@ async function validateOwnershipBoundaries() {
     const coldEnv = validationEnvironment(coldDir, coldBase, fakeServer);
     writeFileSync(
       coldEnv.PCR_MEMORY_MODEL_SETTINGS,
-      '{ "memoryModel": { "provider": "openai", "model": "cold-start-model", "api_key": "$MISSING_COLD_START_API_KEY" } }\n',
+      `{ "memoryModel": { "provider": "openai", "model": "cold-start-model", "api_key": "${VALIDATION_API_KEY_REFERENCE}" }\n`,
       { encoding: "utf8", mode: 0o600 },
     );
     coldLauncher = startLauncher(coldEnv);
@@ -1028,8 +1121,13 @@ async function validateOwnershipBoundaries() {
       const state = await readRuntimeState(root, coldEnv);
       return state?.ready ? state : undefined;
     }, "invalid cold-start source runtime", 20_000);
+    const coldChildEnvironment = JSON.parse(readFileSync(coldEnv.PCR_OPENVIKING_CHILD_ENV_REPORT, "utf8"));
+    const invalidColdStartCredentialExcluded = coldChildEnvironment.credentialEnvironmentVariablesPresent?.length === 0
+      && coldChildEnvironment.internalCredentialPresent === false
+      && coldChildEnvironment.ambientOpenRouterCredentialPresent === false
+      && coldChildEnvironment.unrelatedProviderCredentialPresent === false;
     const invalidColdStartKeepsSourceRuntime = coldState.activeModel === undefined
-      && coldState.configurationError?.includes("api_key references unset environment variable MISSING_COLD_START_API_KEY")
+      && coldState.configurationError?.includes("JSONC syntax error")
       && !coldState.configurationError.includes(VALIDATION_API_KEY)
       && coldState.configurationError.includes(coldEnv.PCR_MEMORY_MODEL_SETTINGS)
       && processAlive(coldState.childPid);
@@ -1075,7 +1173,16 @@ async function validateOwnershipBoundaries() {
     const unrelatedReadyNotReconciled = Boolean(reconciliationError);
     await new Promise((resolveClose) => resetServer.close(resolveClose));
     resetServer = undefined;
-    return { checks: { unknownPortPreserved, launcherOwnershipProtected, staleLifecycleLockRequiresExplicitRecovery, invalidColdStartKeepsSourceRuntime, unrelatedReadyNotReconciled } };
+    return {
+      checks: {
+        unknownPortPreserved,
+        launcherOwnershipProtected,
+        staleLifecycleLockRequiresExplicitRecovery,
+        invalidColdStartCredentialExcluded,
+        invalidColdStartKeepsSourceRuntime,
+        unrelatedReadyNotReconciled,
+      },
+    };
   } finally {
     if (coldLauncher) await stopLauncher(coldLauncher).catch(() => undefined);
     if (resetServer?.listening) await new Promise((resolveClose) => resetServer.close(resolveClose));
@@ -1103,6 +1210,7 @@ const rawEvidence = {
   completedAt,
   piVersion,
   nodeVersion: process.versions.node,
+  platform: process.platform,
   openVikingVersion: configuration.capabilities.openVikingVersion,
   vlmSchemaSha256: configuration.capabilities.vlmSchemaSha256,
   adapterContractSha256: configuration.capabilities.adapterContractSha256,
@@ -1124,6 +1232,7 @@ replaceJson(evidencePath, {
   recordedAt: completedAt,
   piVersion,
   nodeVersion: rawEvidence.nodeVersion,
+  platform: rawEvidence.platform,
   openVikingVersion: rawEvidence.openVikingVersion,
   vlmSchemaSha256: rawEvidence.vlmSchemaSha256,
   adapterContractSha256: rawEvidence.adapterContractSha256,

@@ -32,7 +32,7 @@ Pi 集成先建立 Provider 基线，再按结构/元数据/所有者/协议关�
 - `toolResult.details.fullOutputPath` 与 `BashExecutionMessage.fullOutputPath` 经权威 entry 提取、locator 脱敏后的内容寻址副本；
 - OpenViking `vectors_only` 来源索引；
 - `recall_session(search|read_source)` 当前路线过滤、Pi 权威 taskContent 展开，以及同来源 `fullOutputRef` 的完整性核验和有界正文读取；
-- 用户记忆模型 JSONC、配置编译、项目启动器所有权和受管重启；
+- 用户记忆模型 JSONC、预检凭据解析、无凭据值的运行配置、从空环境构造的固定内部子进程变量、child 输出实时脱敏、项目启动器所有权和受管重启；
 - OpenViking Session append、commit、task polling 和 context assembly；
 - 当前 prompt 之前历史的有界增强消息；
 - Provider 基线与记忆投影双边界：`pi-session-protocol.ts` 复用 Pi 的 `buildContextEntries`/`sessionEntryToContextMessages`/`convertToLlm` 建立基线，并从结构证据产生 `MessageSource`、`ControlBoundary` 与 `OpaqueProviderSegment`；
@@ -49,16 +49,16 @@ Pi 集成先建立 Provider 基线，再按结构/元数据/所有者/协议关�
 
 - [`validation/evidence/source-archive.json`](../validation/evidence/source-archive.json)：Provider 基线、完整 ToolBatch、孤立/重复/不完整/opaque 与 summary 边界、来源隔离、branch 过滤、toolResult/Bash locator 脱敏、完整输出原子发布与有界恢复、复制超时单一错误出口和归档格式重建；
 - [`validation/evidence/source-recall.json`](../validation/evidence/source-recall.json)：来源索引、当前路线过滤、taskContent 展开和权威核对；
-- [`validation/evidence/memory-model-runtime.json`](../validation/evidence/memory-model-runtime.json)：配置转换、进程所有权、三态词汇、配置与运行实例分离和重启行为；
+- [`validation/evidence/memory-model-runtime.json`](../validation/evidence/memory-model-runtime.json)：当前 Darwin 运行上证明配置转换不持久化凭据值、固定内部变量采用当前 direct/ref 凭据、宿主 ambient sentinel 不进入 child、source-only 不注入凭据环境，以及进程所有权、输出脱敏、三态词汇、配置与运行实例分离和重启行为；
 - [`validation/evidence/context-enhancement.json`](../validation/evidence/context-enhancement.json)：`allow | block`、opaque 历史阻断、block 后扩展停止、完整增强内容与有序 Provider 消息 proof 变更拒绝、wire ProviderPayloadProfile 变更拒绝、hook outcome 分账、记录型 Provider transport 观测、backend/archive 故障同代际锁存与新代际恢复、overflow 重试及 Pi tree/session/compaction 生命周期；隔离的本地实际 Pi 回合覆盖 raw 与 projected 多工具协议、200,000 字节结果、错误、fullOutputPath、来源恢复、前置 handler 内容/profile 改写阻断和最终 Provider 输入有界。
 
-[`validation/evidence/context-quality.json`](../validation/evidence/context-quality.json) 仍为 stale：其预置 session、禁用工具、单 prompt、单次固定答案 fixture 不符合真实复杂长任务目标，不构成当前产品结论。
+[`validation/evidence/context-quality.json`](../validation/evidence/context-quality.json) 当前为不通过的 actual paired diagnostic：Pi auth 凭证复用、无凭据值的生成配置、任务 Pi 不含三类凭据变量、真实 OpenViking 只采用固定内部变量、真实记忆模型请求和 token 归属成立；增强任务请求在 `before_provider_request` 因实际 wire payload 与构造的 `ProviderPayloadProfile` 不一致而 rejected，因此增强 arm 没有任务 Provider 请求，不能形成质量结论。其预置 session、禁用工具、单 prompt、单次固定答案 fixture 也不构成真实复杂长任务结论。
 
 现有 evidence 尚未证明：
 
-- 声明支持的实际记忆 Provider/模型/API 组合完成能力探针、Working Memory 和请求授权纵向链路；
+- 声明支持的实际记忆 Provider/模型/API 组合完成绑定受管子进程与 MemoryRuntimeProfile 的生产能力探针、租约和请求授权纵向链路；当前 paired diagnostic 只证明该坐标能够产生一次真实 Working Memory；
 - 慢速后台 refresh 与任务并行，只有必要 refresh 形成等待；RefreshTarget、MemoryCheckpoint 与 VerifiedActiveDelta 在预算、branch 和迟到结果下保持隔离；
-- `(增强)` footer 语义成立；任务 ProviderPayloadProfile 的真实 API 适配仍需对应实际 Provider 证据；
+- `(增强)` footer 语义成立；任务 ProviderPayloadProfile 的真实 API 适配当前被 actual wire profile mismatch 证伪，需在能力门之后重新调查；
 - compaction/tree handler 返回、实际宿主结果和兼容性结论由真实 Pi 组合分别证明，已有 summary 文本不污染本扩展记忆；
 - 三类真实复杂长任务分别达到 suite policy 的 `eligibleTarget` 且全部完成；
 - 完整 API 成本优势。
@@ -67,9 +67,9 @@ Pi 集成先建立 Provider 基线，再按结构/元数据/所有者/协议关�
 
 ## 5. 当前主导约束
 
-当前主导约束是 **运行时只凭启动器 service readiness 建立工作上下文代际，尚未证明实际记忆 Provider/模型具备生产所需能力**。
+当前主导约束是 **运行时只凭启动器 service readiness 建立工作上下文代际，尚未以绑定受管进程和 MemoryRuntimeProfile 的生产能力探针证明实际记忆 Provider/模型可用于请求授权**。
 
-CurrentTurn 已进入统一 ProviderPayloadProfile 预算，并由本地实际 Pi 回合证明 raw/projected 多工具协议、200,000 字节结果、来源恢复和 transport 采用。当前 `runtimeWorkingContextGeneration` 仍只检查启动器 `ready`、child PID 与 active Provider/model，再以 launch ID 和 PID 建立代际；这些事实不能区分“OpenViking 服务可连接”与“配置的记忆模型能够完成受约束的 Working Memory、任务轮询和来源核验 assembly”。受控 runtime evidence 也只证明配置和进程边界，不能把该组合纳入 actual 支持范围。
+CurrentTurn 已进入统一 ProviderPayloadProfile 预算，并由本地实际 Pi 回合证明 raw/projected 多工具协议、200,000 字节结果、来源恢复和受控 transport 采用；actual paired diagnostic 另证明当前记忆坐标能产生一次真实 Working Memory，但任务 Provider wire profile mismatch 使增强请求被拒绝。当前 `runtimeWorkingContextGeneration` 仍只检查启动器 `ready`、child PID 与 active Provider/model，再以 launch ID 和 PID 建立代际；这些事实不能把一次诊断成功提升为绑定生产 profile、失败边界和有效期的能力证明。受控 runtime evidence 也只证明配置和进程边界，不能把该组合纳入 actual 支持范围。
 
 这个缺口位于所有 checkpoint、慢 refresh、复杂长任务和成本结论之前：没有绑定进程、配置、MemoryRuntimeProfile 与真实响应的能力证明，请求授权可能建立在不可用或不符合 profile 的记忆运行时上。当前行动必须先建立实际能力探针和有界租约；成本归属仍不是当前执行入口。
 

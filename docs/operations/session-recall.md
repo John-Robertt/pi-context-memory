@@ -9,14 +9,14 @@ node scripts/install-dependencies.mjs
 ```
 
 [`../../config/toolchain.json`](../../config/toolchain.json) 是 Node 门槛、uv 版本和安装器摘要的机器可读权威；安装脚本先核对 Node，再校验 uv bootstrap，读取项目 Python 版本入口，并按 `uv.lock` 把 OpenViking 和本地 embedding 的精确依赖闭包安装到项目内 `.tools/`、`.venv/` 与 `.cache/`，不创建用户级 Python 可执行入口，也不修改系统 Python 或 shell PATH。Python 版本由 [`.python-version`](../../.python-version) 与 `pyproject.toml` 的兼容范围共同约束，OpenViking 直接依赖由 `pyproject.toml` 拥有、解析结果由 `uv.lock` 拥有。基础服务配置位于 [`../../config/openviking.json`](../../config/openviking.json)；首次启动 Pi 或 OpenViking 时，系统在 `~/.pi/pi-context-memory.jsonc` 独占创建用户级注释模板。
-启动 OpenViking。若 `memoryModel.api_key` 使用环境变量引用，只在 launcher 终端提供该来源变量；例如当前开发验证的 OpenRouter 路线使用：
+启动 OpenViking。若 `memoryModel.api_key` 使用环境变量引用，只在 launcher 终端提供该来源变量，启动器仅在配置预检编译时解析它；例如当前开发验证的 OpenRouter 路线使用：
 
 ```bash
 export OPENROUTER_API_KEY="<OpenRouter API key>"
 node scripts/start-openviking.mjs
 ```
 
-启动脚本作为项目 OpenViking 生命周期所有者运行：它先原子创建 `.artifacts/openviking/runtime/launcher.lock`，再预检配置与目标端口，把当前来源的 `memoryModel.api_key` 直接值或环境引用原样编译到 `0600` 运行配置，启动子进程并等待 `/health` 返回 `healthy=true`。环境引用必须在 launcher 环境中存在，并由 OpenViking 加载配置时展开；状态、日志和诊断不回显字段值。Pi 进程无需持有引用变量，也不重建 launcher 的可执行配置来决定当前增强是否可用，而是采用 runtime state 发布的 ready 受管子进程。锁定 OpenViking 的 `/ready` 附加语义由运行证据记录，不作为永久启动契约；来源读写能力由召回验证单独覆盖。`launcher.json` 发布 loopback 控制入口和完整操作期限，`state.json` 分别发布实际运行实例与下一次应用目标；脚本只停止自己持有的子进程。启动器 PID、启动标识、锁和子进程必须一致。首次启动会把配置所需的本地 embedding 模型下载到项目 `.cache/openviking/models/`，实际下载量以安装输出为准。服务健康后，在另一个终端从同一仓库根目录启动 Pi：
+启动脚本作为项目 OpenViking 生命周期所有者运行：它先原子创建 `.artifacts/openviking/runtime/launcher.lock`，再预检配置与目标端口。预检把当前 `memoryModel.api_key` 的直接值或环境引用解析结果保留在内存，生成配置只写固定 `${PCR_OPENVIKING_MEMORY_API_KEY}` 引用；spawn 受管 OpenViking 时从空环境开始，带显式凭据的实例只获得该内部变量，source-only 或无显式凭据实例不获得 Launcher 环境，并等待 `/health` 返回 `healthy=true`。状态、运行配置、日志和诊断不回显实际值；child 输出在 Launcher 转发前按当前凭据实时脱敏。需要 ambient 环境变量的原生认证不在当前支持边界。具体边界由 [`../system/memory-model-runtime.md`](../system/memory-model-runtime.md) 定义。Pi 进程无需持有引用变量，也不重建 launcher 的可执行配置来决定当前增强是否可用，而是采用 runtime state 发布的 ready 受管子进程。锁定 OpenViking 的 `/ready` 附加语义由运行证据记录，不作为永久启动契约；来源读写能力由召回验证单独覆盖。`launcher.json` 发布 loopback 控制入口和完整操作期限，`state.json` 分别发布实际运行实例与下一次应用目标；脚本只停止自己持有的子进程。启动器 PID、启动标识、锁和子进程必须一致。首次启动会把配置所需的本地 embedding 模型下载到项目 `.cache/openviking/models/`，实际下载量以安装输出为准。服务健康后，在另一个终端从同一仓库根目录启动 Pi：
 
 ```bash
 pi

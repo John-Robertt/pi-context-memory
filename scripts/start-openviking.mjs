@@ -7,9 +7,11 @@ import { createServer } from "node:http";
 import { createConnection } from "node:net";
 import { fileURLToPath } from "node:url";
 import { dirname, join, resolve } from "node:path";
+import { StringDecoder } from "node:string_decoder";
 
 import {
   atomicWriteJson,
+  COMPILED_OPENVIKING_CREDENTIAL,
   DEFAULT_OPENVIKING_READINESS_TIMEOUT_MS,
   DEFAULT_OPENVIKING_STOP_TIMEOUT_MS,
   compileOpenVikingConfig,
@@ -17,6 +19,7 @@ import {
   OPENVIKING_CONFIG_BRIDGE_TIMEOUT_MS,
   OPENVIKING_CONTROL_REQUEST_GRACE_MS,
   OPENVIKING_RUNTIME_SCHEMA_VERSION,
+  OPENVIKING_MEMORY_API_KEY_ENV,
   openVikingServerAddress,
   readMemoryModelSetting,
   readOptionalJson,
@@ -202,13 +205,52 @@ async function stopOwnedChild() {
   ownedAddress = undefined;
 }
 
-function spawnServer(configPath) {
+function forwardRedacted(stream, destination, secrets) {
+  const values = [...new Set(secrets.filter(Boolean))].sort((left, right) => right.length - left.length);
+  if (values.length === 0) {
+    stream.pipe(destination, { end: false });
+    return;
+  }
+  const decoder = new StringDecoder("utf8");
+  const maxLength = values[0].length;
+  let pending = "";
+  const flush = (final) => {
+    while (pending && (final || pending.length >= maxLength)) {
+      const matched = values.find((value) => pending.startsWith(value));
+      if (matched) {
+        destination.write("<redacted>");
+        pending = pending.slice(matched.length);
+      } else {
+        destination.write(pending[0]);
+        pending = pending.slice(1);
+      }
+    }
+  };
+  stream.on("data", (chunk) => {
+    pending += decoder.write(chunk);
+    flush(false);
+  });
+  stream.on("end", () => {
+    pending += decoder.end();
+    flush(true);
+  });
+}
+
+function spawnServer(configPath, candidate) {
+  const credential = candidate[COMPILED_OPENVIKING_CREDENTIAL];
+  const childEnvironment = {};
+  if (credential) childEnvironment[OPENVIKING_MEMORY_API_KEY_ENV] = credential.value;
+  const ignoreChildOutput = process.env.PCR_OPENVIKING_CHILD_STDIO === "ignore";
   const target = spawn(serverExecutable, ["--config", configPath], {
     cwd: root,
-    env: process.env,
-    stdio: process.env.PCR_OPENVIKING_CHILD_STDIO === "ignore" ? "ignore" : "inherit",
+    env: childEnvironment,
+    stdio: ignoreChildOutput ? "ignore" : ["ignore", "pipe", "pipe"],
     shell: false,
   });
+  if (!ignoreChildOutput) {
+    forwardRedacted(target.stdout, process.stdout, [credential?.value]);
+    forwardRedacted(target.stderr, process.stderr, [credential?.value]);
+  }
   child = target;
   target.once("error", (error) => {
     target.openVikingSpawnError = error;
@@ -323,7 +365,7 @@ async function applyCandidate(candidate, initial, operationId) {
     }
   }
 
-  const started = spawnServer(paths.generatedConfig);
+  const started = spawnServer(paths.generatedConfig, candidate);
   ownedAddress = address;
   await publishState({
     ...currentState,

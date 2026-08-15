@@ -16,6 +16,17 @@ export const DEFAULT_OPENVIKING_OPERATION_TIMEOUT_MS = OPENVIKING_CONFIG_BRIDGE_
   + OPENVIKING_CONTROL_REQUEST_GRACE_MS;
 export const OPENVIKING_RUNTIME_SCHEMA_VERSION = 1 as const;
 export const MEMORY_MODEL_CONFIG_FILENAME = "pi-context-memory.jsonc";
+export const OPENVIKING_MEMORY_API_KEY_ENV = "PCR_OPENVIKING_MEMORY_API_KEY";
+export const OPENVIKING_MEMORY_API_KEY_REFERENCE = `\${${OPENVIKING_MEMORY_API_KEY_ENV}}`;
+export const COMPILED_OPENVIKING_CREDENTIAL = Symbol("compiled-openviking-credential");
+const MEMORY_MODEL_CREDENTIAL_ENV_REFERENCE = /^\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))$/;
+
+export function memoryModelCredentialEnvironmentVariable(apiKey: unknown): string | undefined {
+  if (typeof apiKey !== "string") return undefined;
+  const match = MEMORY_MODEL_CREDENTIAL_ENV_REFERENCE.exec(apiKey);
+  return match ? match[1] ?? match[2] : undefined;
+}
+
 
 export interface MemoryModelSetting {
   provider: string;
@@ -48,6 +59,10 @@ export interface CompiledOpenVikingConfig {
   model: string;
   settingsFingerprint: string;
   configFingerprint: string;
+  credentialEnvironmentVariable?: string | null;
+  [COMPILED_OPENVIKING_CREDENTIAL]?: {
+    value: string;
+  };
 }
 export interface ValidatedMemoryModelConfiguration {
   setting: MemoryModelSetting;
@@ -214,7 +229,6 @@ function runBridge<T>(
   root: string,
   command: "describe" | "compile",
   input?: unknown,
-  env: NodeJS.ProcessEnv = process.env,
 ): Promise<T> {
   const python = process.platform === "win32"
     ? join(root, ".venv", "Scripts", "python.exe")
@@ -223,7 +237,7 @@ function runBridge<T>(
   return new Promise((resolveResult, rejectResult) => {
     const child = spawn(python, [script, command], {
       cwd: root,
-      env,
+      env: {},
       stdio: ["pipe", "pipe", "pipe"],
       shell: false,
     });
@@ -265,12 +279,11 @@ const capabilityCache = new Map<string, Promise<MemoryModelCapabilities>>();
 
 export function describeMemoryModelCapabilities(
   root: string,
-  env: NodeJS.ProcessEnv = process.env,
 ): Promise<MemoryModelCapabilities> {
   const key = resolve(root);
   const cached = capabilityCache.get(key);
   if (cached) return cached;
-  const loading = runBridge<MemoryModelCapabilities>(key, "describe", undefined, env);
+  const loading = runBridge<MemoryModelCapabilities>(key, "describe");
   capabilityCache.set(key, loading);
   void loading.catch(() => capabilityCache.delete(key));
   return loading;
@@ -295,8 +308,8 @@ function memoryModelTemplate(capabilities: MemoryModelCapabilities): string {
     const credential = provider.credential === "api-key"
       ? "api_key 必填，可直接填写或引用环境变量"
       : provider.name === "litellm"
-        ? "OpenRouter 等 API-key 路由必须填写 api_key；云原生路线可使用来源认证"
-        : "api_key 可选；省略时使用 OpenViking 原生认证";
+        ? "OpenRouter 等 API-key 路由必须填写 api_key；无 key 不继承 ambient 认证环境"
+        : "api_key 可选；省略时不向 OpenViking 注入凭据环境变量";
     lines.push(`  // ${provider.name}:`);
     if (provider.name === "litellm") {
       lines.push("  // LiteLLM 是多来源路由层，model 使用 <litellm-provider>/<model-id>。");
@@ -339,7 +352,7 @@ export async function ensureMemoryModelConfig(
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }
 
-  const capabilities = await describeMemoryModelCapabilities(root, env);
+  const capabilities = await describeMemoryModelCapabilities(root);
   const directory = dirname(configPath);
   await mkdir(directory, { recursive: true, mode: 0o700 });
   const pending = join(directory, `.${randomUUID()}.pending`);
@@ -351,6 +364,7 @@ export async function ensureMemoryModelConfig(
     } finally {
       await handle.close();
     }
+    await chmod(pending, 0o600);
     try {
       await link(pending, configPath);
     } catch (error) {
@@ -365,13 +379,12 @@ export async function ensureMemoryModelConfig(
 export async function normalizeMemoryModelSetting(
   root: string,
   setting: unknown,
-  env: NodeJS.ProcessEnv = process.env,
 ): Promise<MemoryModelSetting> {
   if (!setting || typeof setting !== "object" || Array.isArray(setting)) {
     throw new Error("Memory model setting must be a JSON object");
   }
   const value = setting as Record<string, unknown>;
-  const capabilities = await describeMemoryModelCapabilities(root, env);
+  const capabilities = await describeMemoryModelCapabilities(root);
   const knownFields = new Set(Object.keys(capabilities.settingFields));
   const unknown = Object.keys(value).filter((field) => !knownFields.has(field)).sort();
   if (unknown.length > 0) throw new Error(`Unknown memory model setting fields: ${unknown.join(", ")}`);
@@ -507,6 +520,7 @@ function parseMemoryModelJsonc(source: string, configPath: string): unknown {
   }
 }
 
+
 export async function readMemoryModelSetting(
   root: string,
   env: NodeJS.ProcessEnv = process.env,
@@ -524,7 +538,7 @@ export async function readMemoryModelSetting(
   }
   if (config.memoryModel === undefined || config.memoryModel === null) return undefined;
   try {
-    return await normalizeMemoryModelSetting(root, config.memoryModel, env);
+    return await normalizeMemoryModelSetting(root, config.memoryModel);
   } catch (error) {
     const position = Math.max(0, source.indexOf('"memoryModel"'));
     const location = lineAndColumn(source, position);
@@ -578,7 +592,29 @@ export async function compileOpenVikingConfig(
 ): Promise<CompiledOpenVikingConfig> {
   const paths = runtimePaths(root, env);
   const baseConfig = await readJson(paths.baseConfig);
-  return runBridge(root, "compile", { baseConfig, setting }, env);
+  const credentialEnvironmentVariable = memoryModelCredentialEnvironmentVariable(setting.api_key);
+  let credentialValue = setting.api_key;
+  if (credentialEnvironmentVariable) {
+    credentialValue = env[credentialEnvironmentVariable];
+    if (!credentialValue || !credentialValue.trim()) {
+      throw new Error(`api_key references unset environment variable ${credentialEnvironmentVariable}`);
+    }
+  }
+  const compiled = await runBridge<CompiledOpenVikingConfig>(root, "compile", {
+    baseConfig,
+    setting: credentialValue ? { ...setting, api_key: credentialValue } : setting,
+  });
+  compiled.settingsFingerprint = createHash("sha256")
+    .update(JSON.stringify(Object.fromEntries(Object.entries(setting).sort(([left], [right]) => left.localeCompare(right)))))
+    .digest("hex");
+  compiled.credentialEnvironmentVariable = credentialEnvironmentVariable ?? null;
+  if (credentialValue) {
+    Object.defineProperty(compiled, COMPILED_OPENVIKING_CREDENTIAL, {
+      value: { value: credentialValue },
+      enumerable: false,
+    });
+  }
+  return compiled;
 }
 
 export async function readLauncherInfo(

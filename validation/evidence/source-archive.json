@@ -2,12 +2,12 @@
   "schemaVersion": 2,
   "generatedBy": "scripts/validate-source-archive.mjs",
   "scope": "local",
-  "runId": "source-archive-2026-08-15T17-30-28-399Z",
-  "recordedAt": "2026-08-15T17:30:29.256Z",
+  "runId": "source-archive-2026-08-15T20-59-42-700Z",
+  "recordedAt": "2026-08-15T20:59:43.370Z",
   "piVersion": "0.84.2",
   "nodeVersion": "24.15.0",
   "implementation": {
-    "sourceManifestSha256": "aa30aab3ee1cb3a08741184b31351d59147039b4d6345ed459719a100326eb5c",
+    "sourceManifestSha256": "bc13c176f09e6b3ea59435564ee14ff2af7585d901f5a7fe46b59f0f0f338c47",
     "files": [
       {
         "path": ".pi/extensions/pi-context-memory/index.ts",
@@ -19,7 +19,7 @@
       },
       {
         "path": ".pi/extensions/pi-context-memory/memory-model-configuration.ts",
-        "sha256": "1e24578fb9ba72c80d08f30d3da5ff777bcdc6258288893f9501521b87af8017"
+        "sha256": "b2c752817d11894e06aa5150d1a98e3052de9559a308f51cd9468a5ccd3a0d9d"
       },
       {
         "path": ".pi/extensions/pi-context-memory/openviking-protocol.ts",
@@ -71,14 +71,14 @@
       },
       {
         "path": "scripts/validation-evidence.mjs",
-        "sha256": "c5dd77c7ab4b42f1c426eb48bd44af1d643ef991734a6c9b0686afe93a2b0145"
+        "sha256": "c769b4ee116bba775961c0b7ce48571a4df3c52061d51cf95d6e0285f5a221ae"
       },
       {
         "path": "scripts/validation-suite.mjs",
         "sha256": "2765892ccbc87857965e22ff8a2163bc0bf4d089fe04bc913c1ce5d78f3e58f5"
       }
     ],
-    "specificationManifestSha256": "b888dbac85946be32e066c80cc3f87ef97ce7a69a37c2a96c901d8f57e421baf",
+    "specificationManifestSha256": "c48f608347a3b53e98be199445d555e9041971a20001469691aaa988816a716a",
     "specificationFiles": [
       {
         "path": "config/toolchain.json",
@@ -86,7 +86,7 @@
       },
       {
         "path": "docs/validation/README.md",
-        "sha256": "68f66a21b9cb6457fd2b8a4a125ac9888164b1aefda6a1a43a4593dca5a0db48"
+        "sha256": "fcb69766fc4b3de4fef7ffc2731ff6fd2b7897c9f67047eeb0a417ad8f4ee40a"
       },
       {
         "path": "docs/validation/source-archive.md",
@@ -97,7 +97,7 @@
         "sha256": "2f34c5cec5f73f972887aaeb0ad7decf734500911f7ea0412061d33deb3d139b"
       }
     ],
-    "gitCommit": "b15c9905e23a20ddf608e644433afbdddde65600",
+    "gitCommit": "58e68da7474569e78aea01ba4e6cf7ec06074491",
     "workingTreeDirty": true
   },
   "passed": true,

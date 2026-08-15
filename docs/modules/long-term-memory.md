@@ -50,7 +50,7 @@ Pi session entry 仍是事实权威；来源文件由 `long-term-memory.ts` 管�
 
 模块维护扩展支持的最小用户配置面，并通过 [`../contracts/openviking-adapter.md`](../contracts/openviking-adapter.md) 转换为 OpenViking 运行配置。
 
-用户配置只读解析；缺失模板以 `0600` 原子创建。直接凭据和环境引用原样进入受限运行配置，凭据值不进入状态、日志、evidence 或 Pi session。
+用户配置只读解析；缺失模板原子创建。直接凭据或环境引用在预检中形成只存在于内存的编译凭据；运行配置只保存固定内部引用，Launcher 在 spawn 时把实际值注入受管 OpenViking 的固定内部环境变量。具体凭据与子进程环境边界由 [`../system/memory-model-runtime.md`](../system/memory-model-runtime.md) 统一定义。凭据值不进入状态、日志、evidence 或 Pi session。
 
 用户配置只选择 Provider、模型、凭据引用和必要连接字段。模块按 [`../system/memory-model-runtime.md`](../system/memory-model-runtime.md) 的唯一 `MemoryRuntimeProfile` 定义匹配精确 Provider/模型/API，再编译 OpenViking 运行配置；用户不能用任意透传字段改变 profile，无法匹配的配置不进入支持范围。
 

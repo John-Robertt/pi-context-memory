@@ -5,7 +5,13 @@ import { createServer } from "node:net";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { compileOpenVikingConfig } from "../.pi/extensions/pi-context-memory/memory-model-configuration.ts";
+import {
+  atomicWriteJson,
+  COMPILED_OPENVIKING_CREDENTIAL,
+  compileOpenVikingConfig,
+  OPENVIKING_MEMORY_API_KEY_ENV,
+  OPENVIKING_MEMORY_API_KEY_REFERENCE,
+} from "../.pi/extensions/pi-context-memory/memory-model-configuration.ts";
 
 import {
   assertImplementationEvidenceUnchanged,
@@ -22,6 +28,9 @@ import {
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const QUALITY_CREDENTIAL_ENV = "PCR_CONTEXT_QUALITY_OPENROUTER_API_KEY";
+const QUALITY_AMBIENT_OPENROUTER_SENTINEL = "quality-ambient-openrouter-must-not-reach-child";
+const QUALITY_UNRELATED_CREDENTIAL_ENV = "ANTHROPIC_API_KEY";
+const QUALITY_UNRELATED_CREDENTIAL_SENTINEL = "quality-unrelated-provider-must-not-reach-child";
 if (process.argv.length !== 2) throw new Error("Usage: node scripts/validate-context-quality.mjs");
 
 const runId = process.env.PCR_RUN_ID ?? `context-quality-${new Date().toISOString().replaceAll(/[:.]/g, "-")}`;
@@ -87,6 +96,16 @@ function waitForExit(child, timeoutMs = 30_000) {
     new Promise((resolveExit) => child.once("exit", resolveExit)),
     new Promise((_, rejectTimeout) => setTimeout(() => rejectTimeout(new Error("Child process did not exit")), timeoutMs)),
   ]);
+}
+
+function processAlive(pid) {
+  if (!Number.isSafeInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error.code === "EPERM";
+  }
 }
 
 async function freePort() {
@@ -235,6 +254,15 @@ function readObservations(path) {
   const content = readFileSync(path, "utf8").trim();
   return content ? content.split("\n").map((line) => JSON.parse(line)) : [];
 }
+function assistantEntryText(entry) {
+  const content = entry?.message?.content;
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content
+    .filter((block) => block?.type === "text" && typeof block.text === "string")
+    .map((block) => block.text)
+    .join("");
+}
 
 function checker(text) {
   const requiredDecision = fixture.task.checker.requiredDecision;
@@ -289,6 +317,9 @@ async function runArm(name, model, openViking) {
     PCR_QUALITY_ARM_OBSERVATION: conditionLog,
   };
   delete piEnvironment[QUALITY_CREDENTIAL_ENV];
+  delete piEnvironment[OPENVIKING_MEMORY_API_KEY_ENV];
+  delete piEnvironment[QUALITY_UNRELATED_CREDENTIAL_ENV];
+  delete piEnvironment.OPENROUTER_API_KEY;
   const child = spawn("pi", args, {
     cwd: root,
     env: piEnvironment,
@@ -313,6 +344,7 @@ async function runArm(name, model, openViking) {
     }
 
     const settledBefore = client.events.filter((event) => event.type === "agent_settled").length;
+    const sessionEntryIdsBefore = new Set(readObservations(sessionPath).map((entry) => entry.id).filter(Boolean));
     await client.send("prompt", {
       message: "只依据当前有效路线回答。若有效方案只采用当前路线的有界上下文，decision 输出 bounded-current-route；若采用路线 A 的完整历史，输出 full-history-route-a。evidence_entry_id 输出支撑当前方案的工具证据入口。只输出包含这两个字段的 JSON。",
     });
@@ -320,15 +352,24 @@ async function runArm(name, model, openViking) {
       (_event, index) => client.events.slice(0, index + 1).filter((event) => event.type === "agent_settled").length > settledBefore,
       `${name} agent settlement`,
     );
-    const response = await client.send("get_last_assistant_text");
+    const requestEntries = readObservations(sessionPath).filter((entry) => !sessionEntryIdsBefore.has(entry.id));
+    const assistantEntry = [...requestEntries].reverse().find((entry) =>
+      entry.type === "message" && entry.message?.role === "assistant");
+    assert(assistantEntry, `${name} request did not persist an assistant result`);
     const stats = await client.send("get_session_stats");
     const { sessionFile: _sessionFile, sessionId: _sessionId, ...qualityStats } = stats.data;
-    const text = response.data.text ?? "";
+    const text = assistantEntryText(assistantEntry);
+    const requestResult = {
+      entryId: assistantEntry.id,
+      stopReason: assistantEntry.message.stopReason,
+      usage: assistantEntry.message.usage,
+    };
     const observations = readObservations(observationLog);
-    const hookVerified = name === "native" || observations.some((event) =>
-      event.type === "before_provider_request"
-      && event.hookOutcome === "verified"
-      && event.contextAuthorization === "allowed");
+    const hookVerified = name === "enhanced"
+      ? observations.some((event) => event.type === "before_provider_request"
+        && event.hookOutcome === "verified"
+        && event.contextAuthorization === "allowed")
+      : null;
     const condition = readObservations(conditionLog).at(-1);
     return {
       text,
@@ -338,6 +379,7 @@ async function runArm(name, model, openViking) {
       model: state.model ? `${state.model.provider}/${state.model.id}` : undefined,
       condition,
       stats: qualityStats,
+      requestResult,
       observations: {
         workingContextReady: observations.filter((event) => event.type === "working_context_ready").length,
         hookVerifiedRequests: observations.filter((event) => event.type === "before_provider_request" && event.hookOutcome === "verified").length,
@@ -372,8 +414,9 @@ const isolatedOpenRouterCredential = createIsolatedPiProviderCredential(
 const qualityEnvironment = {
   ...process.env,
   ...isolatedOpenRouterCredential.environment,
+  OPENROUTER_API_KEY: QUALITY_AMBIENT_OPENROUTER_SENTINEL,
+  [QUALITY_UNRELATED_CREDENTIAL_ENV]: QUALITY_UNRELATED_CREDENTIAL_SENTINEL,
 };
-delete qualityEnvironment.OPENROUTER_API_KEY;
 const isolatedOpenRouterApiKey = isolatedOpenRouterCredential.environment[QUALITY_CREDENTIAL_ENV];
 const redactQualityCredential = (value) => String(value).replaceAll(isolatedOpenRouterApiKey, "<redacted>");
 const memory = {
@@ -401,13 +444,18 @@ const runtimeDir = join(artifactRoot, "openviking-runtime");
 const settingsPath = join(artifactRoot, "memory-model.jsonc");
 const baseConfigPath = join(artifactRoot, "openviking-base.json");
 const observerPath = join(artifactRoot, "quality-observer.ts");
+const openVikingEnvironmentReportPath = join(artifactRoot, "openviking-child-environment.json");
+const openVikingWrapperPath = join(artifactRoot, "openviking-server-wrapper.mjs");
+const realOpenVikingServer = process.platform === "win32"
+  ? join(root, ".venv/Scripts/openviking-server.exe")
+  : join(root, ".venv/bin/openviking-server");
 const baseConfig = JSON.parse(readFileSync(join(root, "config/openviking.json"), "utf8"));
 const port = await freePort();
 baseConfig.server.host = "127.0.0.1";
 baseConfig.server.port = port;
 baseConfig.storage.workspace = join(artifactRoot, "openviking-data");
 writeJson(baseConfigPath, baseConfig);
-writeJson(settingsPath, { memoryModel: memory });
+await atomicWriteJson(settingsPath, { memoryModel: memory });
 const compiledMemoryModel = await compileOpenVikingConfig(root, memory, {
   ...qualityEnvironment,
   PCR_MEMORY_MODEL_SETTINGS: settingsPath,
@@ -426,6 +474,10 @@ writeFileSync(observerPath, [
   "      modelHash: createHash(\"sha256\").update(JSON.stringify(ctx.model ?? null)).digest(\"hex\"),",
   "      thinking: ctx.thinkingLevel,",
   "      activeTools: pi.getActiveTools().slice().sort(),",
+  `      credentialEnvironmentPresent: Object.hasOwn(process.env, ${JSON.stringify(QUALITY_CREDENTIAL_ENV)}),`,
+  `      internalCredentialEnvironmentPresent: Object.hasOwn(process.env, ${JSON.stringify(OPENVIKING_MEMORY_API_KEY_ENV)}),`,
+  `      unrelatedCredentialEnvironmentPresent: Object.hasOwn(process.env, ${JSON.stringify(QUALITY_UNRELATED_CREDENTIAL_ENV)}),`,
+  "      ambientOpenRouterCredentialPresent: Object.hasOwn(process.env, \"OPENROUTER_API_KEY\"),",
   "      systemPromptHash: createHash(\"sha256\").update(event.systemPrompt).digest(\"hex\"),",
   "    };",
   "    appendFileSync(process.env.PCR_QUALITY_ARM_OBSERVATION, `${JSON.stringify(record)}\\n`, \"utf8\");",
@@ -433,6 +485,28 @@ writeFileSync(observerPath, [
   "}",
   "",
 ].join("\n"), "utf8");
+
+writeFileSync(openVikingWrapperPath, [
+  `#!${process.execPath}`,
+  "import { spawn } from \"node:child_process\";",
+  "import { writeFileSync } from \"node:fs\";",
+  `const child = spawn(${JSON.stringify(realOpenVikingServer)}, process.argv.slice(2), { env: process.env, stdio: "inherit", shell: false });`,
+  `writeFileSync(${JSON.stringify(openVikingEnvironmentReportPath)}, JSON.stringify({ childPid: child.pid, credentialEnvironmentPresent: Object.hasOwn(process.env, ${JSON.stringify(QUALITY_CREDENTIAL_ENV)}), internalCredentialEnvironmentPresent: Object.hasOwn(process.env, ${JSON.stringify(OPENVIKING_MEMORY_API_KEY_ENV)}), ambientOpenRouterCredentialPresent: Object.hasOwn(process.env, "OPENROUTER_API_KEY"), unrelatedCredentialEnvironmentPresent: Object.hasOwn(process.env, ${JSON.stringify(QUALITY_UNRELATED_CREDENTIAL_ENV)}) }));`,
+  "let stopping = false;",
+  "let stopTimer;",
+  "function stop(signal) {",
+  "  if (stopping) return;",
+  "  stopping = true;",
+  "  if (child.exitCode === null && child.signalCode === null) child.kill(signal);",
+  "  stopTimer = setTimeout(() => { if (child.exitCode === null && child.signalCode === null) child.kill(\"SIGKILL\"); }, 2000);",
+  "  stopTimer.unref();",
+  "}",
+  "for (const signal of [\"SIGINT\", \"SIGTERM\", \"SIGHUP\"]) process.on(signal, () => stop(signal));",
+  "child.on(\"error\", (error) => { console.error(error); process.exitCode = 1; });",
+  "child.on(\"exit\", (code, signal) => { clearTimeout(stopTimer); process.exit(code ?? (signal ? 1 : 0)); });",
+  "",
+].join("\n"), { encoding: "utf8", mode: 0o700 });
+
 
 const launcherStdout = [];
 const launcherStderr = [];
@@ -443,6 +517,7 @@ const launcher = spawn("node", [join(root, "scripts/start-openviking.mjs")], {
     PCR_MEMORY_MODEL_SETTINGS: settingsPath,
     PCR_OPENVIKING_RUNTIME_DIR: runtimeDir,
     PCR_OPENVIKING_BASE_CONFIG: baseConfigPath,
+    PCR_OPENVIKING_SERVER: openVikingWrapperPath,
   },
   stdio: ["ignore", "pipe", "pipe"],
 });
@@ -464,6 +539,8 @@ try {
     await sleep(200);
   }
   assert(runtimeState?.ready === true, "Timed out waiting for real OpenViking readiness");
+  assert(existsSync(openVikingEnvironmentReportPath), "Real OpenViking child environment was not observed");
+  const openVikingChildEnvironment = JSON.parse(readFileSync(openVikingEnvironmentReportPath, "utf8"));
   const openViking = { url: `http://127.0.0.1:${port}`, runtimeDir, settingsPath, baseConfigPath, observerPath };
   const native = await runArm("native", task, openViking);
   const enhanced = await runArm("enhanced", task, openViking);
@@ -480,22 +557,41 @@ try {
     && row.provider === suite.models.memoryProvider
     && row.model_name === suite.models.memoryRoute);
   const memoryTotalTokens = memoryTokenUsage.reduce((total, row) => total + row.token_count, 0);
+  if (launcher.exitCode === null && launcher.signalCode === null) launcher.kill("SIGTERM");
+  await waitForExit(launcher);
+  const openVikingChildCleaned = !processAlive(openVikingChildEnvironment.childPid);
   const nativePassed = Object.values(native.checker).every(Boolean);
   const enhancedPassed = Object.values(enhanced.checker).every(Boolean);
   const credentialObservables = [
     readFileSync(settingsPath, "utf8"),
+    readFileSync(join(runtimeDir, "openviking.json"), "utf8"),
     JSON.stringify(compiledMemoryModel),
     Buffer.concat(launcherStdout).toString("utf8"),
     Buffer.concat(launcherStderr).toString("utf8"),
   ].join("\n");
-  const credentialIsolated = memory.api_key === isolatedOpenRouterCredential.reference
-    && compiledMemoryModel.config.vlm.api_key === isolatedOpenRouterCredential.reference
+  const taskPiCredentialEnvironmentExcluded = [native.condition, enhanced.condition].every((condition) =>
+    condition?.credentialEnvironmentPresent === false
+    && condition.internalCredentialEnvironmentPresent === false
+    && condition.unrelatedCredentialEnvironmentPresent === false
+    && condition.ambientOpenRouterCredentialPresent === false);
+  const openVikingCredentialEnvironmentIsolated = openVikingChildEnvironment.credentialEnvironmentPresent === false
+    && openVikingChildEnvironment.internalCredentialEnvironmentPresent === true
+    && openVikingChildEnvironment.ambientOpenRouterCredentialPresent === false
+    && openVikingChildEnvironment.unrelatedCredentialEnvironmentPresent === false;
+  const credentialRoutedThroughInternalEnvironment = memory.api_key === isolatedOpenRouterCredential.reference
+    && compiledMemoryModel.config.vlm.api_key === OPENVIKING_MEMORY_API_KEY_REFERENCE
+    && compiledMemoryModel[COMPILED_OPENVIKING_CREDENTIAL]?.value === isolatedOpenRouterApiKey
+    && compiledMemoryModel.credentialEnvironmentVariable === QUALITY_CREDENTIAL_ENV
     && qualityEnvironment[QUALITY_CREDENTIAL_ENV] === isolatedOpenRouterApiKey
-    && !Object.hasOwn(qualityEnvironment, "OPENROUTER_API_KEY")
+    && qualityEnvironment.OPENROUTER_API_KEY === QUALITY_AMBIENT_OPENROUTER_SENTINEL
+    && qualityEnvironment[QUALITY_UNRELATED_CREDENTIAL_ENV] === QUALITY_UNRELATED_CREDENTIAL_SENTINEL
     && process.env[QUALITY_CREDENTIAL_ENV] === inheritedQualityCredential
     && !credentialObservables.includes(isolatedOpenRouterApiKey);
   const checks = {
-    credentialIsolated,
+    credentialRoutedThroughInternalEnvironment,
+    openVikingCredentialEnvironmentIsolated,
+    openVikingChildCleaned,
+    taskPiCredentialEnvironmentExcluded,
     nativeQuality: nativePassed,
     enhancedQuality: enhancedPassed,
     enhancedContextHookVerified: enhanced.hookVerified && enhanced.observations.hookVerifiedRequests > 0,
@@ -505,7 +601,7 @@ try {
       && memoryTokenUsage.some((row) => row.token_type === "output" && row.token_count > 0)
       && memoryTotalTokens > 0,
     sameTaskModel: native.model === taskModel && enhanced.model === taskModel,
-    memoryRequestSemanticsObserved: memoryRequestSemantics?.model === taskModel
+    controlledMemoryAdapterSemanticsObserved: memoryRequestSemantics?.model === taskModel
       && memoryRequestSemantics.apiKeyForwarded === true
       && memoryRequestSemantics.reasoningForwarded === false
       && memoryRequestSemantics.temperatureForwarded === true
@@ -531,7 +627,7 @@ try {
       credentialSource: "pi-auth",
       configFingerprint: compiledMemoryModel.configFingerprint,
       explicitRequestControls: explicitMemoryRequestControls,
-      adapterRequest: memoryRequestSemantics,
+      controlledAdapterProbe: memoryRequestSemantics,
       reasoningSemantics: memoryRequestSemantics?.reasoningForwarded === false
         ? "provider-default"
         : "adapter-specific",
@@ -550,7 +646,7 @@ try {
     checks,
     arms: { native, enhanced },
     limitations: [
-      "This experiment establishes paired task quality with one fixed fixture and does not establish general quality equivalence.",
+      "This is a one-fixture paired diagnostic; it establishes that sample's task quality only when passed is true and does not establish general quality equivalence.",
       "OpenViking memory-token usage is attributed to OpenRouter; complete billed cost still comes from the OpenRouter account and remains a separate comparison stage.",
     ],
   };

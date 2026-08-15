@@ -2,15 +2,16 @@
   "schemaVersion": 2,
   "generatedBy": "scripts/validate-memory-model-runtime.mjs",
   "scope": "local",
-  "runId": "memory-model-runtime-2026-08-15T17-30-28-398Z",
-  "recordedAt": "2026-08-15T17:31:31.380Z",
+  "runId": "memory-model-runtime-2026-08-15T20-58-34-043Z",
+  "recordedAt": "2026-08-15T20:59:31.457Z",
   "piVersion": "0.84.2",
   "nodeVersion": "24.15.0",
+  "platform": "darwin",
   "openVikingVersion": "0.4.13",
   "vlmSchemaSha256": "ae867bbe4e9067170c18feb29db53c2e683dcabfef90a0f8a819bc92477acaae",
   "adapterContractSha256": "1f0e49f8d18851891f73e6a5f4fa3704406c3ea690089b113484cd5c36e8262e",
   "implementation": {
-    "sourceManifestSha256": "b5a80494ed8f78d1cb7ebe7158adc96ae23e849801e10ed441de2ee30534f48b",
+    "sourceManifestSha256": "4f249a720ef2a98581e8a9159a86e059a97bb532144e863b5bdd3da84889c4fc",
     "files": [
       {
         "path": ".pi/extensions/pi-context-memory/index.ts",
@@ -18,7 +19,7 @@
       },
       {
         "path": ".pi/extensions/pi-context-memory/memory-model-configuration.ts",
-        "sha256": "1e24578fb9ba72c80d08f30d3da5ff777bcdc6258288893f9501521b87af8017"
+        "sha256": "b2c752817d11894e06aa5150d1a98e3052de9559a308f51cd9468a5ccd3a0d9d"
       },
       {
         "path": ".pi/extensions/pi-context-memory/openviking-protocol.ts",
@@ -70,15 +71,15 @@
       },
       {
         "path": "scripts/openviking-config.py",
-        "sha256": "8da0281d71522f6a9ed2fb1d931129498881f4534015c9d91123379bae534cde"
+        "sha256": "ff25ea5c4705d54f810a5f0824ede8625e83f1b9a79eeeef2b6f55f7ba22d5fe"
       },
       {
         "path": "scripts/start-openviking.mjs",
-        "sha256": "ac37ddb9b2e3112b8f8ea7606634959962f0f2b0965504d6062e79d255d4889e"
+        "sha256": "4589184c25d44bf18c5e97934d252a6f7728f6db10991937531e84f85dea3a21"
       },
       {
         "path": "scripts/validate-memory-model-runtime.mjs",
-        "sha256": "f04988ae0e1f2cb891d0c96d4985ea76eb195ae3c3737ca7cfdd39a8b25f07d6"
+        "sha256": "8976c00959c00cecb36b350b9a44e0cbf0d4574a97a419dc6df5737ba5e56272"
       },
       {
         "path": "scripts/validate-openviking-vlm-adapters.py",
@@ -86,7 +87,7 @@
       },
       {
         "path": "scripts/validation-evidence.mjs",
-        "sha256": "c5dd77c7ab4b42f1c426eb48bd44af1d643ef991734a6c9b0686afe93a2b0145"
+        "sha256": "c769b4ee116bba775961c0b7ce48571a4df3c52061d51cf95d6e0285f5a221ae"
       },
       {
         "path": "scripts/validation-suite.mjs",
@@ -97,7 +98,7 @@
         "sha256": "910184bff539fd56b4b7f8fc2ee46439f3113c7394c1538d60ef3a5e3c78f094"
       }
     ],
-    "specificationManifestSha256": "f87a241f1ae771d03c0e868e3395873ba33faaf6551869f93a2aec0e6cdc7b8e",
+    "specificationManifestSha256": "2d90a50bf6cb504507ad5ee7377d95b06a2f0b78d705a9d97ae00170100a7d7f",
     "specificationFiles": [
       {
         "path": ".python-version",
@@ -109,18 +110,18 @@
       },
       {
         "path": "docs/validation/README.md",
-        "sha256": "68f66a21b9cb6457fd2b8a4a125ac9888164b1aefda6a1a43a4593dca5a0db48"
+        "sha256": "fcb69766fc4b3de4fef7ffc2731ff6fd2b7897c9f67047eeb0a417ad8f4ee40a"
       },
       {
         "path": "docs/validation/memory-model-runtime.md",
-        "sha256": "da21d9fe0e87c9eca411e2832507aaa67971a8af2030e6653415e8b30aad474e"
+        "sha256": "07411a7ce71a9d0c09b8155243030ebbad7f14b8bde6eec95cf9a0e3c7dc5bf2"
       },
       {
         "path": "validation/suite.json",
         "sha256": "2f34c5cec5f73f972887aaeb0ad7decf734500911f7ea0412061d33deb3d139b"
       }
     ],
-    "gitCommit": "b15c9905e23a20ddf608e644433afbdddde65600",
+    "gitCommit": "58e68da7474569e78aea01ba4e6cf7ec06074491",
     "workingTreeDirty": true
   },
   "passed": true,
@@ -133,10 +134,12 @@
     "generatedConfigParsed": true,
     "providerDefaultsNotOverridden": true,
     "deterministicFingerprint": true,
-    "environmentReferencesExpanded": true,
-    "apiKeyFormsPreserved": true,
+    "credentialRotationChangesConfigFingerprint": true,
+    "credentialsBoundToInternalEnvironment": true,
+    "generatedConfigExcludesCredentialValues": true,
+    "apiKeyFormsResolved": true,
     "apiKeysBoundToSettings": true,
-    "codexNativeCredentialPreserved": true,
+    "codexNativeCredentialConfigurationPreserved": true,
     "credentialDiagnosticsRedacted": true,
     "piCredentialInjectedIntoIsolatedEnvironment": true,
     "missingReferencedCredentialRejected": true,
@@ -158,8 +161,15 @@
     "targetPortPreflightPreservesInstance": true,
     "preflightPreservesInstance": true,
     "orderedRestart": true,
-    "runtimeCredentialsProtected": true,
+    "childCredentialEnvironmentIsolated": true,
+    "removedReferenceRemainsExcluded": true,
+    "sourceOnlyCredentialEnvironmentEmpty": true,
+    "rotatedCredentialReferencesExcluded": true,
+    "referencedCredentialsRemainExcludedWithDirectKey": true,
+    "configurationFilesRestricted": true,
+    "runtimeCredentialValuesNotPersisted": true,
     "launcherLogsExcludeCredentials": true,
+    "childCredentialOutputRedacted": true,
     "operationDeadlinePublished": true,
     "operationDeadlineCoversFailureCleanup": true,
     "wrongLaunchRejected": true,
@@ -187,6 +197,7 @@
     "unknownPortPreserved": true,
     "launcherOwnershipProtected": true,
     "staleLifecycleLockRequiresExplicitRecovery": true,
+    "invalidColdStartCredentialExcluded": true,
     "invalidColdStartKeepsSourceRuntime": true,
     "unrelatedReadyNotReconciled": true
   },

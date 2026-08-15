@@ -232,11 +232,14 @@ const DEFINITIONS = {
     evidencePath: "validation/evidence/context-quality.json",
     generatedBy: "scripts/validate-context-quality.mjs",
     requiredChecks: [
-      "credentialIsolated",
+      "credentialRoutedThroughInternalEnvironment",
+      "taskPiCredentialEnvironmentExcluded",
       "enhancedContextHookVerified",
       "enhancedQuality",
-      "memoryRequestSemanticsObserved",
+      "controlledMemoryAdapterSemanticsObserved",
       "memoryUsageAttributed",
+      "openVikingCredentialEnvironmentIsolated",
+      "openVikingChildCleaned",
       "nativeQuality",
       "pairedConditions",
       "realWorkingMemoryReady",
@@ -273,13 +276,15 @@ const DEFINITIONS = {
     generatedBy: "scripts/validate-memory-model-runtime.mjs",
     requiredChecks: [
       "adapterProtocolsCovered",
-      "apiKeyFormsPreserved",
+      "apiKeyFormsResolved",
       "apiKeysBoundToSettings",
       "automaticConfigErrorReported",
       "azureFieldRejected",
       "branchUnchanged",
       "childExitPublished",
-      "codexNativeCredentialPreserved",
+      "childCredentialEnvironmentIsolated",
+      "childCredentialOutputRedacted",
+      "codexNativeCredentialConfigurationPreserved",
       "commandNoProviderRequests",
       "commentedTemplateCreated",
       "concurrentLauncherRejected",
@@ -287,10 +292,13 @@ const DEFINITIONS = {
       "configCommandReadOnly",
       "configurationDiagnosticContentHashed",
       "credentialDiagnosticsRedacted",
+      "credentialRotationChangesConfigFingerprint",
+      "configurationFilesRestricted",
       "configuredAndRunningReportedSeparately",
       "deadChildReadySuppressed",
       "deterministicFingerprint",
-      "environmentReferencesExpanded",
+      "credentialsBoundToInternalEnvironment",
+      "generatedConfigExcludesCredentialValues",
       "invalidDesiredConfigPreservesRunningInstance",
       "emptyConfigurationAccepted",
       "emptyConfigurationDisablesModel",
@@ -298,6 +306,7 @@ const DEFINITIONS = {
       "existingSymlinksPreserved",
       "generatedConfigParsed",
       "interruptedControlOperationCompletes",
+      "invalidColdStartCredentialExcluded",
       "invalidColdStartKeepsSourceRuntime",
       "invalidConfigDiagnosed",
       "jsoncConfigurationParsed",
@@ -321,9 +330,13 @@ const DEFINITIONS = {
       "providerDefaultsNotOverridden",
       "reviewedConfigurationAdapterSurface",
       "readinessTimeoutPublished",
-      "runtimeCredentialsProtected",
+      "referencedCredentialsRemainExcludedWithDirectKey",
+      "removedReferenceRemainsExcluded",
+      "rotatedCredentialReferencesExcluded",
+      "runtimeCredentialValuesNotPersisted",
       "schemaObserved",
       "sharedUserConfig",
+      "sourceOnlyCredentialEnvironmentEmpty",
       "splitCredentialRuntimeAvailable",
       "signalCleansOwnedChild",
       "staleLifecycleLockRequiresExplicitRecovery",
@@ -637,15 +650,15 @@ export function stableEvidenceMismatches(root, key, evidence) {
       || !Array.isArray(evidence?.memoryModelCondition?.explicitRequestControls)
       || evidence.memoryModelCondition.explicitRequestControls.length !== 0
       || evidence.models?.memory !== models.memory
-      || evidence.memoryModelCondition.adapterRequest?.adapter !== "LiteLLM OpenRouter"
-      || evidence.memoryModelCondition.adapterRequest?.model !== models.task
-      || evidence.memoryModelCondition.adapterRequest?.apiKeyForwarded !== true
-      || evidence.memoryModelCondition.adapterRequest?.reasoningForwarded !== false
-      || evidence.memoryModelCondition.adapterRequest?.temperatureForwarded !== true
-      || evidence.memoryModelCondition.adapterRequest?.temperature !== 0
-      || evidence.memoryModelCondition.adapterRequest?.timeoutForwarded !== true
+      || evidence.memoryModelCondition.controlledAdapterProbe?.adapter !== "LiteLLM OpenRouter"
+      || evidence.memoryModelCondition.controlledAdapterProbe?.model !== models.task
+      || evidence.memoryModelCondition.controlledAdapterProbe?.apiKeyForwarded !== true
+      || evidence.memoryModelCondition.controlledAdapterProbe?.reasoningForwarded !== false
+      || evidence.memoryModelCondition.controlledAdapterProbe?.temperatureForwarded !== true
+      || evidence.memoryModelCondition.controlledAdapterProbe?.temperature !== 0
+      || evidence.memoryModelCondition.controlledAdapterProbe?.timeoutForwarded !== true
       || evidence.memoryModelCondition.reasoningSemantics !== "provider-default") {
-      mismatches.push("memory model request-control evidence is missing");
+      mismatches.push("controlled memory adapter evidence is missing");
     }
     const tokenRows = evidence?.openVikingUsage?.tokenRows;
     const memoryTokenRows = Array.isArray(tokenRows)

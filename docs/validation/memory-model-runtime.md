@@ -17,12 +17,14 @@
 - 上游新增未知 Provider 不影响已有受支持配置；
 - 模板说明必要字段、认证入口和官方路由来源，不复制完整 Provider 目录；
 - 默认路径严格位于隔离 HOME 的 `.pi/pi-context-memory.jsonc`；
-- 缺失文件以 `0600` 原子独占创建，已有普通文件只收紧权限而不改写内容；
+- 缺失用户配置原子独占创建，已有普通文件只收紧权限而不改写内容；当前 POSIX runner 核对 `0600`；
 - 普通注释、字符串 URL 和尾逗号正确解析；
 - 语法和语义错误形成带路径的脱敏诊断；
-- 直接 key 与 `$NAME` / `${NAME}` 环境引用原样编译到 `0600` 运行配置；
+- direct key、`$NAME` 与 `${NAME}` 都产生只含固定 `${PCR_OPENVIKING_MEMORY_API_KEY}` 引用的运行配置；不可序列化的编译凭据仅在内存中携带，凭据轮换改变配置指纹；
+- 受控 Launcher 覆盖 `$A → $B → direct key / null` 与不可解析配置的冷启动；带显式凭据的 child 只由 Launcher 注入当前内部变量，不含用户引用、ambient `OPENROUTER_API_KEY` 或无关 Provider sentinel，并用验证凭据哈希确认采用当前值；source-only child 不注入任何环境变量；
+- 实际 OpenRouter 验证通过 `pi auth print-api-key --provider openrouter` 复用 Pi 凭证；任务 Pi observer 观测隔离变量、内部变量和 ambient `OPENROUTER_API_KEY` 均不存在；真实 OpenViking wrapper 观测只有内部变量存在，用户隔离变量与 ambient key 不存在，不记录任何值，并在结束时确认真实 PID 已退出；
 - 必要凭据缺失或引用变量未设置时在停止旧实例前失败；
-- 无需 API key 的来源使用其原生认证；
+- 无 `api_key` 配置不会隐式继承 ambient 认证环境；需要环境变量的原生认证保持未支持，直到具有独立配置契约与 actual 证据；
 - key、OAuth token、云凭据和认证响应不进入状态、日志、evidence 或 Pi session；
 - 每个已支持 Provider/模型/API 精确匹配一个带版本与指纹的 MemoryRuntimeProfile；用户配置不接受 profile 内部字段或任意请求体透传；
 - profile 的 thinking、temperature、stream、maxInput、maxOutput、requestTimeout、maxRetries、maxConcurrency、capabilityLeaseTtl、renewalLead 和 adapterVersion 都在目标 Provider 最终请求与运行观测中得到实际验证；

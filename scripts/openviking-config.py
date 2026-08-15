@@ -1,15 +1,14 @@
 #!/usr/bin/env python3
 import hashlib
 import json
-import os
-import re
 import sys
 from pathlib import Path
 from copy import deepcopy
 
 from openviking import __version__ as openviking_version
 from openviking_cli.utils.config import OpenVikingConfig, VLMConfig
-ENV_REFERENCE = re.compile(r"^\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))$")
+OPENVIKING_MEMORY_API_KEY_ENV = "PCR_OPENVIKING_MEMORY_API_KEY"
+OPENVIKING_MEMORY_API_KEY_REFERENCE = f"${{{OPENVIKING_MEMORY_API_KEY_ENV}}}"
 ADAPTER_CONTRACT_PATH = Path(__file__).resolve().parents[1] / "config" / "openviking-adapter-contract.json"
 
 
@@ -161,21 +160,14 @@ def compile_config(payload):
     api_key_required = requires_api_key(descriptor, setting["model"])
     if api_key_required and not api_key:
         raise ValueError(f"api_key is required for OpenViking provider {provider}")
-    credential_secrets = []
-    if api_key:
-        credential_secrets.append(api_key)
-        reference = ENV_REFERENCE.fullmatch(api_key)
-        if reference:
-            environment_name = reference.group(1) or reference.group(2)
-            environment_value = os.environ.get(environment_name)
-            if not environment_value or not environment_value.strip():
-                raise ValueError(f"api_key references unset environment variable {environment_name}")
-            credential_secrets.append(environment_value)
+    credential_secrets = [api_key] if api_key else []
     vlm = {
         "provider": provider,
         "model": setting["model"],
     }
-    for field in ("api_key", "api_base", "api_version"):
+    if api_key:
+        vlm["api_key"] = OPENVIKING_MEMORY_API_KEY_REFERENCE
+    for field in ("api_base", "api_version"):
         if field in setting:
             vlm[field] = setting[field]
 
@@ -190,7 +182,10 @@ def compile_config(payload):
         "provider": provider,
         "model": setting["model"],
         "settingsFingerprint": stable_hash(setting),
-        "configFingerprint": stable_hash(generated),
+        "configFingerprint": stable_hash({
+            "config": generated,
+            "credentialFingerprint": stable_hash(api_key) if api_key else None,
+        }),
     }
 
 

@@ -8,13 +8,13 @@ OpenViking 原生配置、生成配置格式和进程通信由系统设计管理
 
 ## 2. 目标与边界
 
-系统在 `~/.pi/pi-context-memory.jsonc` 维护用户级记忆模型配置。文件不存在时创建合法模板，并以注释列出已有实际纵向证据的 Provider/模型支持范围、必要连接字段和认证入口；只有协议适配或替身证据的组合不作为已支持项。已有文件由用户拥有，系统不自动覆盖，只在读取时把权限收紧为 `0600`。
+系统在 `~/.pi/pi-context-memory.jsonc` 维护用户级记忆模型配置。文件不存在时创建合法模板，并以注释列出已有实际纵向证据的 Provider/模型支持范围、必要连接字段和认证入口；只有协议适配或替身证据的组合不作为已支持项。已有文件由用户拥有，系统不自动覆盖；直接填写 key 时该文件包含实际值，环境引用只保存变量名。
 
 记忆模型设置独立于 Pi `/model` 的任务模型设置。修改或应用记忆模型配置不改变任务模型、Pi session 或当前 branch，也不产生任务模型请求。
 
 用户不配置 thinking、temperature、timeout、retry、并发、租约或 Working Memory 策略。系统为已支持的精确 Provider/模型/API 使用经过实际验证的内部运行 profile；无法匹配 profile 的模型目标返回 unsupported，不依赖上游默认值或自动切换其它模型。
 
-`memoryModel.api_key` 归属于当前 Provider 或 LiteLLM 来源，可直接填写，也可使用 `$NAME` 或 `${NAME}` 引用启动器环境变量。配置、运行状态、诊断、日志和 Pi session 不回显凭据。
+`memoryModel.api_key` 归属于当前 Provider 或 LiteLLM 来源，可直接填写，也可使用 `$NAME` 或 `${NAME}` 引用 Launcher 环境变量。预检把它解析为内存值；生成配置只保存固定内部引用，实际值只在启动受管 OpenViking 时进入固定内部环境变量。切换引用、direct key 或 `null` 不会让已使用的用户变量进入后续子进程。配置、运行状态、诊断、日志和 Pi session 不回显凭据。
 
 扩展启用时，只有当前记忆模型实际能力已验证，本扩展才确认增强输出。`memoryModel: null` 时保持初始化/故障；请求到达后只执行本扩展已定义的等待或 abort，transport 结果另行观测，后续由用户决定。
 
@@ -79,7 +79,7 @@ OpenViking 原生配置、生成配置格式和进程通信由系统设计管理
 ## 7. 完成条件
 
 - 用户只配置记忆模型 Provider、模型、可选 `api_key` 和该来源必要连接字段；
-- 用户配置和生成配置以仅当前用户可读写权限保存；
+- 环境引用的实际值不进入用户配置或生成配置；直接 key 只存在于用户自行填写的配置；
 - 界面、状态、诊断、日志、evidence 和 Pi session 不回显凭据；
 - `/memory-model` 准确区分用户配置、内部运行 profile、运行实例、服务 readiness 和模型能力；
 - 只有最终实际记忆请求已证明生效的 profile 才进入支持范围，且不配置 Provider/model fallback；

@@ -44,7 +44,7 @@
 
 ### 3.2 付费验证授权
 
-[`../../validation/suite.json`](../../validation/suite.json) 固定用户已选择的 Pi protocol profile、任务/记忆 Provider 路由、模型和验证政策；runner 在开始前将实际 API、OpenViking 锁定版本、extensionCompositionFingerprint 与 handler 顺序、MemoryRuntimeProfile/adapter、凭据指纹、fixture、期限及停止条件补全为带哈希的 resolved run manifest。沿用这些模型坐标的付费验证无需逐次授权；Provider/模型变化仍交由用户决定。扩展组合变化只使原兼容性证据失效并要求重新观测，不授权本扩展调整加载顺序。
+[`../../validation/suite.json`](../../validation/suite.json) 固定用户已选择的 Pi protocol profile、任务/记忆 Provider 路由、模型和验证政策；runner 在开始前将实际 API、OpenViking 锁定版本、extensionCompositionFingerprint 与 handler 顺序、MemoryRuntimeProfile/adapter、凭据指纹、fixture、期限及停止条件补全为带哈希的 resolved run manifest。OpenRouter 验证复用 Pi `auth` 中当前凭证，准备与隔离边界由 [`memory-model-runtime.md`](memory-model-runtime.md) 统一规定。沿用这些模型坐标的付费验证无需逐次授权；Provider/模型变化仍交由用户决定。扩展组合变化只使原兼容性证据失效并要求重新观测，不授权本扩展调整加载顺序。
 
 只有需要改变任务 Provider、任务模型、记忆 Provider 或记忆模型时才停止并请求用户决定。认证、配额或服务故障按 blocked/failed 规则记录，不能未经授权改用其它 Provider 或模型。
 
