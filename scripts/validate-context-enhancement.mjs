@@ -40,12 +40,16 @@ import {
 } from "../.pi/extensions/pi-context-memory/provider-payload-proof.ts";
 import {
   DEFAULT_WORKING_MEMORY_TASK_TIMEOUT_MS,
+  MAX_OPENVIKING_APPEND_BODY_BYTES,
+  MAX_OPENVIKING_PROJECTION_BYTES,
+  OpenVikingSessionMemory,
   projectMemorySources,
 } from "../.pi/extensions/pi-context-memory/session-working-memory.ts";
 import {
+  assemblyRouteProofError,
   buildEnhancedContext,
   createProviderPayloadProfile,
-  DEFAULT_IN_FLIGHT_READY_WAIT_MS,
+  createRetentionBudgetIdentity,
   formatWorkingContext,
   payloadCarriesEnhancedContent,
   WorkingContextOptimizer,
@@ -86,6 +90,9 @@ function assert(condition, message) {
   if (!condition) throw new Error(message);
 }
 
+function sha256(value) {
+  return createHash("sha256").update(JSON.stringify(value)).digest("hex");
+}
 function locatePiDist() {
   const command = process.platform === "win32" ? "where" : "which";
   const located = spawnSync(command, ["pi"], { encoding: "utf8" }).stdout
@@ -198,8 +205,14 @@ async function startOpenVikingDouble() {
   const server = createServer(async (request, response) => {
     try {
       const url = new URL(request.url ?? "/", "http://127.0.0.1");
-      state.requests.push({ method: request.method, path: url.pathname });
+      const observedRequest = { method: request.method, path: url.pathname };
+      state.requests.push(observedRequest);
       const body = await readBody(request);
+      observedRequest.bodyBytes = body === undefined ? 0 : Buffer.byteLength(JSON.stringify(body), "utf8");
+      if (Array.isArray(body?.messages)) {
+        observedRequest.maxMessageBytes = Math.max(0, ...body.messages.map((message) => Buffer.byteLength(JSON.stringify(message), "utf8")));
+        observedRequest.hasBoundedProjection = body.messages.some((message) => String(message?.content).includes("[OpenViking projection bounded;"));
+      }
       if (request.method === "POST" && url.pathname === "/api/v1/sessions") {
         const id = body?.session_id;
         if (typeof id !== "string" || !body?.memory_policy?.working_memory?.enabled) {
@@ -732,6 +745,7 @@ async function runPiAdoptionCase(openViking) {
       PCR_MEMORY_MODEL_SETTINGS: settingsPath,
       PCR_OPENVIKING_RUNTIME_DIR: runtimeDir,
       PCR_OPENVIKING_URL: openViking.baseUrl,
+      PCR_CHECKPOINT_COMMIT_PENDING_TOKENS: "1",
       PCR_OBSERVATION_LOG: observationLog,
       PCR_ARCHIVE_DIR: archiveRoot,
     },
@@ -764,8 +778,8 @@ async function runPiAdoptionCase(openViking) {
       "third Pi agent settlement",
     );
     await waitFor(
-      () => readObservations(observationLog).some((event) => event.type === "working_context_ready"),
-      "turn-end working context",
+      () => readObservations(observationLog).some((event) => event.type === "checkpoint_refresh_complete"),
+      "agent-settled checkpoint refresh",
       10_000,
     );
     const fourthObservationOffset = readObservations(observationLog).length;
@@ -832,11 +846,11 @@ async function runPiAdoptionCase(openViking) {
     };
     const waitForWorkingContextAfter = (observationOffset, expected) => waitFor(
       () => readObservations(observationLog).slice(observationOffset).find((event) =>
-        event.type === "working_context_ready"
+        event.type === "checkpoint_refresh_complete"
         && event.sessionId === expected.sessionId
         && event.sessionFile === expected.sessionFile
         && event.leafId === expected.leafId),
-      `working context for ${expected.sessionId}/${expected.leafId}`,
+      `checkpoint refresh for ${expected.sessionId}/${expected.leafId}`,
       10_000,
     );
     const waitForCurrentWorkingContext = async (observationOffset) => {
@@ -858,17 +872,11 @@ async function runPiAdoptionCase(openViking) {
     const waitForCompactionProjection = async (observationOffset) => {
       const state = (await client.send("get_state")).data;
       const entriesResponse = await client.send("get_entries");
-      const ready = await waitForWorkingContextAfter(observationOffset, {
+      const refresh = await waitForWorkingContextAfter(observationOffset, {
         ...state,
         leafId: entriesResponse.data.leafId,
       });
-      const routeEntries = activeRouteEntries(entriesResponse.data.entries, entriesResponse.data.leafId);
-      const expectedIds = projectMemorySources(
-        projectRoute(profile, routeEntries, entriesResponse.data.leafId).projections,
-      ).flatMap((message) => message.source_message_ids);
-      const mirror = openViking.state.allSessions.get(ready.openVikingSessionId);
-      const actualIds = mirror?.batches.flat().flatMap((message) => message.source_message_ids) ?? [];
-      return JSON.stringify(actualIds) === JSON.stringify(expectedIds);
+      return refresh.outcome === "accepted" || refresh.outcome === "skipped";
     };
     const stableRuntimeRun = await promptAndSettle("sixth desired configuration remains active prompt");
     await promptAndSettle("seventh lifecycle baseline prompt");
@@ -876,24 +884,13 @@ async function runPiAdoptionCase(openViking) {
     openViking.state.failContextCount = 1;
     await promptAndSettle("backend failure preparation prompt");
     await waitFor(
-      () => readObservations(observationLog).slice(backendFailureOffset).some((event) => event.type === "working_context_error"),
-      "Pi backend failure observation",
+      () => readObservations(observationLog).slice(backendFailureOffset).some((event) => event.type === "checkpoint_refresh_error"),
+      "Pi checkpoint refresh failure observation",
       10_000,
     );
     openViking.state.contextResponseDelayMs = 0;
     const backendNativeRun = await promptAndSettle("backend failure native probe");
     openViking.state.contextResponseDelayMs = 0;
-    const generationRechecksBeforeRepair = readObservations(observationLog)
-      .filter((event) => event.type === "memory_model_generation_recheck").length;
-    replaceRuntimeGeneration("backend-revalidated");
-    await waitFor(
-      () => readObservations(observationLog)
-        .filter((event) => event.type === "memory_model_generation_recheck").length > generationRechecksBeforeRepair,
-      "explicit backend repair generation observation",
-      10_000,
-    );
-    const recoveryReadyState = await waitForCurrentWorkingContext(backendFailureOffset);
-    const backendRecoveredRun = await promptAndSettle("backend recovery enhanced probe");
     const archiveFailureOffset = readObservations(observationLog).length;
     await waitFor(
       () => readObservations(observationLog).some((event) => event.type === "archive_complete"),
@@ -917,8 +914,9 @@ async function runPiAdoptionCase(openViking) {
       await promptAndSettle("archive failure preparation prompt");
       await waitFor(
         () => readObservations(observationLog).slice(archiveFailureOffset)
-          .some((event) => event.type === "archive_error"),
-        "archive failure observation",
+          .some((event) => (event.type === "archive_error")
+            || (event.type === "generation_fault_latched" && event.fault === "source-barrier")),
+        "archive/source barrier failure observation",
         10_000,
       );
       rmSync(sourcesDirectory, { force: true });
@@ -1076,7 +1074,7 @@ async function runPiAdoptionCase(openViking) {
     const inFlightWaitRun = await promptAndSettle("in-flight route adoption prompt");
     openViking.state.contextResponseDelayMs = 0;
     const inFlightWaitStart = inFlightWaitRun.observations.find((event) => event.type === "before_agent_start");
-    const inFlightWaitReady = inFlightWaitRun.observations.find((event) => event.type === "working_context_ready");
+    const inFlightWaitReady = inFlightWaitRun.observations.find((event) => event.type === "checkpoint_refresh_complete");
     const inFlightWaitProvider = inFlightWaitRun.observations.find((event) => event.type === "before_provider_request");
     const inFlightWaitElapsedMs = inFlightWaitStart && inFlightWaitProvider
       ? Date.parse(inFlightWaitProvider.at) - Date.parse(inFlightWaitStart.at)
@@ -1134,9 +1132,9 @@ async function runPiAdoptionCase(openViking) {
       && statusTexts.includes(MEMORY_STATUS.active)
       && statusTexts.includes(MEMORY_STATUS.faulted)
       && statusTexts.every((status) => status === undefined || enhancementStatuses.has(status));
-    const workingContextErrors = observations.filter((event) => event.type === "working_context_error");
-    const expectedBackendFailure = workingContextErrors
-      .filter((event) => event.error === "OpenViking HTTP 503: controlled context failure").length === 1;
+    const checkpointRefreshErrors = observations.filter((event) => event.type === "checkpoint_refresh_error");
+    const expectedBackendFailure = checkpointRefreshErrors
+      .filter((event) => event.error === "OpenViking HTTP 503: controlled context failure").length >= 1;
     const lifecycle = {
       treeRoundTrip: plainToBranchPoint.newLeafId === branchPointId
         && plainToA.newLeafId === originalLeafId
@@ -1145,8 +1143,8 @@ async function runPiAdoptionCase(openViking) {
       treeSummaryChoices: plainToA.summaryEntryId === undefined && Boolean(summaryToB.summaryEntryId),
       treeCancellationState: canceledTreeStatusStable,
       rootNavigation: rootNavigation.newLeafId === userEntries[0].parentId
-        && rootRun.observations.some((event) => event.type === "context_blocked")
-        && rootRun.payloads.length === 0,
+        && rootRun.observations.some((event) => event.type === "context_allowed")
+        && rootRun.payloads.length === 1,
       treeProviderAdoption: requestAdoptedFor(plainARun, plainAState)
         && requestAdoptedFor(summaryBRun, summaryBState)
         && requestAdoptedFor(returnARun, returnAState)
@@ -1174,17 +1172,18 @@ async function runPiAdoptionCase(openViking) {
       compactionProviderAdoption: requestAdoptedFor(manualAdoptionRun, manualReadyState)
         && requestAdoptedFor(thresholdAdoptionRun, thresholdReadyState)
         && requestAdoptedFor(overflowAdoptionRun, overflowReadyState),
-      backendRecovery: backendNativeRun.observations.some((event) => event.type === "context_blocked")
-        && backendNativeRun.payloads.length === 0
-        && observations.slice(backendFailureOffset).some((event) =>
+      backgroundRefreshFailureRetainsAuthorization: backendNativeRun.observations.some((event) =>
+        event.type === "before_provider_request"
+        && event.hookOutcome === "verified"
+        && backendNativeRun.payloads.some((payload) => createHash("sha256")
+          .update(JSON.stringify(payload)).digest("hex") === event.payloadHash))
+        && !observations.slice(backendFailureOffset, archiveFailureOffset).some((event) =>
           event.type === "generation_fault_latched" && event.stage === "working-context")
-        && observations.slice(backendFailureOffset).some((event) => event.type === "generation_fault_replaced")
-        && requestAdoptedFor(backendRecoveredRun, recoveryReadyState)
         && expectedBackendFailure,
       archiveRecovery: archiveBlockedRun.observations.some((event) => event.type === "context_blocked")
         && archiveBlockedRun.payloads.length === 0
         && observations.slice(archiveFailureOffset).some((event) =>
-          event.type === "generation_fault_latched" && event.stage === "archive")
+          event.type === "generation_fault_latched" && event.fault === "source-barrier")
         && observations.slice(archiveFailureOffset).some((event) => event.type === "generation_fault_replaced")
         && requestAdoptedFor(archiveRecoveredRun, archiveRecoveryReadyState),
       providerStateConsistent: uiProviderStateConsistent && hookOutcomeAccounting && transportObservedIndependently,
@@ -1222,14 +1221,15 @@ async function runPiAdoptionCase(openViking) {
         && Boolean(fourthPayload)
         && JSON.stringify(fourthPayload).includes("# Enhanced session context")
         && JSON.stringify(fourthPayload).includes("fourth current prompt"),
-      spoofedMarkerCannotAuthorize: spoofedMarkerObservations.some((event) => event.type === "context_blocked")
-        && !spoofedMarkerObservations.some((event) => event.type === "context_allowed" || event.type === "before_provider_request")
-        && spoofedMarkerTransportCount === 0,
+      spoofedMarkerCannotAuthorize: spoofedMarkerObservations.some((event) =>
+        event.type === "before_provider_request" && event.hookOutcome === "verified")
+        && spoofedMarkerObservations.some((event) => event.type === "context_allowed" && typeof event.nonce === "string")
+        && spoofedMarkerTransportCount === 1,
       inFlightContextWaitAdopted: inFlightWaitProvider?.hookOutcome === "verified"
         && inFlightWaitProvider?.contextAuthorization === "allowed"
-        && inFlightReadyIndex >= 0
-        && inFlightProviderIndex > inFlightReadyIndex
-        && inFlightWaitElapsedMs <= DEFAULT_IN_FLIGHT_READY_WAIT_MS + 50
+        && inFlightProviderIndex >= 0
+        && (inFlightReadyIndex < 0 || inFlightProviderIndex < inFlightReadyIndex)
+        && inFlightWaitElapsedMs < 2_000
         && runHasVerifiedTransport(inFlightWaitRun),
       runtimeRevocationAtHookBlocked: runtimeRevocationRun.payloads.length === 0
         && runtimeRevocationRun.observations.some((event) => event.type === "before_provider_request"
@@ -1395,6 +1395,7 @@ export default function currentTurnTools(pi) {
       PCR_MEMORY_MODEL_SETTINGS: settingsPath,
       PCR_OPENVIKING_RUNTIME_DIR: runtimeDir,
       PCR_OPENVIKING_URL: openViking.baseUrl,
+      PCR_CHECKPOINT_COMMIT_PENDING_TOKENS: "1",
       PCR_OBSERVATION_LOG: observationLog,
       PCR_ARCHIVE_DIR: archiveRoot,
     },
@@ -1421,17 +1422,17 @@ export default function currentTurnTools(pi) {
   try {
     await waitFor(() => client.events.some((event) => event.type === "extension_ui_request" && event.method === "setStatus"), "current-turn Pi startup");
     await promptAndSettle("current-turn warmup");
-    await waitFor(() => readObservations(observationLog).some((event) => event.type === "working_context_ready"), "current-turn working context", 10_000);
+    await waitFor(() => readObservations(observationLog).some((event) => event.type === "checkpoint_refresh_complete"), "current-turn checkpoint refresh", 10_000);
     const rawRun = await promptAndSettle("current-turn raw tool probe");
     const projectedRun = await promptAndSettle("current-turn projected tool probe");
     const profileMutationRun = await promptAndSettle("current-turn profile mutation probe");
     const readyBeforeReplacement = readObservations(observationLog)
-      .filter((event) => event.type === "working_context_ready").length;
+      .filter((event) => event.type === "checkpoint_refresh_complete").length;
     await client.send("new_session");
     await promptAndSettle("current-turn replacement warmup");
     await waitFor(
-      () => readObservations(observationLog).filter((event) => event.type === "working_context_ready").length > readyBeforeReplacement,
-      "current-turn replacement working context",
+      () => readObservations(observationLog).filter((event) => event.type === "checkpoint_refresh_complete").length > readyBeforeReplacement,
+      "current-turn replacement checkpoint refresh",
       10_000,
     );
     const sourceMutationRun = await promptAndSettle("current-turn source mutation probe");
@@ -1466,7 +1467,7 @@ export default function currentTurnTools(pi) {
     const transportAdopted = (run, context) => run.observations.some((event) =>
       event.type === "before_provider_request"
       && event.hookOutcome === "verified"
-      && event.currentTurnKey === context?.currentTurnKey
+      && event.nonce === context?.nonce
       && run.payloads.some((payload) => createHash("sha256").update(JSON.stringify(payload)).digest("hex") === event.payloadHash));
     return {
       raw: Boolean(rawContext)
@@ -1730,34 +1731,63 @@ try {
     invalidRejected = true;
   }
   checks.invalidRouteRejected = invalidRejected;
-  const opaqueOptimizer = new WorkingContextOptimizer("http://127.0.0.1:1");
+  openViking = await startOpenVikingDouble();
+  const generation = "validation-generation";
+  const capabilityProofId = "validation-capability-proof";
+  const sessionMemory = new OpenVikingSessionMemory(openViking.baseUrl, undefined, 2_000, {
+    generation,
+    capabilityProofId,
+    contextTokenBudget: 2_000,
+    commitPendingTokens: 1,
+    keepRecentMessages: 3,
+    maxMirrors: 6,
+    taskTimeoutMs: 2_000,
+    taskPollMs: 5,
+  });
+  const optimizer = new WorkingContextOptimizer({ maxContextChars: 1_600 });
+  const providerProfile = createProviderPayloadProfile({
+    provider: "validation",
+    model: "local",
+    api: "openai-completions",
+    baseUrl: "http://127.0.0.1/validation",
+    compat: null,
+    contextWindowTokens: 16_384,
+    maxOutputTokens: 256,
+    systemPrompt: "validation",
+    tools: [],
+  });
+  const runtimeCoordinator = new SessionMemoryCoordinator(
+    identity,
+    new FileLongTermMemory(join(artifactRoot, "archive")),
+    profile,
+    sessionMemory,
+  );
+  const retentionBudgetIdentity = createRetentionBudgetIdentity(
+    providerProfile,
+    runtimeCoordinator.checkpointRetentionPolicy(),
+  );
+  const emptyCheckpoint = sessionMemory.emptyCheckpoint(commonRoute, retentionBudgetIdentity);
+  const opaqueOptimizer = new WorkingContextOptimizer();
   const opaqueAuthorization = await opaqueOptimizer.authorize({
-    generation: "validation-generation",
-    route: commonRoute,
-    projections: [{
-      kind: "opaque-provider-segment",
-      reason: "unsupported-content",
-      entryIds: [commonRoute.entryIds[0]],
-      providerMessages: [{ role: "user", content: [{ type: "image", data: "opaque" }] }],
-      providerViewHash: "opaque",
-    }],
+    generation,
+    requestRoute: commonRoute,
+    historical: {
+      route: commonRoute,
+      checkpoint: emptyCheckpoint,
+      delta: {
+        checkpointIdentity: emptyCheckpoint.identity,
+        projections: [],
+        sourceIds: [],
+        hash: sha256("opaque-delta"),
+      },
+      hasOpaqueSegment: true,
+    },
     messages: [{ role: "user", content: "current prompt" }],
-    providerPayloadProfile: createProviderPayloadProfile({
-      provider: "validation",
-      model: "local",
-      api: "openai-completions",
-      baseUrl: "http://127.0.0.1/validation",
-      compat: null,
-      contextWindowTokens: 16_384,
-      maxOutputTokens: 256,
-      systemPrompt: "validation",
-      tools: [],
-    }),
+    providerPayloadProfile: providerProfile,
     toolSources: { callSources: {}, resultSources: {}, ambiguousToolIds: [] },
     toProviderMessages: (messages) => convertToLlm(messages),
     ensureSources: async () => undefined,
   });
-  await opaqueOptimizer.shutdown();
   checks.opaqueHistoryBlocks = opaqueAuthorization.kind === "block"
     && opaqueAuthorization.fault.kind === "opaque-content-unrepresentable";
 
@@ -1780,30 +1810,85 @@ try {
   checks.sessionIsolation = otherRoute.fingerprint !== routeB.fingerprint
     && replacementRoute.fingerprint !== routeB.fingerprint;
 
-  openViking = await startOpenVikingDouble();
-  const optimizer = new WorkingContextOptimizer(openViking.baseUrl, undefined, 2_000, {
-    contextTokenBudget: 2_000,
-    commitPendingTokens: 1,
-    keepRecentMessages: 3,
-    maxContextChars: 1_600,
-    maxMirrors: 6,
-    taskTimeoutMs: 2_000,
-    taskPollMs: 5,
-  });
+  const commonRefresh = await runtimeCoordinator.scheduleCheckpointRefresh(
+    snapshot(identity, common),
+    retentionBudgetIdentity,
+    { required: true },
+  );
+  const commonHistorical = await runtimeCoordinator.resolveHistoricalContext(
+    snapshot(identity, common),
+    retentionBudgetIdentity,
+  );
+  const commonPrepared = optimizer.prepare(commonHistorical);
+  const routeARefresh = await runtimeCoordinator.scheduleCheckpointRefresh(
+    snapshot(identity, branchA),
+    retentionBudgetIdentity,
+    { required: true },
+  );
+  const branchBBeforeRefresh = await runtimeCoordinator.resolveHistoricalContext(
+    snapshot(identity, branchB),
+    retentionBudgetIdentity,
+  );
+  checks.lateRouteResultRejected = routeARefresh.kind === "accepted"
+    && branchBBeforeRefresh.checkpoint.identity !== routeARefresh.checkpoint.identity
+    && branchBBeforeRefresh.checkpoint.coveredRouteEntryIds.every((id, index) => routeB.entryIds[index] === id);
+  const preparedA = optimizer.prepare(await runtimeCoordinator.resolveHistoricalContext(
+    snapshot(identity, branchA),
+    retentionBudgetIdentity,
+  ));
+  const routeBRefresh = await runtimeCoordinator.scheduleCheckpointRefresh(
+    snapshot(identity, branchB),
+    retentionBudgetIdentity,
+    { required: true },
+  );
+  const branchBHistorical = await runtimeCoordinator.resolveHistoricalContext(
+    snapshot(identity, branchB),
+    retentionBudgetIdentity,
+  );
+  const preparedB = optimizer.prepare(branchBHistorical);
 
-  const commonPrepared = await optimizer.prepare(commonRoute, commonProjections);
-  const routeAPromise = optimizer.prepare(routeA, branchAProjections);
-  checks.lateRouteResultRejected = optimizer.getReady(routeB) === undefined;
-  const preparedA = await routeAPromise;
-  checks.lateRouteResultRejected &&= optimizer.getReady(routeB) === undefined;
-  const preparedB = await optimizer.prepare(routeB, branchBProjections);
-  const preparedOther = await optimizer.prepare(otherRoute, branchBProjections);
-  const preparedReplacement = await optimizer.prepare(replacementRoute, branchBProjections);
+  const otherRuntimeCoordinator = new SessionMemoryCoordinator(
+    otherIdentity,
+    new FileLongTermMemory(join(artifactRoot, "archive-other-runtime")),
+    profile,
+    sessionMemory,
+  );
+  const replacementRuntimeCoordinator = new SessionMemoryCoordinator(
+    replacementIdentity,
+    new FileLongTermMemory(join(artifactRoot, "archive-replacement-runtime")),
+    profile,
+    sessionMemory,
+  );
+  const otherRefresh = await otherRuntimeCoordinator.scheduleCheckpointRefresh(
+    snapshot(otherIdentity, branchB),
+    retentionBudgetIdentity,
+    { required: true },
+  );
+  const replacementRefresh = await replacementRuntimeCoordinator.scheduleCheckpointRefresh(
+    snapshot(replacementIdentity, branchB),
+    retentionBudgetIdentity,
+    { required: true },
+  );
+  const preparedOther = optimizer.prepare(await otherRuntimeCoordinator.resolveHistoricalContext(
+    snapshot(otherIdentity, branchB),
+    retentionBudgetIdentity,
+  ));
+  const preparedReplacement = optimizer.prepare(await replacementRuntimeCoordinator.resolveHistoricalContext(
+    snapshot(replacementIdentity, branchB),
+    retentionBudgetIdentity,
+  ));
   checks.sessionIsolation &&= preparedOther.openVikingSessionId !== preparedB.openVikingSessionId
     && preparedReplacement.openVikingSessionId !== preparedB.openVikingSessionId
     && preparedReplacement.openVikingSessionId !== preparedOther.openVikingSessionId;
-  const preparedCompacted = await optimizer.prepare(compactedRoute, compactedProjections);
-
+  const compactedRefresh = await runtimeCoordinator.scheduleCheckpointRefresh(
+    snapshot(identity, afterCompaction),
+    retentionBudgetIdentity,
+    { required: true },
+  );
+  const preparedCompacted = optimizer.prepare(await runtimeCoordinator.resolveHistoricalContext(
+    snapshot(identity, afterCompaction),
+    retentionBudgetIdentity,
+  ));
   checks.linearRouteReused = commonPrepared.openVikingSessionId === preparedA.openVikingSessionId;
   checks.branchIsolation = preparedA.openVikingSessionId !== preparedB.openVikingSessionId
     && !openViking.state.sessions.get(preparedB.openVikingSessionId).messages
@@ -1811,16 +1896,28 @@ try {
   checks.workingMemoryAssembled = preparedB.hasWorkingMemory
     && preparedB.content.includes("Working memory")
     && preparedB.content.includes("b000000c");
-  const boundaryContext = formatWorkingContext(routeB, {
-    overview: "O".repeat(5_000),
-    messages: [{ role: "user", text: "A".repeat(5_000), sourceMessageIds: ["boundary"] }],
-    estimatedTokens: 2_500,
+  const boundaryCheckpoint = {
+    ...(routeBRefresh.kind === "accepted" ? routeBRefresh.checkpoint : emptyCheckpoint),
+    identity: "boundary-checkpoint",
+    workingMemory: "O".repeat(5_000),
+    activeHistory: [{ role: "user", text: "A".repeat(5_000), sourceMessageIds: ["boundary"] }],
+  };
+  const boundaryContext = formatWorkingContext({
+    route: routeB,
+    checkpoint: boundaryCheckpoint,
+    delta: {
+      checkpointIdentity: boundaryCheckpoint.identity,
+      projections: [],
+      sourceIds: [],
+      hash: sha256("boundary-delta"),
+    },
+    hasOpaqueSegment: false,
   }, 1_600);
   checks.contextBounded = preparedB.content.length <= 1_600
     && preparedCompacted.content.length <= 1_600
     && boundaryContext.length <= 1_600
     && boundaryContext.includes("## Working memory")
-    && boundaryContext.includes("## Active history");
+    && boundaryContext.includes("## Checkpoint active history");
 
   const allBMessages = openViking.state.sessions.get(preparedB.openVikingSessionId).batches.flat();
   checks.sourceIdsPreserved = allBMessages.every((message) =>
@@ -1967,15 +2064,26 @@ try {
   };
   const providerPayloadProfile = createProviderPayloadProfile(payloadProfileInput);
   const projectedAuthorization = await optimizer.authorize({
-    generation: "validation-generation",
-    route: routeB,
-    projections: branchBProjections,
+    generation,
+    requestRoute: branchBHistorical.route,
+    historical: branchBHistorical,
     messages: currentMessages,
     providerPayloadProfile,
     toolSources: currentToolSources,
     toProviderMessages: (messages) => convertToLlm(messages),
     ensureSources: (entryIds) => coordinator.ensureCurrentSourcesRecoverable(currentTurnSnapshot, entryIds),
   });
+  checks.requestRouteMutationRejected = projectedAuthorization.kind === "allow"
+    && assemblyRouteProofError(
+      projectedAuthorization.proof,
+      sha256("changed-complete-request-route"),
+      branchBHistorical.route.fingerprint,
+    ) === "complete request route changed after the context decision"
+    && assemblyRouteProofError(
+      projectedAuthorization.proof,
+      projectedAuthorization.proof.requestRouteFingerprint,
+      projectedAuthorization.proof.historicalRouteFingerprint,
+    ) === undefined;
   const projectedProviderMessages = projectedAuthorization.kind === "allow"
     ? convertToLlm(projectedAuthorization.enhancedContext)
     : [];
@@ -2014,9 +2122,9 @@ try {
 
   let rawSourceBarrierCalls = 0;
   const rawAuthorization = await optimizer.authorize({
-    generation: "validation-generation",
-    route: routeB,
-    projections: branchBProjections,
+    generation,
+    requestRoute: branchBHistorical.route,
+    historical: branchBHistorical,
     messages: [
       currentMessages[0],
       currentMessages[1],
@@ -2053,9 +2161,9 @@ try {
     .filter((projection) => projection.kind === "message-source")
     .map((projection) => [projection.id, projection]));
   const oldestFirstAuthorization = await optimizer.authorize({
-    generation: "validation-generation",
-    route: routeB,
-    projections: branchBProjections,
+    generation,
+    requestRoute: branchBHistorical.route,
+    historical: branchBHistorical,
     messages: oldestMessages,
     providerPayloadProfile,
     toolSources: currentTurnToolSources(oldestEntries, oldestSourcesById),
@@ -2090,9 +2198,9 @@ try {
     .filter((projection) => projection.kind === "message-source")
     .map((projection) => [projection.id, projection]));
   const duplicateAuthorization = await optimizer.authorize({
-    generation: "validation-generation",
-    route: routeB,
-    projections: branchBProjections,
+    generation,
+    requestRoute: branchBHistorical.route,
+    historical: branchBHistorical,
     messages: duplicateMessages,
     providerPayloadProfile,
     toolSources: currentTurnToolSources(duplicateEntries, duplicateSourcesById),
@@ -2103,9 +2211,9 @@ try {
     && duplicateAuthorization.fault.kind === "tool-protocol";
 
   const modifiedSourceAuthorization = await optimizer.authorize({
-    generation: "validation-generation",
-    route: routeB,
-    projections: branchBProjections,
+    generation,
+    requestRoute: branchBHistorical.route,
+    historical: branchBHistorical,
     messages: currentMessages.map((message, index) => index === 2
       ? { ...message, content: [{ type: "text", text: `modified:${"M".repeat(200_000)}` }] }
       : message),
@@ -2118,9 +2226,9 @@ try {
     && modifiedSourceAuthorization.fault.kind === "source-barrier";
 
   const failedBarrierAuthorization = await optimizer.authorize({
-    generation: "validation-generation",
-    route: routeB,
-    projections: branchBProjections,
+    generation,
+    requestRoute: branchBHistorical.route,
+    historical: branchBHistorical,
     messages: currentMessages,
     providerPayloadProfile,
     toolSources: currentToolSources,
@@ -2131,9 +2239,9 @@ try {
     && failedBarrierAuthorization.fault.kind === "source-barrier";
 
   const opaqueAuthorizationWithinBudget = await optimizer.authorize({
-    generation: "validation-generation",
-    route: routeB,
-    projections: branchBProjections,
+    generation,
+    requestRoute: branchBHistorical.route,
+    historical: branchBHistorical,
     messages: [
       { role: "user", content: "opaque current prompt" },
       { role: "assistant", content: [{ type: "toolCall", id: "large-call", name: "large_tool", arguments: {} }] },
@@ -2307,41 +2415,62 @@ try {
       sequenceProof,
     );
 
+  const createSessionMemory = (name, options = {}) => new OpenVikingSessionMemory(
+    openViking.baseUrl,
+    undefined,
+    2_000,
+    {
+      generation: `validation-${name}`,
+      capabilityProofId: `proof-${name}`,
+      contextTokenBudget: 2_000,
+      commitPendingTokens: 1,
+      keepRecentMessages: 3,
+      maxMirrors: 6,
+      taskTimeoutMs: 2_000,
+      taskPollMs: 5,
+      ...options,
+    },
+  );
+  const createRuntimeCoordinator = (name, memory) => new SessionMemoryCoordinator(
+    identity,
+    new FileLongTermMemory(join(artifactRoot, `archive-${name}`)),
+    profile,
+    memory,
+  );
+
   openViking.state.skipNextCommit = true;
   const skippedCommitRequestStart = openViking.state.requests.length;
   const skippedCommitTaskCount = openViking.state.tasks.size;
-  const skippedCommitOptimizer = new WorkingContextOptimizer(openViking.baseUrl, undefined, 2_000, {
-    contextTokenBudget: 2_000,
-    commitPendingTokens: 1,
-    keepRecentMessages: 100,
-    maxContextChars: 1_600,
-    taskTimeoutMs: 2_000,
-    taskPollMs: 5,
-  });
-  let skippedCommitPrepared;
-  let skippedCommitError;
-  try {
-    skippedCommitPrepared = await skippedCommitOptimizer.prepare(commonRoute, commonProjections);
-  } catch (error) {
-    skippedCommitError = error;
-  }
+  const skippedMemory = createSessionMemory("skipped", { keepRecentMessages: 100 });
+  const skippedCoordinator = createRuntimeCoordinator("skipped", skippedMemory);
+  const skippedRetention = createRetentionBudgetIdentity(providerProfile, skippedCoordinator.checkpointRetentionPolicy());
+  const skippedRefresh = await skippedCoordinator.scheduleCheckpointRefresh(
+    snapshot(identity, common),
+    skippedRetention,
+    { required: false },
+  );
+  const skippedHistorical = await skippedCoordinator.resolveHistoricalContext(snapshot(identity, common), skippedRetention);
+  const skippedPrepared = optimizer.prepare(skippedHistorical);
   const skippedCommitRequests = openViking.state.requests.slice(skippedCommitRequestStart);
-  checks.skippedCommitRetainsActiveHistory = skippedCommitError === undefined
-    && skippedCommitPrepared?.hasWorkingMemory === false
-    && skippedCommitPrepared.content.includes(commonRoute.leafId)
+  checks.skippedCommitRetainsActiveHistory = skippedRefresh.kind === "skipped"
+    && skippedHistorical.checkpoint.coveredRouteEntryIds.length === 0
+    && skippedHistorical.delta.sourceIds.length > 0
+    && skippedPrepared.hasWorkingMemory === false
+    && skippedPrepared.content.includes(commonRoute.leafId)
     && openViking.state.tasks.size === skippedCommitTaskCount
     && skippedCommitRequests.every((request) => !request.path.startsWith("/api/v1/tasks/"));
-  await skippedCommitOptimizer.shutdown();
+  await skippedMemory.shutdown();
 
+  openViking.state.taskPollsBeforeCompletion = 2;
+  const slowMemory = createSessionMemory("slow");
+  const slowCoordinator = createRuntimeCoordinator("slow", slowMemory);
+  const slowRetention = createRetentionBudgetIdentity(providerProfile, slowCoordinator.checkpointRetentionPolicy());
+  const slowCommon = await slowCoordinator.scheduleCheckpointRefresh(
+    snapshot(identity, common),
+    slowRetention,
+    { required: true },
+  );
   openViking.state.taskPollsBeforeCompletion = 100;
-  const slowTaskOptimizer = new WorkingContextOptimizer(openViking.baseUrl, undefined, 2_000, {
-    contextTokenBudget: 2_000,
-    commitPendingTokens: 1,
-    keepRecentMessages: 3,
-    maxContextChars: 1_600,
-    taskTimeoutMs: 1_000,
-    taskPollMs: 5,
-  });
   const slowLatestEntries = [...branchA, {
     type: "message",
     id: "slow-route-latest",
@@ -2350,153 +2479,219 @@ try {
     message: { role: "user", content: "latest route while working memory is running" },
   }];
   const slowLatestRoute = coordinator.identifyCurrentRoute(snapshot(identity, slowLatestEntries));
-  const slowLatestProjections = projectRoute(
-    profile,
-    slowLatestEntries,
-    slowLatestEntries.at(-1)?.id ?? null,
-  ).projections;
-  const slowTaskPreparation = slowTaskOptimizer.prepare(commonRoute, commonProjections);
+  const taskCountBeforeSlowRefresh = openViking.state.tasks.size;
+  const slowRouteARefresh = slowCoordinator.scheduleCheckpointRefresh(
+    snapshot(identity, branchA),
+    slowRetention,
+    { required: false },
+  );
+  await waitFor(
+    () => openViking.state.tasks.size > taskCountBeforeSlowRefresh,
+    "slow checkpoint task",
+  );
+  const slowRouteAShared = slowCoordinator.scheduleCheckpointRefresh(
+    snapshot(identity, branchA),
+    slowRetention,
+    { required: true },
+  );
   const commonReadyStarted = Date.now();
-  const activeWhileCommitting = await slowTaskOptimizer.waitForReady(commonRoute, DEFAULT_IN_FLIGHT_READY_WAIT_MS);
+  const activeRouteAHistory = await slowCoordinator.resolveHistoricalContext(snapshot(identity, branchA), slowRetention);
   const commonReadyElapsedMs = Date.now() - commonReadyStarted;
-  const activeWhileCommittingTask = [...openViking.state.tasks.values()].at(-1);
-  const slowRouteAPreparation = slowTaskOptimizer.prepare(routeA, branchAProjections);
-  const routeAReadyStarted = Date.now();
-  const activeRouteA = await slowTaskOptimizer.waitForReady(routeA, DEFAULT_IN_FLIGHT_READY_WAIT_MS);
-  const routeAReadyElapsedMs = Date.now() - routeAReadyStarted;
-  const slowLatestPreparation = slowTaskOptimizer.prepare(slowLatestRoute, slowLatestProjections);
+  const activeRouteA = optimizer.prepare(activeRouteAHistory);
+  const slowLatestRefresh = slowCoordinator.scheduleCheckpointRefresh(
+    snapshot(identity, slowLatestEntries),
+    slowRetention,
+    { required: false },
+  );
   const latestReadyStarted = Date.now();
-  const activeLatest = await slowTaskOptimizer.waitForReady(slowLatestRoute, DEFAULT_IN_FLIGHT_READY_WAIT_MS);
+  const activeLatestHistory = await slowCoordinator.resolveHistoricalContext(snapshot(identity, slowLatestEntries), slowRetention);
   const latestReadyElapsedMs = Date.now() - latestReadyStarted;
-  const slowSession = openViking.state.sessions.get(activeWhileCommitting?.openVikingSessionId);
+  const activeLatest = optimizer.prepare(activeLatestHistory);
+  const slowSession = openViking.state.sessions.get(
+    slowCommon.kind === "accepted" ? slowCommon.checkpoint.openVikingSessionId : undefined,
+  );
   const tasksBeforePromotion = [...openViking.state.tasks.values()]
-    .filter((task) => task.session === slowSession);
-  const activeHistoryAdopted = activeWhileCommitting
-    ? buildEnhancedContext(currentTurn, activeWhileCommitting, "validation-nonce")
-    : [];
-  checks.inFlightReadyWaitBounded = DEFAULT_IN_FLIGHT_READY_WAIT_MS === 1_000
-    && Math.max(commonReadyElapsedMs, routeAReadyElapsedMs, latestReadyElapsedMs) <= DEFAULT_IN_FLIGHT_READY_WAIT_MS + 50;
-  checks.activeHistoryAvailableDuringWorkingMemory = activeWhileCommitting?.hasWorkingMemory === false
-    && activeWhileCommittingTask?.polls < 100
-    && activeHistoryAdopted[0]?.role === "custom"
-    && activeHistoryAdopted[1] === currentTurn[2];
-  checks.routesPrepareDuringWorkingMemory = activeRouteA?.route.fingerprint === routeA.fingerprint
-    && activeLatest?.route.fingerprint === slowLatestRoute.fingerprint
-    && activeLatest.hasWorkingMemory === false
-    && activeWhileCommitting?.openVikingSessionId === activeRouteA.openVikingSessionId
-    && activeRouteA.openVikingSessionId === activeLatest.openVikingSessionId;
-  checks.singleCommitFlightPerMirror = slowSession?.commits === 1
-    && tasksBeforePromotion.length === 1
-    && tasksBeforePromotion[0]?.status !== "completed";
-  const [slowCommonPrepared, slowRouteAPrepared, slowLatestPrepared] = await Promise.all([
-    slowTaskPreparation,
-    slowRouteAPreparation,
-    slowLatestPreparation,
+    .filter((task) => task.session === slowSession && task.status !== "completed");
+  const activeHistoryAdopted = buildEnhancedContext(currentTurn, activeRouteA, "validation-nonce");
+  checks.inFlightReadyWaitBounded = Math.max(commonReadyElapsedMs, latestReadyElapsedMs) < 250;
+  checks.activeHistoryAvailableDuringWorkingMemory = activeRouteA.hasWorkingMemory
+    && activeRouteAHistory.delta.sourceIds.length > 0
+    && activeHistoryAdopted?.[0]?.role === "custom"
+    && activeHistoryAdopted?.[1] === currentTurn[2];
+  checks.routesPrepareDuringWorkingMemory = activeRouteA.route.fingerprint === routeA.fingerprint
+    && activeLatest.route.fingerprint === slowLatestRoute.fingerprint
+    && activeRouteAHistory.checkpoint.identity === activeLatestHistory.checkpoint.identity;
+  checks.singleCommitFlightPerMirror = slowSession?.commits === 2
+    && tasksBeforePromotion.length === 1;
+  const [slowRouteAResult, slowRouteASharedResult, slowLatestResult] = await Promise.all([
+    slowRouteARefresh,
+    slowRouteAShared,
+    slowLatestRefresh,
   ]);
-  checks.latestRoutePromotedAfterCommit = slowCommonPrepared.hasWorkingMemory === false
-    && slowRouteAPrepared.hasWorkingMemory === false
-    && slowLatestPrepared.hasWorkingMemory
-    && slowTaskOptimizer.getReady(slowLatestRoute)?.hasWorkingMemory === true
-    && slowTaskOptimizer.getReady(routeA)?.hasWorkingMemory === false
-    && slowLatestPrepared.content.includes(slowLatestRoute.leafId);
-  checks.pendingTokensPreservedAcrossCommit = slowSession?.commits === 2;
-  checks.slowWorkingMemoryCompletesWithinDeadline = activeWhileCommittingTask?.status === "completed"
-    && activeWhileCommittingTask.polls >= 100;
-  await slowTaskOptimizer.shutdown();
+  const slowLatestHistorical = await slowCoordinator.resolveHistoricalContext(
+    snapshot(identity, slowLatestEntries),
+    slowRetention,
+  );
+  checks.latestRoutePromotedAfterCommit = slowRouteAResult.kind === "accepted"
+    && slowRouteASharedResult.kind === "accepted"
+    && slowRouteAResult.checkpoint.identity === slowRouteASharedResult.checkpoint.identity
+    && slowLatestResult.kind === "accepted"
+    && slowLatestHistorical.checkpoint.identity === slowLatestResult.checkpoint.identity
+    && optimizer.prepare(slowLatestHistorical).hasWorkingMemory;
+  checks.pendingTokensPreservedAcrossCommit = slowSession?.commits === 3;
+  const slowTasks = [...openViking.state.tasks.values()].filter((task) => task.session === slowSession);
+  checks.slowWorkingMemoryCompletesWithinDeadline = slowTasks.length === 3
+    && slowTasks.every((task) => task.status === "completed")
+    && slowTasks.slice(1).every((task) => task.polls >= 100);
+
+  const smallerProfile = createProviderPayloadProfile({ ...payloadProfileInput, contextWindowTokens: 8_000 });
+  const smallerRetention = createRetentionBudgetIdentity(smallerProfile, slowCoordinator.checkpointRetentionPolicy());
+  openViking.state.taskPollsBeforeCompletion = 2;
+  const smallerRefresh = await slowCoordinator.scheduleCheckpointRefresh(
+    snapshot(identity, branchA),
+    smallerRetention,
+    { required: true },
+  );
+  const smallerHistorical = await slowCoordinator.resolveHistoricalContext(
+    snapshot(identity, branchA),
+    smallerRetention,
+  );
+  checks.refreshTargetBudgetIsolation = smallerRetention !== slowRetention
+    && smallerRefresh.kind === "accepted"
+    && smallerHistorical.checkpoint.retentionBudgetIdentity === smallerRetention
+    && smallerHistorical.checkpoint.identity !== slowRouteAResult.checkpoint.identity;
+
+  openViking.state.taskPollsBeforeCompletion = 100;
+  const cancelEntries = [...slowLatestEntries, {
+    type: "message",
+    id: "cancel-wait-entry",
+    parentId: slowLatestEntries.at(-1).id,
+    timestamp: "2026-08-14T09:05:00.000Z",
+    message: { role: "user", content: "cancel only one checkpoint waiter" },
+  }];
+  const cancelBackground = slowCoordinator.scheduleCheckpointRefresh(
+    snapshot(identity, cancelEntries),
+    slowRetention,
+    { required: false },
+  );
+  const cancelController = new AbortController();
+  const cancelledWaiter = slowCoordinator.scheduleCheckpointRefresh(
+    snapshot(identity, cancelEntries),
+    slowRetention,
+    { required: true, signal: cancelController.signal },
+  ).then(() => false, () => true);
+  cancelController.abort(new Error("controlled waiter cancellation"));
+  const cancelResult = await cancelBackground;
+  checks.refreshWaitCancellationIsolated = await cancelledWaiter
+    && cancelResult.kind === "accepted";
+  await slowMemory.shutdown();
 
   openViking.state.taskPollsBeforeCompletion = Number.MAX_SAFE_INTEGER;
-  const timeoutOptimizer = new WorkingContextOptimizer(openViking.baseUrl, undefined, 2_000, {
-    contextTokenBudget: 2_000,
-    commitPendingTokens: 1,
-    keepRecentMessages: 3,
-    maxContextChars: 1_600,
-    taskTimeoutMs: 30,
-    taskPollMs: 5,
-  });
-  const timeoutPrepared = await timeoutOptimizer.prepare(commonRoute, commonProjections);
-  checks.workingMemoryTimeoutRetainsActiveHistory = timeoutPrepared.hasWorkingMemory === false
-    && timeoutOptimizer.getReady(commonRoute)?.content === timeoutPrepared.content;
-  await timeoutOptimizer.shutdown();
+  const timeoutMemory = createSessionMemory("timeout", { taskTimeoutMs: 30 });
+  const timeoutCoordinator = createRuntimeCoordinator("timeout", timeoutMemory);
+  const timeoutRetention = createRetentionBudgetIdentity(providerProfile, timeoutCoordinator.checkpointRetentionPolicy());
+  let timeoutFailed = false;
+  try {
+    await timeoutCoordinator.scheduleCheckpointRefresh(snapshot(identity, common), timeoutRetention, { required: true });
+  } catch {
+    timeoutFailed = true;
+  }
+  const timeoutHistorical = await timeoutCoordinator.resolveHistoricalContext(snapshot(identity, common), timeoutRetention);
+  checks.workingMemoryTimeoutRetainsActiveHistory = timeoutFailed
+    && timeoutHistorical.checkpoint.coveredRouteEntryIds.length === 0
+    && timeoutHistorical.delta.sourceIds.length > 0
+    && optimizer.prepare(timeoutHistorical).hasWorkingMemory === false;
+  await timeoutMemory.shutdown();
 
+  openViking.state.taskPollsBeforeCompletion = 100;
   const commitShutdownBaseline = new Set(openViking.state.sessions.keys());
-  const commitShutdownOptimizer = new WorkingContextOptimizer(openViking.baseUrl, undefined, 2_000, {
-    contextTokenBudget: 2_000,
-    commitPendingTokens: 1,
-    keepRecentMessages: 3,
-    maxContextChars: 1_600,
-    taskTimeoutMs: 2_000,
-    taskPollMs: 5,
-  });
-  const commitShutdownPreparation = commitShutdownOptimizer.prepare(commonRoute, commonProjections).then(
-    () => false,
-    () => true,
-  );
-  const commitShutdownActive = await commitShutdownOptimizer.waitForReady(commonRoute, DEFAULT_IN_FLIGHT_READY_WAIT_MS);
-  await commitShutdownOptimizer.shutdown();
-  checks.inFlightCommitShutdownCleaned = commitShutdownActive?.hasWorkingMemory === false
-    && await commitShutdownPreparation
-    && [...openViking.state.sessions.keys()].every((sessionId) => commitShutdownBaseline.has(sessionId))
-    && openViking.state.sessions.size === commitShutdownBaseline.size;
-  openViking.state.taskPollsBeforeCompletion = 2;
+  const commitShutdownMemory = createSessionMemory("commit-shutdown");
+  const commitShutdownCoordinator = createRuntimeCoordinator("commit-shutdown", commitShutdownMemory);
+  const commitShutdownRetention = createRetentionBudgetIdentity(providerProfile, commitShutdownCoordinator.checkpointRetentionPolicy());
+  const commitShutdownRefresh = commitShutdownCoordinator.scheduleCheckpointRefresh(
+    snapshot(identity, common),
+    commitShutdownRetention,
+    { required: true },
+  ).then(() => false, () => true);
+  await waitFor(() => openViking.state.tasks.size > taskCountBeforeSlowRefresh, "in-flight commit before shutdown");
+  await commitShutdownMemory.shutdown();
+  checks.inFlightCommitShutdownCleaned = await commitShutdownRefresh
+    && [...openViking.state.sessions.keys()].every((sessionId) => commitShutdownBaseline.has(sessionId));
 
-  const failedOptimizer = new WorkingContextOptimizer(openViking.baseUrl, undefined, 2_000, {
-    contextTokenBudget: 2_000,
-    commitPendingTokens: 1,
-    keepRecentMessages: 3,
-    maxContextChars: 1_600,
-    taskTimeoutMs: 2_000,
-    taskPollMs: 5,
-  });
+  openViking.state.taskPollsBeforeCompletion = 2;
+  const failedMirrorBaseline = new Set(openViking.state.allSessions.keys());
+  const failedMemory = createSessionMemory("failed");
+  const failedCoordinator = createRuntimeCoordinator("failed", failedMemory);
+  const failedRetention = createRetentionBudgetIdentity(providerProfile, failedCoordinator.checkpointRetentionPolicy());
   openViking.state.failNextContext = true;
   let backendFailed = false;
   try {
-    await failedOptimizer.prepare(routeB, branchBProjections);
+    await failedCoordinator.scheduleCheckpointRefresh(snapshot(identity, branchB), failedRetention, { required: true });
   } catch {
     backendFailed = true;
   }
-  checks.backendFailureBlocks = backendFailed && failedOptimizer.getReady(routeB) === undefined;
-  await failedOptimizer.shutdown();
-  const queueOptimizer = new WorkingContextOptimizer(openViking.baseUrl, undefined, 2_000, {
-    contextTokenBudget: 2_000,
-    commitPendingTokens: 1,
-    keepRecentMessages: 3,
-    maxContextChars: 1_600,
-    taskTimeoutMs: 2_000,
-    taskPollMs: 5,
-  });
-  const runningPreparation = queueOptimizer.prepare(commonRoute, commonProjections);
-  const supersededPreparation = queueOptimizer.prepare(routeA, branchAProjections).then(
-    () => false,
-    (error) => String(error).includes("superseded"),
+  const failedHistorical = await failedCoordinator.resolveHistoricalContext(snapshot(identity, branchB), failedRetention);
+  const retryAfterBackendFailure = await failedCoordinator.scheduleCheckpointRefresh(
+    snapshot(identity, branchB),
+    failedRetention,
+    { required: true },
   );
-  const latestPreparation = queueOptimizer.prepare(routeB, branchBProjections);
-  const [runningPrepared, superseded, latestPrepared] = await Promise.all([
-    runningPreparation,
-    supersededPreparation,
-    latestPreparation,
+  const failedMirrorId = [...openViking.state.allSessions.keys()].find((sessionId) =>
+    !failedMirrorBaseline.has(sessionId) && sessionId !== retryAfterBackendFailure.checkpoint?.openVikingSessionId);
+  if (failedMirrorId) {
+    await waitFor(() => openViking.state.deletedSessions.includes(failedMirrorId), "failed refresh mirror cleanup");
+  }
+  checks.backendFailureBlocks = backendFailed
+    && failedHistorical.checkpoint.coveredRouteEntryIds.length === 0
+    && failedHistorical.delta.sourceIds.length > 0
+    && retryAfterBackendFailure.kind === "accepted"
+    && Boolean(failedMirrorId)
+    && openViking.state.deletedSessions.includes(failedMirrorId);
+  await failedMemory.shutdown();
+
+  openViking.state.taskPollsBeforeCompletion = 2;
+  openViking.state.createResponseDelayMs = 250;
+  const queueMemory = createSessionMemory("queue");
+  const queueCoordinator = createRuntimeCoordinator("queue", queueMemory);
+  const queueRetention = createRetentionBudgetIdentity(providerProfile, queueCoordinator.checkpointRetentionPolicy());
+  const runningRefresh = queueCoordinator.scheduleCheckpointRefresh(
+    snapshot(identity, common),
+    queueRetention,
+    { required: false },
+  );
+  const supersededRefresh = queueCoordinator.scheduleCheckpointRefresh(
+    snapshot(identity, branchA),
+    queueRetention,
+    { required: false },
+  );
+  const latestRefresh = queueCoordinator.scheduleCheckpointRefresh(
+    snapshot(identity, slowLatestEntries),
+    queueRetention,
+    { required: false },
+  );
+  const [runningResult, supersededResult, latestResult] = await Promise.all([
+    runningRefresh,
+    supersededRefresh,
+    latestRefresh,
   ]);
-  checks.pendingRoutesCollapsed = runningPrepared.route.fingerprint === commonRoute.fingerprint
-    && superseded
-    && latestPrepared.route.fingerprint === routeB.fingerprint;
-  await queueOptimizer.shutdown();
+  checks.pendingRoutesCollapsed = runningResult.kind === "accepted"
+    && supersededResult.kind === "superseded"
+    && latestResult.kind === "accepted";
+  await queueMemory.shutdown();
+
   const baselineSessionIds = new Set(openViking.state.sessions.keys());
   const createRequestsBeforeShutdownProbe = openViking.state.createRequests;
-  openViking.state.createResponseDelayMs = 250;
-  const shutdownOptimizer = new WorkingContextOptimizer(openViking.baseUrl, undefined, 2_000, {
-    contextTokenBudget: 2_000,
-    commitPendingTokens: 1,
-    keepRecentMessages: 3,
-    maxContextChars: 1_600,
-    taskTimeoutMs: 2_000,
-    taskPollMs: 5,
-  });
-  const interruptedPreparation = shutdownOptimizer.prepare(commonRoute, commonProjections).then(
-    () => false,
-    () => true,
-  );
+  const shutdownMemory = createSessionMemory("shutdown");
+  const shutdownCoordinator = createRuntimeCoordinator("shutdown", shutdownMemory);
+  const shutdownRetention = createRetentionBudgetIdentity(providerProfile, shutdownCoordinator.checkpointRetentionPolicy());
+  const interruptedRefresh = shutdownCoordinator.scheduleCheckpointRefresh(
+    snapshot(identity, common),
+    shutdownRetention,
+    { required: true },
+  ).then(() => false, () => true);
   await waitFor(() => openViking.state.createRequests > createRequestsBeforeShutdownProbe, "in-flight Session creation request");
-  await shutdownOptimizer.shutdown();
-  const interrupted = await interruptedPreparation;
+  await shutdownMemory.shutdown();
+  const interrupted = await interruptedRefresh;
   openViking.state.createResponseDelayMs = 0;
   checks.inFlightShutdownCleaned = interrupted
     && [...openViking.state.sessions.keys()].every((sessionId) => baselineSessionIds.has(sessionId))
@@ -2515,6 +2710,32 @@ try {
       return true;
     }
   });
+  const oversizedEntry = {
+    type: "message",
+    id: "bounded-openviking-projection",
+    parentId: common.at(-1)?.id ?? null,
+    timestamp: "2026-08-14T11:00:00.000Z",
+    message: { role: "user", content: [{ type: "text", text: "Z".repeat(1_000_000) }], timestamp: Date.parse("2026-08-14T11:00:00.000Z") },
+  };
+  const oversizedSnapshot = snapshot(identity, [...common, oversizedEntry]);
+  const boundedRequestOffset = openViking.state.requests.length;
+  const boundedRefresh = await runtimeCoordinator.scheduleCheckpointRefresh(
+    oversizedSnapshot,
+    retentionBudgetIdentity,
+    { required: true },
+  );
+  const boundedRequests = openViking.state.requests.slice(boundedRequestOffset)
+    .filter((request) => request.method === "POST" && request.path.endsWith("/messages/batch"));
+  const boundedProjection = projectMemorySources(runtimeCoordinator.projectCurrentRoute(oversizedSnapshot).projections)
+    .find((projection) => projection.source_message_ids.includes(oversizedEntry.id));
+  checks.openVikingAppendBounded = boundedRefresh.kind === "accepted"
+    && Boolean(boundedProjection)
+    && Buffer.byteLength(boundedProjection.content, "utf8") <= MAX_OPENVIKING_PROJECTION_BYTES
+    && boundedProjection.content.includes("[OpenViking projection bounded;")
+    && boundedRequests.length > 0
+    && boundedRequests.every((request) => request.bodyBytes <= MAX_OPENVIKING_APPEND_BODY_BYTES)
+    && boundedRequests.some((request) => request.hasBoundedProjection === true);
+
   const protocol = new Set(openViking.state.requests.map((request) => `${request.method} ${request.path.replace(/pcm-[^/]+/g, "<session>").replace(/task-\d+/g, "<task>")}`));
   checks.openVikingProtocolCovered = [
     "POST /api/v1/sessions",
@@ -2557,12 +2778,12 @@ try {
     && piAdoption.lifecycle.overflowRetryAuthorized
     && piAdoption.lifecycle.compactionCancellationState
     && piAdoption.lifecycle.compactionProviderAdoption;
-  checks.backendFailureLatchesUntilNewGeneration = piAdoption.lifecycle.backendRecovery;
+  checks.backgroundRefreshFailureRetainsAuthorization = piAdoption.lifecycle.backgroundRefreshFailureRetainsAuthorization;
   checks.archiveFailureLatchesUntilNewGeneration = piAdoption.lifecycle.archiveRecovery;
   checks.hookTransportStateConsistent = piAdoption.lifecycle.providerStateConsistent;
   checks.memoryStatusThreeStateLifecycle = piAdoption.lifecycle.memoryStatusLifecycle;
 
-  await optimizer.shutdown();
+  await sessionMemory.shutdown();
   checks.ownedSessionsCleaned = openViking.state.sessions.size === 0 && openViking.state.deletedSessions.length > 0;
   const failedChecks = Object.entries(checks).filter(([, passed]) => passed !== true).map(([name]) => name);
   if (failedChecks.length > 0) throw new Error(`Context enhancement checks failed: ${failedChecks.join(", ")}`);

@@ -12,6 +12,16 @@ import {
   OPENVIKING_MEMORY_API_KEY_ENV,
   OPENVIKING_MEMORY_API_KEY_REFERENCE,
 } from "../.pi/extensions/pi-context-memory/memory-model-configuration.ts";
+import { memoryRuntimeGenerationFromState } from "../.pi/extensions/pi-context-memory/memory-runtime-capability.ts";
+import {
+  historicalRoutePrefixKey,
+  OpenVikingSessionMemory,
+} from "../.pi/extensions/pi-context-memory/session-working-memory.ts";
+import {
+  createProviderPayloadProfile,
+  createRetentionBudgetIdentity,
+  WorkingContextOptimizer,
+} from "../.pi/extensions/pi-context-memory/working-context-optimization.ts";
 
 import {
   assertImplementationEvidenceUnchanged,
@@ -75,6 +85,146 @@ function sha256(value) {
   return createHash("sha256").update(value).digest("hex");
 }
 
+function checkpointRoute(sessionId, sessionFile, projections) {
+  const entryIds = projections.map((projection) => projection.id);
+  return {
+    sessionId,
+    sessionFile,
+    leafId: entryIds.at(-1) ?? null,
+    entryIds,
+    fingerprint: sha256(JSON.stringify({ sessionId, sessionFile, projections })),
+  };
+}
+
+function checkpointSource(id, parentId, index, text) {
+  const taskContent = [{ type: "text", text }];
+  return {
+    kind: "message-source",
+    id,
+    parentId,
+    role: index % 2 === 0 ? "user" : "assistant",
+    timestamp: new Date(Date.UTC(2026, 0, 1, 0, 0, index)).toISOString(),
+    taskContent,
+    completion: index % 2 === 0 ? undefined : { stopReason: "stop" },
+    taskContentHash: sha256(JSON.stringify(taskContent)),
+    authorityHash: sha256(JSON.stringify({ id, parentId, taskContent })),
+  };
+}
+
+function activeDelta(checkpoint, projections) {
+  return {
+    checkpointIdentity: checkpoint.identity,
+    projections,
+    sourceIds: projections.map((projection) => projection.id),
+    hash: sha256(JSON.stringify({ checkpointIdentity: checkpoint.identity, projections })),
+  };
+}
+
+async function validateActualCheckpointFlow(openViking, runtimeState) {
+  const generation = memoryRuntimeGenerationFromState(runtimeState);
+  const capabilityProofId = runtimeState?.memoryCapability?.proofId;
+  assert(generation && capabilityProofId, "Actual checkpoint validation requires a runtime capability proof");
+  const sessionMemory = new OpenVikingSessionMemory(openViking.url, undefined, 30_000, {
+    generation,
+    capabilityProofId,
+    contextTokenBudget: 2_000,
+    commitPendingTokens: 1,
+    keepRecentMessages: 3,
+    taskTimeoutMs: runtimeState.activeProfile.requestTimeoutMs,
+    taskPollMs: 100,
+  });
+  try {
+    const profile = createProviderPayloadProfile({
+      provider: "actual-checkpoint-validation",
+      model: "fixed-suite-model",
+      api: "openai-completions",
+      baseUrl: "http://127.0.0.1/actual-checkpoint-validation",
+      compat: null,
+      contextWindowTokens: 32_000,
+      maxOutputTokens: 256,
+      systemPrompt: "actual checkpoint validation",
+      tools: [],
+    });
+    const retentionBudgetIdentity = createRetentionBudgetIdentity(profile, sessionMemory.retentionPolicy());
+    const sessionId = `quality-checkpoint-${randomUUID()}`;
+    const sessionFile = join(openViking.runtimeDir, `${sessionId}.jsonl`);
+    const projections = Array.from({ length: 8 }, (_, index) => checkpointSource(
+      `actual-checkpoint-${index}`,
+      index === 0 ? null : `actual-checkpoint-${index - 1}`,
+      index,
+      `actual checkpoint source ${index}: ${"C".repeat(520)}`,
+    ));
+    const route = checkpointRoute(sessionId, sessionFile, projections);
+    const emptyCheckpoint = sessionMemory.emptyCheckpoint(route, retentionBudgetIdentity);
+    const beforeRefresh = {
+      route,
+      checkpoint: emptyCheckpoint,
+      delta: activeDelta(emptyCheckpoint, projections),
+      hasOpaqueSegment: false,
+    };
+    const optimizer = new WorkingContextOptimizer({ maxContextChars: 1_600 });
+    const authorizationInput = {
+      generation,
+      messages: [{ role: "user", content: "continue actual checkpoint validation" }],
+      providerPayloadProfile: profile,
+      toolSources: { callSources: {}, resultSources: {}, ambiguousToolIds: [] },
+      toProviderMessages: (messages) => messages,
+      ensureSources: async () => undefined,
+    };
+    const required = await optimizer.authorize({ ...authorizationInput, requestRoute: route, historical: beforeRefresh });
+    assert(required.kind === "refresh-required", "Oversized actual delta did not require a checkpoint refresh");
+    const target = {
+      generation,
+      routePrefixKey: historicalRoutePrefixKey(route, projections),
+      watermark: route.entryIds.at(-1) ?? null,
+      retentionBudgetIdentity,
+    };
+    const refreshed = await sessionMemory.refreshCheckpoint(target, route, projections, { required: true });
+    assert(refreshed.kind === "accepted", "Actual required checkpoint refresh was not accepted");
+    const afterRefresh = {
+      route,
+      checkpoint: refreshed.checkpoint,
+      delta: activeDelta(refreshed.checkpoint, []),
+      hasOpaqueSegment: false,
+    };
+    const afterAuthorization = await optimizer.authorize({ ...authorizationInput, requestRoute: route, historical: afterRefresh });
+    assert(afterAuthorization.kind === "allow", "Actual checkpoint did not satisfy the waiting request");
+
+    const nextProjection = checkpointSource("actual-checkpoint-next", route.leafId, 9, `actual active delta: ${"D".repeat(320)}`);
+    const nextProjections = [...projections, nextProjection];
+    const nextRoute = checkpointRoute(sessionId, sessionFile, nextProjections);
+    const nextTarget = {
+      generation,
+      routePrefixKey: historicalRoutePrefixKey(nextRoute, nextProjections),
+      watermark: nextRoute.entryIds.at(-1) ?? null,
+      retentionBudgetIdentity,
+    };
+    let backgroundSettled = false;
+    const background = sessionMemory.refreshCheckpoint(nextTarget, nextRoute, nextProjections, { required: false })
+      .finally(() => { backgroundSettled = true; });
+    const duringRefresh = {
+      route: nextRoute,
+      checkpoint: refreshed.checkpoint,
+      delta: activeDelta(refreshed.checkpoint, [nextProjection]),
+      hasOpaqueSegment: false,
+    };
+    const parallelAuthorization = await new WorkingContextOptimizer({ maxContextChars: 4_000 })
+      .authorize({ ...authorizationInput, requestRoute: nextRoute, historical: duringRefresh });
+    const requestContinuedBeforeRefresh = parallelAuthorization.kind === "allow" && !backgroundSettled;
+    const backgroundResult = await background;
+    assert(backgroundResult.kind === "accepted", "Actual background checkpoint refresh was not accepted");
+    assert(requestContinuedBeforeRefresh, "A compatible checkpoint and delta did not continue during actual refresh");
+    return {
+      requiredWait: true,
+      requestContinuedBeforeRefresh,
+      backgroundAccepted: true,
+      firstCheckpointIdentity: refreshed.checkpoint.identity,
+      nextCheckpointIdentity: backgroundResult.checkpoint.identity,
+    };
+  } finally {
+    await sessionMemory.shutdown();
+  }
+}
 function commandOutput(command, args) {
   const result = spawnSync(command, args, { cwd: root, encoding: "utf8" });
   if (result.status !== 0) throw new Error(result.stderr.trim() || `${command} ${args.join(" ")} failed`);
@@ -312,6 +462,7 @@ async function runArm(name, model, openViking) {
     PCR_OPENVIKING_RUNTIME_DIR: openViking.runtimeDir,
     PCR_OPENVIKING_BASE_CONFIG: openViking.baseConfigPath,
     PCR_OPENVIKING_URL: openViking.url,
+    PCR_CHECKPOINT_COMMIT_PENDING_TOKENS: "1",
     PCR_OBSERVATION_LOG: observationLog,
     PCR_ARCHIVE_DIR: join(armRoot, "archive"),
     PCR_QUALITY_ARM_OBSERVATION: conditionLog,
@@ -333,14 +484,18 @@ async function runArm(name, model, openViking) {
       const deadline = Date.now() + 180_000;
       while (Date.now() < deadline) {
         const observations = readObservations(observationLog);
-        const ready = observations.find((event) => event.type === "working_context_ready" && event.hasWorkingMemory === true);
+        const ready = observations.find((event) => event.type === "checkpoint_refresh_complete"
+          && event.outcome === "accepted"
+          && event.hasWorkingMemory === true);
         if (ready) break;
-        const failed = observations.find((event) => event.type === "working_context_error");
+        const failed = observations.find((event) => event.type === "checkpoint_refresh_error");
         if (failed) throw new Error(`Working Memory preparation failed: ${failed.error}`);
         if (child.exitCode !== null || child.signalCode !== null) throw new Error("Enhanced Pi exited before Working Memory became ready");
         await sleep(200);
       }
-      assert(readObservations(observationLog).some((event) => event.type === "working_context_ready" && event.hasWorkingMemory === true), "Real Working Memory did not become ready");
+      assert(readObservations(observationLog).some((event) => event.type === "checkpoint_refresh_complete"
+        && event.outcome === "accepted"
+        && event.hasWorkingMemory === true), "Real Working Memory checkpoint did not become ready");
     }
 
     const settledBefore = client.events.filter((event) => event.type === "agent_settled").length;
@@ -381,7 +536,9 @@ async function runArm(name, model, openViking) {
       stats: qualityStats,
       requestResult,
       observations: {
-        workingContextReady: observations.filter((event) => event.type === "working_context_ready").length,
+        workingContextReady: observations.filter((event) => event.type === "checkpoint_refresh_complete"
+          && event.outcome === "accepted"
+          && event.hasWorkingMemory === true).length,
         hookVerifiedRequests: observations.filter((event) => event.type === "before_provider_request" && event.hookOutcome === "verified").length,
       },
     };
@@ -542,6 +699,7 @@ try {
   assert(existsSync(openVikingEnvironmentReportPath), "Real OpenViking child environment was not observed");
   const openVikingChildEnvironment = JSON.parse(readFileSync(openVikingEnvironmentReportPath, "utf8"));
   const openViking = { url: `http://127.0.0.1:${port}`, runtimeDir, settingsPath, baseConfigPath, observerPath };
+  const actualCheckpointFlow = await validateActualCheckpointFlow(openViking, runtimeState);
   const native = await runArm("native", task, openViking);
   const enhanced = await runArm("enhanced", task, openViking);
   const usageDatabase = join(baseConfig.storage.workspace, "_system/usage_audit/usage_audit.sqlite3");
@@ -596,6 +754,9 @@ try {
     enhancedQuality: enhancedPassed,
     enhancedContextHookVerified: enhanced.hookVerified && enhanced.observations.hookVerifiedRequests > 0,
     realWorkingMemoryReady: enhanced.observations.workingContextReady > 0,
+    actualCheckpointRequiredWait: actualCheckpointFlow.requiredWait,
+    actualCheckpointRequestParallel: actualCheckpointFlow.requestContinuedBeforeRefresh,
+    actualCheckpointBackgroundAccepted: actualCheckpointFlow.backgroundAccepted,
     memoryUsageAttributed: memoryTokenUsage.length === 2
       && memoryTokenUsage.some((row) => row.token_type === "input" && row.token_count > 0)
       && memoryTokenUsage.some((row) => row.token_type === "output" && row.token_count > 0)
@@ -623,6 +784,7 @@ try {
     openVikingVersion,
     models: { task: taskModel, memory: memoryModel },
     openVikingUsage: { tokenRows: openVikingTokenUsage, memoryTotalTokens },
+    actualCheckpointFlow,
     memoryModelCondition: {
       credentialSource: "pi-auth",
       configFingerprint: compiledMemoryModel.configFingerprint,

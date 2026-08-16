@@ -138,8 +138,8 @@ enhancedBudget = inputBudget - systemPromptCost - activeToolSchemaCost - provide
 
 - 运行代际；
 - session ID 和 session file；
-- 实际 request leaf、HistoricalRouteKey、MemoryCheckpoint identity、VerifiedActiveDelta hash 与 OpaqueProviderSegment hash；
-- CurrentTurnKey（prompt、后续消息与顺序）；
+- 完整 request route fingerprint、HistoricalRoute fingerprint、MemoryCheckpoint identity 与 VerifiedActiveDelta hash；
+- 由 PayloadProofAdapter 绑定的完整 Provider 消息序列，其中包含 current prompt、后续消息与顺序；
 - system prompt 与 active tool schema 哈希；
 - 上下文消息内容哈希；
 - 请求 nonce；

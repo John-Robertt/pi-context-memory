@@ -7,10 +7,21 @@ import {
   type SourceRecord,
 } from "./long-term-memory.ts";
 import {
+  historicalRoutePrefixKey,
+  type CheckpointRefreshResult,
+  type MemoryCheckpoint,
+  OpenVikingSessionMemory,
+  type RefreshTarget,
+  type RetentionPolicy,
+} from "./session-working-memory.ts";
+
+import {
   isMessageSource,
+  isOpaqueProviderSegment,
   isSourceEntry,
   projectRoute,
   sameMessageSource,
+  type MemoryProjection,
   type MessageSource,
   type PiProtocolProfile,
   type SourceEntry,
@@ -26,6 +37,20 @@ export interface SessionRouteIdentity extends SessionIdentity {
   leafId: string | null;
   entryIds: readonly string[];
   fingerprint: string;
+}
+
+export interface VerifiedActiveDelta {
+  checkpointIdentity: string;
+  projections: readonly MemoryProjection[];
+  sourceIds: readonly string[];
+  hash: string;
+}
+
+export interface ResolvedHistoricalContext {
+  route: SessionRouteIdentity;
+  checkpoint: MemoryCheckpoint;
+  delta: VerifiedActiveDelta;
+  hasOpaqueSegment: boolean;
 }
 
 type SourceIndexRunner = (
@@ -266,12 +291,19 @@ export class SessionMemoryCoordinator {
   private readonly identity: SessionIdentity;
   private readonly memory: FileLongTermMemory;
   private readonly profile: PiProtocolProfile;
+  private readonly sessionMemory: OpenVikingSessionMemory | undefined;
 
-  constructor(identity: SessionIdentity, memory: FileLongTermMemory, profile: PiProtocolProfile) {
+  constructor(
+    identity: SessionIdentity,
+    memory: FileLongTermMemory,
+    profile: PiProtocolProfile,
+    sessionMemory?: OpenVikingSessionMemory,
+  ) {
     if (!identity.sessionId || !identity.sessionFile) throw new Error("A persisted Pi session identity is required");
     this.identity = identity;
     this.memory = memory;
     this.profile = profile;
+    this.sessionMemory = sessionMemory;
   }
 
   /** 当前路线的记忆投影；opaque 段只存在于请求内存，不参与归档。 */
@@ -412,5 +444,82 @@ export class SessionMemoryCoordinator {
     const resolved = await this.resolveCurrentSource(snapshot, entryId);
     if (!resolved?.record.fullOutputRef) return undefined;
     return this.memory.readFullOutputText(this.identity, entryId, maxChars);
+  }
+
+  checkpointRetentionPolicy(): RetentionPolicy {
+    return this.requireSessionMemory().retentionPolicy();
+  }
+
+  async resolveHistoricalContext(
+    snapshot: SessionRouteSnapshot,
+    retentionBudgetIdentity: string,
+    checkpointIdentity?: string,
+  ): Promise<ResolvedHistoricalContext> {
+    const sessionMemory = this.requireSessionMemory();
+    await this.archiveCurrentRoute(snapshot);
+    const routeProjection = this.projectCurrentRoute(snapshot);
+    const route = this.identifyCurrentRoute(snapshot);
+    const emptyCheckpoint = sessionMemory.emptyCheckpoint(route, retentionBudgetIdentity);
+    const checkpoint = sessionMemory.findCompatibleCheckpoint(
+      route,
+      routeProjection.projections,
+      retentionBudgetIdentity,
+      checkpointIdentity,
+    ) ?? (checkpointIdentity === undefined || checkpointIdentity === emptyCheckpoint.identity
+      ? emptyCheckpoint
+      : undefined);
+    if (!checkpoint) throw new Error("Authorized MemoryCheckpoint is no longer available for the current route");
+    const covered = new Set(checkpoint.coveredRouteEntryIds);
+    const suffix = routeProjection.projections.filter((projection) => {
+      const ids = isOpaqueProviderSegment(projection) ? projection.entryIds : [projection.id];
+      return ids.some((id) => !covered.has(id));
+    });
+    const opaqueIndex = suffix.findIndex(isOpaqueProviderSegment);
+    const deltaProjections = opaqueIndex < 0 ? suffix : suffix.slice(0, opaqueIndex);
+    const sourceIds = deltaProjections.filter(isMessageSource).map((projection) => projection.id);
+    await this.ensureCurrentSourcesRecoverable(snapshot, sourceIds);
+    return {
+      route,
+      checkpoint,
+      delta: {
+        checkpointIdentity: checkpoint.identity,
+        projections: deltaProjections,
+        sourceIds,
+        hash: createHash("sha256").update(JSON.stringify({
+          checkpointIdentity: checkpoint.identity,
+          projections: deltaProjections,
+        })).digest("hex"),
+      },
+      hasOpaqueSegment: routeProjection.projections.some(isOpaqueProviderSegment),
+    };
+  }
+
+  async scheduleCheckpointRefresh(
+    snapshot: SessionRouteSnapshot,
+    retentionBudgetIdentity: string,
+    options: { required: boolean; signal?: AbortSignal },
+  ): Promise<CheckpointRefreshResult> {
+    const sessionMemory = this.requireSessionMemory();
+    await this.archiveCurrentRoute(snapshot);
+    const routeProjection = this.projectCurrentRoute(snapshot);
+    const route = this.identifyCurrentRoute(snapshot);
+    if (route.entryIds.length === 0) {
+      return { kind: "accepted", checkpoint: sessionMemory.emptyCheckpoint(route, retentionBudgetIdentity) };
+    }
+    if (routeProjection.projections.some(isOpaqueProviderSegment)) {
+      throw new Error("A checkpoint refresh cannot cross opaque Provider content");
+    }
+    const target: RefreshTarget = {
+      generation: sessionMemory.generationIdentity(),
+      routePrefixKey: historicalRoutePrefixKey(route, routeProjection.projections),
+      watermark: route.entryIds.at(-1) ?? null,
+      retentionBudgetIdentity,
+    };
+    return sessionMemory.refreshCheckpoint(target, route, routeProjection.projections, options);
+  }
+
+  private requireSessionMemory(): OpenVikingSessionMemory {
+    if (!this.sessionMemory) throw new Error("Session checkpoint memory is unavailable");
+    return this.sessionMemory;
   }
 }

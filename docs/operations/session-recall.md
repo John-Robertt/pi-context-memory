@@ -94,8 +94,8 @@ viking://resources/pi-context-memory/
 - `source_recall_expand`：保存展开 entry ID、输出字节和截断状态；
 - `memory_model_config_error`：保存脱敏配置诊断；同一错误在 Pi 中只提示一次；
 - `openviking_restart_complete|error`：保存运行配置指纹或脱敏错误；
-- `working_context_ready|error|rejected`：保存路线指纹、派生 session、token、内容哈希或脱敏错误；
-- `context_allowed|context_blocked`：分别保存构造证明或阻断原因；`before_provider_request` 保存 `hookOutcome`、`contextAuthorization` 与 payload 哈希，最终 transport 由职责外观测确认。
+- `checkpoint_refresh_complete|error|rejected`：保存 RefreshTarget 路线、结果、检查点身份、派生 Session 或脱敏错误；
+- `context_allowed|context_blocked`：分别保存 checkpoint/delta/预算绑定的构造证明或阻断原因；`before_provider_request` 保存对当前路线、检查点、delta、`hookOutcome`、`contextAuthorization` 与 payload 哈希的时点复核，最终 transport 由职责外观测确认。
 
 开发验证的场景、runner、artifact 和采用判定由 [`../validation/context-enhancement-state.md`](../validation/context-enhancement-state.md) 统一定义。
 `.artifacts/openviking/runtime/state.json` 区分 `starting`、`ready`、`restarting`、`failed` 和 `stopped`，并分别记录 `serviceReady`、`requestReady`、active/target profile 与进程代际绑定的能力 proof。扩展对用户只展示“增强记忆 · 初始化中”“增强记忆”或“增强记忆 · 故障”；这些状态只表达本扩展生命周期，不证明 transport 采用。`/memory-model` 展示配置、运行模型、profile、能力和请求状态。启动器 PID、启动标识、锁和子进程必须一致。

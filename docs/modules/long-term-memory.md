@@ -72,8 +72,10 @@ OpenViking Session 只接收 Session 记忆协调核验过的完整路线身份�
 
 ```text
 MemoryCheckpoint = {
+  identity,
   generation,
   coveredRoutePrefixKey,
+  coveredRouteEntryIds,
   coveredThroughEntryId,
   retentionBudgetIdentity,
   sourceIds,
@@ -84,11 +86,12 @@ MemoryCheckpoint = {
 }
 ```
 
+`identity` 由全部检查点字段的规范化内容形成；`coveredRouteEntryIds` 保存精确前缀 entry 顺序，使当前路线能够在不依赖可变镜像状态的情况下重验前缀，`coveredRoutePrefixKey` 再绑定该前缀的投影内容。
 `RefreshTarget` 由 [`session-memory-coordination.md`](session-memory-coordination.md) 拥有，其中 `retentionBudgetIdentity` 由工作上下文优化的预算算法产生。本模块把 target 视为不可拆分身份，只执行或复用完全相同的目标，并把该 identity 写入发布的检查点。
 
 检查点只能覆盖与 assembly 请求完全一致、且不跨越 OpaqueProviderSegment 的路线前缀；其中 Working Memory 与 active history 均通过 OpenViking 适配器限界并回到当前 MessageSource。合法空历史使用扩展本地空检查点。检查点内容由本模块拥有，Session 记忆协调只持有身份、兼容关系和刷新状态。
 
-OpenViking append 只使用 MessageSource 的 taskContent、完成状态、source ID，以及同 entry 来源记录中 fullOutputRef 的有界存在性/哈希标记；不读取 thinking、私有 metadata、OpaqueProviderSegment、FullOutputCandidate、本机路径或完整结果 blob。刷新 retention 依据长时记忆自己的版本化输入预算分段；Pi 已截断结果的完整正文继续留在来源 blob。任一不可拆分 MessageSource 仍超过该预算时返回输入预算错误，不截断未知语义。
+OpenViking append 只使用 MessageSource 的公开 taskContent、完成状态和 source ID，不读取 thinking、私有 metadata、OpaqueProviderSegment、FullOutputCandidate、本机路径或完整结果 blob。单条索引投影最多 32 KiB：未超限时保持正文，超限时只保留有界前缀并显式写入原始字节数、taskContentHash 和 `recall_session read_source` 恢复入口，不能把省略投影冒充原文；权威 taskContent 与完整工具结果继续留在来源归档。单次 batch append 最多 100 条且 JSON 最多 256 KiB，并按先达到的边界分批。
 
 后台刷新遵守：
 
@@ -96,7 +99,7 @@ OpenViking append 只使用 MessageSource 的 taskContent、完成状态、sourc
 2. 完整 RefreshTarget 相同的调用共享；尚未启动的线性后继只有 retentionBudgetIdentity 相同才合并到最新 watermark；运行中的目标不可升级或换绑，新预算请求在其完成后重新评估并按需创建自己的目标；
 3. commit `accepted` 必须观察 task 终态；只有 completed 且最终 assembly、来源和预算核验成功时才原子发布新检查点；
 4. 机会性 commit `skipped` 保留现有检查点与来源后缀，不发布伪检查点；`refresh-required` 使用与预算版本绑定的显式 retention 边界，仍返回 skipped 时报告契约/策略错误，不重复形成无界任务；
-5. accepted task 失败、取消、达到 profile 期限或 assembly 不可信时报告当前代际能力故障；stopping 中由扩展发起的取消只完成清理；
+5. accepted task 失败、取消、达到 profile 期限或 assembly 不可信时向调用方返回刷新错误；机会性后台刷新失败只保留旧 checkpoint+delta 并记录诊断，只有当前请求依赖该结果的必要刷新失败才锁存故障；stopping 中由扩展发起的取消只完成清理；
 6. 检查点缓存、镜像、pending 和完成结果均有固定上限；迟到结果只属于创建它的完整 RefreshTarget。
 
 任务请求不以“刷新完成”作为普遍前置条件。Session 记忆协调可以组合与当前路线前缀兼容的最近检查点和其后的来源可恢复后缀；只有该组合无法满足内容完整性或任务模型预算时，才等待一个能够推进覆盖 watermark 的必要刷新。分支路线只能复用覆盖前缀仍是当前 branch 精确前缀的检查点，不能采用分叉后的旧路线记忆。

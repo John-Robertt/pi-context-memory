@@ -74,7 +74,7 @@ memory-precondition 只有在本扩展 block 且 transport 独立观测到对应
 
 - run ID 和 request ID；
 - 任务 Provider、模型和 API；
-- session、实际 leaf、HistoricalRouteKey、CurrentTurnKey、MemoryCheckpoint、VerifiedActiveDelta、OpaqueProviderSegment 和运行代际；
+- session、完整 request route fingerprint、HistoricalRouteKey、MemoryCheckpoint、VerifiedActiveDelta 和运行代际；
 - system prompt、tool schema、消息、ProviderPayloadProfile 与适配版本哈希；
 - `context` 授权决定；
 - constructed identity、hook verified/rejected/unobserved 与 handler 顺序；

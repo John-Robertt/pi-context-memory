@@ -32,13 +32,15 @@ import {
 import {
   type AssemblyProof,
   type ContextAuthorization,
+  assemblyRouteProofError,
   type ContextFault,
   createProviderPayloadProfile,
-  DEFAULT_IN_FLIGHT_READY_WAIT_MS,
+  createRetentionBudgetIdentity,
   payloadCarriesEnhancedContent,
   type ProviderPayloadProfile,
   WorkingContextOptimizer,
 } from "./working-context-optimization.ts";
+import { OpenVikingSessionMemory } from "./session-working-memory.ts";
 import {
   configuredOpenVikingBaseUrl,
   memoryModelConfigPath,
@@ -104,6 +106,15 @@ const archiveCopyTimeoutMs = (() => {
   const value = Number(configured);
   if (!Number.isSafeInteger(value) || value <= 0) {
     throw new Error("PCR_ARCHIVE_COPY_TIMEOUT_MS must be a positive integer");
+  }
+  return value;
+})();
+const checkpointCommitPendingTokens = (() => {
+  const configured = process.env.PCR_CHECKPOINT_COMMIT_PENDING_TOKENS;
+  if (configured === undefined) return undefined;
+  const value = Number(configured);
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new Error("PCR_CHECKPOINT_COMMIT_PENDING_TOKENS must be a positive integer");
   }
   return value;
 })();
@@ -378,6 +389,14 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
     };
   }
 
+  function workingContextFault(error: unknown): ContextFault {
+    const detail = error instanceof Error ? error.message : String(error);
+    if (/abort|cancel|timed out|timeout|deadline/iu.test(detail)) return { kind: "timeout", detail };
+    if (/source|archive|blob|ENOTDIR|ENOENT|entry/iu.test(detail)) return { kind: "source-barrier", detail };
+    if (/route|branch|leaf|fingerprint|watermark/iu.test(detail)) return { kind: "route", detail };
+    if (/budget|limit|exceeded/iu.test(detail)) return { kind: "budget", detail };
+    return { kind: "service", detail };
+  }
   let openVikingUrl: string | undefined;
   let openVikingEndpointError: string | undefined;
   try {
@@ -395,6 +414,7 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
       writeRecord("source_index_config_error", { error: openVikingEndpointError });
     }
   }
+  let sessionWorkingMemory: OpenVikingSessionMemory | undefined;
   let workingContextOptimizer: WorkingContextOptimizer | undefined;
   let workingContextGeneration: string | undefined;
   let workingContextCapabilityProofId: string | undefined;
@@ -507,16 +527,24 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
     const nextCapabilityProofId = nextGeneration ? state?.memoryCapability?.proofId : undefined;
     const transition = async (): Promise<boolean> => {
       clearFaultForNewGeneration(nextGeneration);
-      if (nextGeneration && !shuttingDown && workingContextOptimizer && workingContextGeneration === nextGeneration) {
-        workingContextCapabilityProofId = nextCapabilityProofId;
+      if (nextGeneration
+        && nextCapabilityProofId
+        && !shuttingDown
+        && sessionWorkingMemory
+        && workingContextOptimizer
+        && workingContextGeneration === nextGeneration
+        && workingContextCapabilityProofId === nextCapabilityProofId) {
         return true;
       }
-      const previous = workingContextOptimizer;
+      const previousMemory = sessionWorkingMemory;
+      sessionWorkingMemory = undefined;
       workingContextOptimizer = undefined;
       workingContextGeneration = undefined;
       workingContextCapabilityProofId = undefined;
-      if (previous) await previous.shutdown(new Error("Working context runtime generation changed"));
-      if (!nextGeneration || !state?.activeProfile || shuttingDown) return false;
+      coordinator = undefined;
+      coordinatorIdentity = undefined;
+      if (previousMemory) await previousMemory.shutdown(new Error("Working context runtime generation changed"));
+      if (!nextGeneration || !nextCapabilityProofId || !state?.activeProfile || shuttingDown) return false;
       if (!openVikingUrl) {
         writeRecord("working_context_config_error", {
           error: openVikingEndpointError ?? "OpenViking endpoint is unavailable",
@@ -524,9 +552,13 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
         return false;
       }
       try {
-        workingContextOptimizer = new WorkingContextOptimizer(openVikingUrl, openVikingApiKey, openVikingTimeoutMs, {
+        sessionWorkingMemory = new OpenVikingSessionMemory(openVikingUrl, openVikingApiKey, openVikingTimeoutMs, {
+          generation: nextGeneration,
+          capabilityProofId: nextCapabilityProofId,
+          commitPendingTokens: checkpointCommitPendingTokens,
           taskTimeoutMs: state.activeProfile.requestTimeoutMs,
         });
+        workingContextOptimizer = new WorkingContextOptimizer();
         workingContextGeneration = nextGeneration;
         workingContextCapabilityProofId = nextCapabilityProofId;
         return true;
@@ -638,7 +670,7 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
         if (memoryEnhancementAvailable) {
           if (!wasAvailable || previousGeneration !== generation) {
             setMemoryUiState(ctx, "initializing");
-            scheduleWorkingContext(ctx, sessionRouteSnapshot(ctx), "runtime_ready");
+            scheduleCheckpointRefresh(ctx, sessionRouteSnapshot(ctx), "runtime_ready");
           }
         } else {
           const runtimeStarting = state?.phase === "starting" || state?.phase === "restarting";
@@ -697,19 +729,21 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
   }
   function currentCoordinator(ctx: ExtensionContext): SessionMemoryCoordinator | undefined {
     const identity = sessionIdentity(ctx);
-    if (!identity) return undefined;
-    const key = `${identity.sessionId}\0${identity.sessionFile}`;
+    if (!identity || !sessionWorkingMemory || !workingContextGeneration) return undefined;
+    const key = `${identity.sessionId}\0${identity.sessionFile}\0${workingContextGeneration}`;
     if (!coordinator || coordinatorIdentity !== key) {
       coordinator = new SessionMemoryCoordinator(
         identity,
         new FileLongTermMemory(archiveRoot(ctx), archiveCopyTimeoutMs),
         PI_PROTOCOL_PROFILE,
+        sessionWorkingMemory,
       );
       coordinatorIdentity = key;
     }
     return coordinator;
   }
-  function scheduleWorkingContext(
+
+  function scheduleCheckpointRefresh(
     ctx: ExtensionContext,
     snapshot: SessionRouteSnapshot | undefined,
     trigger: string,
@@ -718,44 +752,52 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
       || applicableGenerationFault(ctx)
       || !memoryEnhancementAvailable
       || !workingContextOptimizer
+      || !sessionWorkingMemory
       || !snapshot
       || snapshot.entries.length === 0) return;
     const activeCoordinator = currentCoordinator(ctx);
     if (!activeCoordinator) return;
     let route: SessionRouteIdentity;
+    let retentionBudgetIdentity: string;
     try {
       if (!activeCoordinator.projectCurrentRoute(snapshot).projections.some(isMessageSource)) return;
       route = activeCoordinator.identifyCurrentRoute(snapshot);
+      retentionBudgetIdentity = createRetentionBudgetIdentity(
+        providerPayloadProfile(ctx),
+        activeCoordinator.checkpointRetentionPolicy(),
+      );
     } catch (error) {
-      writeRecord("working_context_rejected", {
+      writeRecord("checkpoint_refresh_rejected", {
         trigger,
         error: error instanceof Error ? error.message : String(error),
       });
       return;
     }
-    void workingContextOptimizer.prepare(route, activeCoordinator.projectCurrentRoute(snapshot).projections).then(
-      (prepared) => {
-        writeRecord("working_context_ready", {
+    void activeCoordinator.scheduleCheckpointRefresh(snapshot, retentionBudgetIdentity, { required: false }).then(
+      (result) => {
+        writeRecord("checkpoint_refresh_complete", {
           trigger,
           sessionId: route.sessionId,
           sessionFile: route.sessionFile,
           leafId: route.leafId,
           routeFingerprint: route.fingerprint,
-          openVikingSessionId: prepared.openVikingSessionId,
-          estimatedTokens: prepared.estimatedTokens,
-          hasWorkingMemory: prepared.hasWorkingMemory,
-          contentHash: hash(prepared.content),
+          outcome: result.kind,
+          checkpointIdentity: result.kind === "accepted" ? result.checkpoint.identity : undefined,
+          openVikingSessionId: result.kind === "accepted" ? result.checkpoint.openVikingSessionId : undefined,
+          hasWorkingMemory: result.kind === "accepted" ? result.checkpoint.workingMemory.length > 0 : false,
         });
       },
       (error) => {
-        const detail = error instanceof Error ? error.message : String(error);
-        latchGenerationFault(ctx, "working-context", { kind: "service", detail });
-        writeRecord("working_context_error", {
+        const fault = workingContextFault(error);
+        const detail = fault.detail;
+        writeRecord("checkpoint_refresh_error", {
           trigger,
           sessionId: route.sessionId,
           sessionFile: route.sessionFile,
           leafId: route.leafId,
           routeFingerprint: route.fingerprint,
+          required: false,
+          fault: fault.kind,
           error: detail,
         });
       },
@@ -923,7 +965,7 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
         memoryEnhancementAvailable = Boolean(generation && generationReady);
         if (memoryEnhancementAvailable) {
           setMemoryUiState(ctx, "initializing");
-          scheduleWorkingContext(ctx, sessionRouteSnapshot(ctx), "restart");
+          scheduleCheckpointRefresh(ctx, sessionRouteSnapshot(ctx), "restart");
         } else {
           const runtimeStarting = state.phase === "starting" || state.phase === "restarting";
           setMemoryUiState(ctx, runtimeStarting ? "initializing" : "faulted");
@@ -1090,7 +1132,11 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
     setAuthorization("初始化中");
     scheduleMemoryModelConfigCheck(ctx);
     const workingSnapshot = sessionRouteSnapshot(ctx);
-    scheduleWorkingContext(ctx, workingSnapshot, "before_agent_start");
+    scheduleCheckpointRefresh(
+      ctx,
+      workingSnapshot ? snapshotBeforeCurrentPrompt(workingSnapshot) : undefined,
+      "before_agent_start",
+    );
     writeRecord("before_agent_start", {
       promptBytes: Buffer.byteLength(event.prompt, "utf8"),
       systemPromptBytes: Buffer.byteLength(event.systemPrompt, "utf8"),
@@ -1159,34 +1205,84 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
         if (currentFault) {
           authorization = { kind: "block", fault: currentFault };
         } else {
-          const historicalSnapshot = snapshotBeforeCurrentPrompt(snapshot);
-          const route = activeCoordinator.identifyCurrentRoute(historicalSnapshot);
+          let requestSnapshot = snapshot;
+          const initialRouteFingerprint = activeCoordinator.identifyCurrentRoute(snapshot).fingerprint;
           const messageSourcesByEntryId = new Map(currentProjection.projections
             .filter(isMessageSource)
             .map((projection) => [projection.id, projection]));
-          authorization = await workingContextOptimizer.authorize({
-            generation: workingContextGeneration,
-            route,
-            projections: activeCoordinator.projectCurrentRoute(historicalSnapshot).projections,
-            messages: sanitizeFullOutputLocators(
-              event.messages as unknown[],
-              currentProjection.fullOutputCandidates,
-            ),
-            providerPayloadProfile: payloadProfile!,
-            toolSources: currentTurnToolSources(snapshot.entries, messageSourcesByEntryId),
-            toProviderMessages: (messages) => convertToLlm(messages as never[]) as unknown[],
-            ensureSources: (entryIds) => activeCoordinator.ensureCurrentSourcesRecoverable(snapshot, entryIds),
-            signal: ctx.signal,
-          });
+          const messages = sanitizeFullOutputLocators(
+            event.messages as unknown[],
+            currentProjection.fullOutputCandidates,
+          );
+          let currentProfile = payloadProfile!;
+          authorization = { kind: "block", fault: { kind: "service", detail: "Historical context was not evaluated" } };
+          for (let attempt = 0; attempt < 2; attempt += 1) {
+            const historicalSnapshot = snapshotBeforeCurrentPrompt(requestSnapshot);
+            const retentionBudgetIdentity = createRetentionBudgetIdentity(
+              currentProfile,
+              activeCoordinator.checkpointRetentionPolicy(),
+            );
+            const historical = await activeCoordinator.resolveHistoricalContext(
+              historicalSnapshot,
+              retentionBudgetIdentity,
+            );
+            authorization = await workingContextOptimizer.authorize({
+              generation: workingContextGeneration,
+              requestRoute: activeCoordinator.identifyCurrentRoute(requestSnapshot),
+              historical,
+              messages,
+              providerPayloadProfile: currentProfile,
+              toolSources: currentTurnToolSources(requestSnapshot.entries, messageSourcesByEntryId),
+              toProviderMessages: (providerMessages) => convertToLlm(providerMessages as never[]) as unknown[],
+              ensureSources: (entryIds) => activeCoordinator.ensureCurrentSourcesRecoverable(requestSnapshot, entryIds),
+              signal: ctx.signal,
+            });
+            if (authorization.kind !== "refresh-required") break;
+            const refresh = await activeCoordinator.scheduleCheckpointRefresh(
+              historicalSnapshot,
+              retentionBudgetIdentity,
+              { required: true, signal: ctx.signal },
+            );
+            if (refresh.kind !== "accepted") {
+              authorization = {
+                kind: "block",
+                fault: { kind: "service", detail: "Required checkpoint refresh did not publish a checkpoint" },
+              };
+              break;
+            }
+            const liveSnapshot = sessionRouteSnapshot(ctx);
+            if (!liveSnapshot
+              || activeCoordinator.identifyCurrentRoute(liveSnapshot).fingerprint !== initialRouteFingerprint) {
+              authorization = {
+                kind: "block",
+                fault: { kind: "route", detail: "The Pi route changed while waiting for a checkpoint refresh" },
+              };
+              break;
+            }
+            requestSnapshot = liveSnapshot;
+            currentProfile = providerPayloadProfile(ctx);
+          }
+          if (authorization.kind === "refresh-required") {
+            authorization = {
+              kind: "block",
+              fault: { kind: "budget", detail: "The refreshed checkpoint still cannot satisfy the Provider payload budget" },
+            };
+          }
         }
       } catch (error) {
         authorization = {
           kind: "block",
-          fault: { kind: "route", detail: error instanceof Error ? error.message : String(error) },
+          fault: workingContextFault(error),
         };
       }
     }
 
+    if (authorization.kind === "refresh-required") {
+      authorization = {
+        kind: "block",
+        fault: { kind: "budget", detail: "Checkpoint refresh did not resolve the historical context requirement" },
+      };
+    }
     let requestProof: PendingRequestProof | undefined;
     if (authorization.kind === "allow") {
       const model = ctx.model;
@@ -1256,11 +1352,13 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
     writeRecord("context_allowed", {
       nonce: authorization.proof.nonce,
       generation: authorization.proof.generation,
-      routeFingerprint: authorization.proof.routeFingerprint,
-      leafId: authorization.proof.leafId,
+      requestRouteFingerprint: authorization.proof.requestRouteFingerprint,
+      historicalRouteFingerprint: authorization.proof.historicalRouteFingerprint,
+      checkpointIdentity: authorization.proof.checkpointIdentity,
+      retentionBudgetIdentity: authorization.proof.retentionBudgetIdentity,
+      deltaHash: authorization.proof.deltaHash,
       enhancedContentHash: authorization.proof.enhancedContentHash,
       providerPayloadProfileId: authorization.proof.providerPayloadProfileId,
-      currentTurnKey: authorization.proof.currentTurnKey,
       currentTurn: authorization.metrics,
       messagesHash: requestProof.payload.messagesHash,
       messageCount: requestProof.payload.messageCount,
@@ -1307,6 +1405,41 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
       providerPayloadProfileError = error instanceof Error ? error.message : String(error);
     }
 
+    let currentRequestRouteFingerprint: string | undefined;
+    let currentHistoricalRouteFingerprint: string | undefined;
+    let currentCheckpointIdentity: string | undefined;
+    let currentDeltaHash: string | undefined;
+    let historicalValidationError: string | undefined;
+    if (proof && currentProviderPayloadProfile) {
+      try {
+        const liveSnapshot = sessionRouteSnapshot(ctx);
+        const activeCoordinator = currentCoordinator(ctx);
+        if (!liveSnapshot || !activeCoordinator) throw new Error("The current Pi route is unavailable at the Provider hook");
+        const requestRoute = activeCoordinator.identifyCurrentRoute(liveSnapshot);
+        currentRequestRouteFingerprint = requestRoute.fingerprint;
+        const historicalSnapshot = snapshotBeforeCurrentPrompt(liveSnapshot);
+        const retentionBudgetIdentity = createRetentionBudgetIdentity(
+          currentProviderPayloadProfile,
+          activeCoordinator.checkpointRetentionPolicy(),
+        );
+        if (retentionBudgetIdentity !== proof.assembly.retentionBudgetIdentity) {
+          throw new Error("Checkpoint retention budget changed after the context decision");
+        }
+        const historical = await activeCoordinator.resolveHistoricalContext(
+          historicalSnapshot,
+          retentionBudgetIdentity,
+          proof.assembly.checkpointIdentity,
+        );
+        currentHistoricalRouteFingerprint = historical.route.fingerprint;
+        currentCheckpointIdentity = historical.checkpoint.identity;
+        currentDeltaHash = historical.delta.hash;
+      } catch (error) {
+        historicalValidationError = error instanceof Error ? error.message : String(error);
+      }
+    }
+    const routeProofError = proof
+      ? assemblyRouteProofError(proof.assembly, currentRequestRouteFingerprint, currentHistoricalRouteFingerprint)
+      : undefined;
     // 只核对本 handler 执行时实际可见的 payload；最终采用由职责外观测分类。
     let hookOutcome: "verified" | "rejected" | "no-constructed-output";
     let rejectionReason: string | undefined;
@@ -1345,6 +1478,18 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
       rejectionReason = providerPayloadProfileError
         ? `Provider payload profile is unavailable: ${providerPayloadProfileError}`
         : "Provider payload profile changed after the context decision";
+    } else if (historicalValidationError) {
+      hookOutcome = "rejected";
+      rejectionReason = historicalValidationError;
+    } else if (routeProofError) {
+      hookOutcome = "rejected";
+      rejectionReason = routeProofError;
+    } else if (currentCheckpointIdentity !== proof.assembly.checkpointIdentity) {
+      hookOutcome = "rejected";
+      rejectionReason = "MemoryCheckpoint changed after the context decision";
+    } else if (currentDeltaHash !== proof.assembly.deltaHash) {
+      hookOutcome = "rejected";
+      rejectionReason = "VerifiedActiveDelta changed after the context decision";
     } else if (!openAICompletionsPayloadMatchesProfile(event.payload, {
       systemPromptHash: currentProviderPayloadProfile!.systemPromptHash,
       toolsHash: currentProviderPayloadProfile!.toolsHash,
@@ -1385,7 +1530,14 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
       currentMemoryCapabilityProofId,
       providerPayloadProfileId: proof?.assembly.providerPayloadProfileId,
       currentProviderPayloadProfileId,
-      currentTurnKey: proof?.assembly.currentTurnKey,
+      checkpointIdentity: proof?.assembly.checkpointIdentity,
+      currentCheckpointIdentity,
+      deltaHash: proof?.assembly.deltaHash,
+      currentDeltaHash,
+      requestRouteFingerprint: proof?.assembly.requestRouteFingerprint,
+      currentRequestRouteFingerprint,
+      historicalRouteFingerprint: proof?.assembly.historicalRouteFingerprint,
+      currentHistoricalRouteFingerprint,
       contextAuthorization: contextAuthorizationOutcome,
       payloadHasEnhancedContext,
       ...payloadSummary(event.payload),
@@ -1446,7 +1598,6 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
     contextAuthorizationOutcome = "pending";
     retireUnobservedProof("lifecycle reset");
     scheduleArchive(ctx, "turn_end");
-    scheduleWorkingContext(ctx, sessionRouteSnapshot(ctx), "turn_end");
   });
 
   pi.on("agent_end", (event, ctx) => {
@@ -1457,6 +1608,9 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
   pi.on("agent_settled", (_event, ctx) => {
     writeRecord("agent_settled", branchSnapshot(ctx));
     maybeFail("agent_settled");
+    const settledSnapshot = sessionRouteSnapshot(ctx);
+    scheduleArchive(ctx, "agent_settled");
+    scheduleCheckpointRefresh(ctx, settledSnapshot, "agent_settled");
   });
 
   pi.on("session_before_compact", (event, ctx) => {
@@ -1485,7 +1639,7 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
     });
     maybeFail("session_compact");
     scheduleArchive(ctx, "session_compact");
-    scheduleWorkingContext(ctx, sessionRouteSnapshot(ctx), "session_compact");
+    scheduleCheckpointRefresh(ctx, sessionRouteSnapshot(ctx), "session_compact");
   });
 
   pi.on("session_before_tree", (event, ctx) => {
@@ -1513,7 +1667,7 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
     });
     maybeFail("session_tree");
     scheduleArchive(ctx, "session_tree");
-    scheduleWorkingContext(ctx, sessionRouteSnapshot(ctx), "session_tree");
+    scheduleCheckpointRefresh(ctx, sessionRouteSnapshot(ctx), "session_tree");
   });
 
   pi.on("model_select", (event, ctx) => {

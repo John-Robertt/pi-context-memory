@@ -21,7 +21,7 @@
 
 ## 3. 路线身份与不变量
 
-每次操作接收当前路线快照：session ID、session file、实际 leaf，以及从根到 leaf 的规范化 message entry 与 ControlBoundary。协调模块从中派生完整 `SessionRouteSnapshot`、当前 prompt 之前的 `HistoricalRouteKey` 和 prompt 之后的 `CurrentTurnKey`。必须同时满足：
+每次操作接收当前路线快照：session ID、session file、实际 leaf，以及从根到 leaf 的规范化 message entry 与 ControlBoundary。协调模块从中派生完整 `SessionRouteSnapshot` 与当前 prompt 之前的 `HistoricalRouteKey`；Pi 集成另以完整快照生成 request route fingerprint，并由 Provider 消息证明绑定当前 prompt 与后续消息。必须同时满足：
 
 1. 快照身份与协调实例完全一致；
 2. entry ID 唯一，父链从根到 leaf 连续；
@@ -32,7 +32,7 @@
 7. MessageSource 的 task-content、完成状态、task-content hash 与当前 Pi entry 重新规范化结果一致，authority hash 核对原始 entry；ControlBoundary 不含 summary 文本；
 8. MemoryCheckpoint 的 coveredRoutePrefixKey 必须是当前 HistoricalRoute 不跨越 OpaqueProviderSegment 的精确前缀，来源集合属于该前缀，检查点 generation 与当前代际一致；当前代际另有与受管进程和配置一致的能力证明，检查点的 producing proof 只作来源追溯；
 9. VerifiedActiveDelta 是该检查点覆盖 watermark 之后、当前 prompt 之前的有序 MessageSource/ControlBoundary 后缀，全部来源可恢复；
-10. 请求授权同时绑定实际 leaf、HistoricalRouteKey、CurrentTurnKey、检查点 identity、delta hash、OpaqueProviderSegment hash 和最终内容哈希。
+10. 请求授权同时绑定完整 request route fingerprint、HistoricalRouteKey、检查点 identity、delta hash、最终增强内容哈希和完整 Provider 消息序列。
 
 协调模块拥有后台任务身份：
 
@@ -57,7 +57,7 @@ initializing
   → 任一必要条件失败       → faulted
 
 ready
-  → 配置、服务、模型、来源、路线、内容或证明失败 → faulted
+  → 必要配置、服务、模型、来源、路线、内容或证明失败 → faulted
 
 faulted
   → 显式重启或重新验证创建新代际 → initializing
@@ -68,7 +68,7 @@ faulted
 
 `faulted` 是本扩展锁存状态；后台成功或服务恢复不自动改写结论。只有用户选择 Launcher 重启/重新验证并由能力模块形成新代际后，本模块才消费该代际并核验当前 branch；其它处理方式不由本模块决定。
 
-后台刷新是 ready 运行状态中的派生任务，不形成独立用户状态，也不等同于路线不可用。每次授权根据兼容检查点、VerifiedActiveDelta、来源与预算计算 `available | refresh-required`：前者直接继续，后者加入唯一必要刷新屏障。刷新失败或等待达到当前 `MemoryRuntimeProfile` 的操作边界时进入 faulted。
+后台刷新是 ready 运行状态中的派生任务，不形成独立用户状态，也不等同于路线不可用。每次授权根据兼容检查点、VerifiedActiveDelta、来源与预算计算 `available | refresh-required`：前者直接继续，后者加入唯一必要刷新屏障。机会性刷新失败只记录诊断并保留旧 checkpoint+delta；必要刷新失败或等待达到当前 `MemoryRuntimeProfile` 的操作边界时才进入 faulted。
 
 ## 5. 对外能力
 

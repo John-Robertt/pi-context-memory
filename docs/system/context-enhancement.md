@@ -76,9 +76,9 @@ CurrentTurn
 
 `CurrentTurn` 先保留 Pi Provider 基线，再治理本扩展替换范围。全-text message/ToolBatch 可形成 MessageSource；含 image/unsupported public block 的完整单元形成 OpaqueProviderSegment，不部分归档。thinking/private metadata 按 Pi 结构规则处理且不归档；ControlBoundary 无正文。customType、正文语义和来源黑名单都不决定 Provider 资格。
 
-Pi 集成先验证 context 时刻的完整 `SessionRouteSnapshot`，再以当前 Agent run 的 user prompt 为边界拆分。`HistoricalRouteKey` 绑定 prompt 之前的有序 MessageSource taskContent、完成状态、仍需原样保留的 Pi Provider 内容与 ControlBoundary 身份；`CurrentTurnKey` 绑定该 prompt、后续已持久化 MessageSource、尚未落盘但实际传入的 Provider 基线消息及其顺序。请求证明同时绑定当前 session leaf、两个 key、MemoryCheckpoint identity、VerifiedActiveDelta hash 和最终内容哈希。
+Pi 集成先验证 context 时刻的完整 `SessionRouteSnapshot`，再以当前 Agent run 的 user prompt 为边界拆分。`HistoricalRouteKey` 绑定 prompt 之前的有序 MessageSource taskContent、完成状态、仍需原样保留的 Pi Provider 内容与 ControlBoundary 身份；完整 request route fingerprint 绑定当时从根到实际 leaf 的全部 entry 身份，PayloadProofAdapter 再绑定该 prompt、后续 Provider 基线消息、增强历史及其最终序列。请求证明同时绑定 request route、HistoricalRouteKey、MemoryCheckpoint identity、VerifiedActiveDelta hash 和最终内容哈希。
 
-同一 user prompt 后的连续工具循环只更新 `CurrentTurnKey`，不提交 Working Memory refresh。Agent settled 后归档完整回合，并可为稳定路线 watermark 安排后台刷新；下一 user prompt 到达时优先组合兼容检查点与实际路线后缀，不因后台任务仍在运行而等待。
+同一 user prompt 后的连续工具循环只更新完整 request route 与 Provider 消息证明，不提交 Working Memory refresh。Agent settled 后归档完整回合，并可为稳定路线 watermark 安排后台刷新；下一 user prompt 到达时优先组合兼容检查点与实际路线后缀，不因后台任务仍在运行而等待。
 
 首轮请求使用扩展本地合法空检查点与空 VerifiedActiveDelta。它仍绑定已经通过实际能力验证的运行代际，并生成增强证明。
 
@@ -116,7 +116,7 @@ Pi 集成先以当前任务 Provider、模型与 API 形成版本化 `ProviderPa
 - 隐藏增强历史消息；
 - 有界 CurrentTurn 与必须原样保留的 OpaqueProviderSegment；
 - ProviderPayloadProfile 身份；
-- session、实际 leaf、HistoricalRouteKey、CurrentTurnKey、MemoryCheckpoint identity、VerifiedActiveDelta hash、OpaqueProviderSegment hash 和运行代际；
+- session、完整 request route fingerprint、HistoricalRouteKey、MemoryCheckpoint identity、VerifiedActiveDelta hash 和运行代际；
 - system prompt 与 active tool schema 哈希；
 - 上下文消息内容哈希；
 - 单次请求 nonce；
@@ -147,7 +147,7 @@ context
 - 当前任务 Provider、模型和 API 与授权证明一致，并具有已验证的 PayloadProofAdapter；
 - 归一化后的系统、工具 schema 和有序消息与授权输入一致；
 - nonce 存在、未消费且只出现于预期增强消息；
-- 重新读取的 runtime snapshot 仍证明同一受管进程代际和同一能力 proof 有效；实际 leaf、HistoricalRouteKey、CurrentTurnKey、MemoryCheckpoint identity、VerifiedActiveDelta hash 与 OpaqueProviderSegment hash 仍为当前值；
+- 重新读取的 runtime snapshot 仍证明同一受管进程代际和同一能力 proof 有效；完整 request route fingerprint、HistoricalRouteKey、MemoryCheckpoint identity 与 VerifiedActiveDelta hash 仍为当前值；
 - ProviderPayloadProfile 的上下文窗口、输出设置、system/tool 开销和适配版本与实际 payload 一致；
 - payload 增强内容哈希与 `context` 决定一致；
 - handler payload 未丢失或改变本扩展发布的有序 messages；

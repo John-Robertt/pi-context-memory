@@ -8,7 +8,7 @@ import {
   normalizeCommitResult,
   normalizeSessionContext,
   normalizeTaskState,
-  type NormalizedSessionContext,
+  type NormalizedOpenVikingMessage,
 } from "./openviking-protocol.ts";
 import {
   isControlBoundary,
@@ -19,20 +19,35 @@ import {
 } from "./pi-session-protocol.ts";
 import type { SessionRouteIdentity } from "./session-memory-coordination.ts";
 
-const MAX_ENTRY_CHARS = 24_000;
 const DEFAULT_CONTEXT_TOKEN_BUDGET = 12_000;
 const DEFAULT_COMMIT_PENDING_TOKENS = 6_000;
 const DEFAULT_KEEP_RECENT_MESSAGES = 8;
 const DEFAULT_MAX_MIRRORS = 8;
+const DEFAULT_MAX_CHECKPOINTS = 16;
+const DEFAULT_MAX_PENDING_REFRESHES = 16;
+export const MAX_OPENVIKING_PROJECTION_BYTES = 32 * 1024;
+export const MAX_OPENVIKING_APPEND_BODY_BYTES = 256 * 1024;
+const MAX_OPENVIKING_APPEND_MESSAGES = 100;
 export const DEFAULT_WORKING_MEMORY_TASK_TIMEOUT_MS = 180_000;
 const DEFAULT_TASK_POLL_MS = 100;
+
 export interface SessionWorkingMemoryOptions {
+  generation: string;
+  capabilityProofId: string;
   contextTokenBudget?: number;
   commitPendingTokens?: number;
   keepRecentMessages?: number;
   maxMirrors?: number;
+  maxCheckpoints?: number;
+  maxPendingRefreshes?: number;
   taskTimeoutMs?: number;
   taskPollMs?: number;
+}
+
+export interface RetentionPolicy {
+  version: "openviking-session-retention-v1";
+  contextTokenBudget: number;
+  keepRecentMessages: number;
 }
 
 export interface OpenVikingProjection {
@@ -44,18 +59,32 @@ export interface OpenVikingProjection {
   source_message_ids: string[];
 }
 
-export type AssembledSessionContext = NormalizedSessionContext;
-
-export interface PreparedSessionMemory {
-  route: SessionRouteIdentity;
-  openVikingSessionId: string;
-  context: AssembledSessionContext;
+export interface RefreshTarget {
+  generation: string;
+  routePrefixKey: string;
+  watermark: string | null;
+  retentionBudgetIdentity: string;
 }
 
-interface CommitFlight {
-  taskId: string;
-  done: Promise<void>;
+export interface MemoryCheckpoint {
+  identity: string;
+  generation: string;
+  coveredRoutePrefixKey: string;
+  coveredRouteEntryIds: readonly string[];
+  coveredThroughEntryId: string | null;
+  retentionBudgetIdentity: string;
+  sourceIds: readonly string[];
+  workingMemory: string;
+  activeHistory: readonly NormalizedOpenVikingMessage[];
+  assemblyHash: string;
+  producedUnderCapabilityProofId: string;
+  openVikingSessionId: string | null;
 }
+
+export type CheckpointRefreshResult =
+  | { kind: "accepted"; checkpoint: MemoryCheckpoint }
+  | { kind: "skipped" }
+  | { kind: "superseded" };
 
 interface RouteMirror {
   sessionId: string;
@@ -63,38 +92,24 @@ interface RouteMirror {
   openVikingSessionId: string;
   projections: readonly OpenVikingProjection[];
   pendingTokens: number;
-  revision: number;
-  latestRoute?: SessionRouteIdentity;
-  commitFlight?: CommitFlight;
   retired: boolean;
   touched: number;
 }
-interface PrepareJob {
-  kind: "prepare";
+
+interface RefreshJob {
   key: string;
+  target: RefreshTarget;
   route: SessionRouteIdentity;
   projections: readonly MemoryProjection[];
-  signal?: AbortSignal;
-  resolve: (prepared: PreparedSessionMemory) => void;
+  required: boolean;
+  started: boolean;
+  promise: Promise<CheckpointRefreshResult>;
+  resolve: (result: CheckpointRefreshResult) => void;
   reject: (error: unknown) => void;
 }
-interface PromotionJob {
-  kind: "promotion";
-  mirror: RouteMirror;
-  flight: CommitFlight;
-  completed: boolean;
-  resolve: () => void;
-  reject: (error: unknown) => void;
-}
-type QueueJob = PrepareJob | PromotionJob;
 
-interface FastPreparation {
-  active: PreparedSessionMemory;
-  flight?: CommitFlight;
-}
-
-function sha256(value: string): string {
-  return createHash("sha256").update(value).digest("hex");
+function sha256(value: unknown): string {
+  return createHash("sha256").update(JSON.stringify(value)).digest("hex");
 }
 
 function positiveInteger(value: number | undefined, fallback: number, name: string): number {
@@ -108,18 +123,60 @@ function nonNegativeInteger(value: number | undefined, fallback: number, name: s
   if (!Number.isSafeInteger(resolved) || resolved < 0) throw new Error(`${name} must be a non-negative integer`);
   return resolved;
 }
-
-function boundedMiddle(value: string, maxChars: number): string {
-  if (value.length <= maxChars) return value;
-  const marker = "\n… content omitted …\n";
-  const half = Math.max(0, Math.floor((maxChars - marker.length) / 2));
-  return `${value.slice(0, half)}${marker}${value.slice(-half)}`;
+function utf8Prefix(value: string, maxBytes: number): string {
+  if (Buffer.byteLength(value, "utf8") <= maxBytes) return value;
+  let low = 0;
+  let high = value.length;
+  while (low < high) {
+    const middle = Math.ceil((low + high) / 2);
+    if (Buffer.byteLength(value.slice(0, middle), "utf8") <= maxBytes) low = middle;
+    else high = middle - 1;
+  }
+  const lastCodeUnit = value.charCodeAt(low - 1);
+  if (low > 0 && lastCodeUnit >= 0xD800 && lastCodeUnit <= 0xDBFF) low -= 1;
+  return value.slice(0, low);
 }
 
-/**
- * append 只使用 MessageSource 的 taskContent、完成状态与 source ID；
- * ControlBoundary 只贡献无正文的路线身份，不产生可检索内容。
- */
+function boundedProjectionContent(source: MessageSource, text: string): string {
+  const prefix = `[Pi entry ${source.id}]\n`;
+  const complete = `${prefix}${text}`;
+  if (Buffer.byteLength(complete, "utf8") <= MAX_OPENVIKING_PROJECTION_BYTES) return complete;
+  const suffix = [
+    "",
+    `[OpenViking projection bounded; originalBytes=${Buffer.byteLength(text, "utf8")}; taskContentHash=${source.taskContentHash}]`,
+    `[Recover the exact Pi source with recall_session read_source entryId=${source.id}]`,
+  ].join("\n");
+  const available = MAX_OPENVIKING_PROJECTION_BYTES - Buffer.byteLength(prefix + suffix, "utf8");
+  if (available <= 0) throw new Error(`Pi source identity exceeds the OpenViking projection limit: ${source.id}`);
+  const content = `${prefix}${utf8Prefix(text, available)}${suffix}`;
+  if (Buffer.byteLength(content, "utf8") > MAX_OPENVIKING_PROJECTION_BYTES) {
+    throw new Error(`OpenViking projection exceeds its byte limit: ${source.id}`);
+  }
+  return content;
+}
+
+function appendBatches(projections: readonly OpenVikingProjection[]): OpenVikingProjection[][] {
+  const batches: OpenVikingProjection[][] = [];
+  let batch: OpenVikingProjection[] = [];
+  for (const projection of projections) {
+    const candidate = [...batch, projection];
+    if (candidate.length > MAX_OPENVIKING_APPEND_MESSAGES
+      || Buffer.byteLength(JSON.stringify({ messages: candidate }), "utf8") > MAX_OPENVIKING_APPEND_BODY_BYTES) {
+      if (batch.length === 0) throw new Error("One OpenViking projection exceeds the append body limit");
+      batches.push(batch);
+      batch = [projection];
+      if (Buffer.byteLength(JSON.stringify({ messages: batch }), "utf8") > MAX_OPENVIKING_APPEND_BODY_BYTES) {
+        throw new Error("One OpenViking projection exceeds the append body limit");
+      }
+    } else {
+      batch = candidate;
+    }
+  }
+  if (batch.length > 0) batches.push(batch);
+  return batches;
+}
+
+/** OpenViking 只接收可追溯的公开任务内容；ControlBoundary 只改变 turn 身份。 */
 export function projectMemorySources(projections: readonly MemoryProjection[]): OpenVikingProjection[] {
   const result: OpenVikingProjection[] = [];
   let turnId = "route-start";
@@ -134,7 +191,7 @@ export function projectMemorySources(projections: readonly MemoryProjection[]): 
     if (projection.role === "user") turnId = projection.id;
     result.push({
       role: projection.role === "assistant" ? "assistant" : "user",
-      content: boundedMiddle(`[Pi entry ${projection.id}]\n${text}`, MAX_ENTRY_CHARS),
+      content: boundedProjectionContent(projection, text),
       created_at: projection.timestamp,
       turn_id: turnId,
       message_kind: messageKindOf(projection),
@@ -158,207 +215,339 @@ function isProjectionPrefix(prefix: readonly OpenVikingProjection[], route: read
   return prefix.length <= route.length && prefix.every((projection, index) => sameProjection(projection, route[index]));
 }
 
-/** 投影身份必须来自权威路线且唯一；Provider 视图顺序由 PiProtocolProfile 决定。 */
+function entryIdsOf(projection: MemoryProjection): readonly string[] {
+  return isOpaqueProviderSegment(projection) ? projection.entryIds : [projection.id];
+}
+
+function projectionsWithinEntryPrefix(
+  projections: readonly MemoryProjection[],
+  entryIds: readonly string[],
+): MemoryProjection[] {
+  const allowed = new Set(entryIds);
+  return projections.filter((projection) => entryIdsOf(projection).every((id) => allowed.has(id)));
+}
+
+/** 精确前缀身份同时绑定 session、entry 顺序与可投影内容。 */
+export function historicalRoutePrefixKey(
+  route: SessionRouteIdentity,
+  projections: readonly MemoryProjection[],
+  coveredRouteEntryIds: readonly string[] = route.entryIds,
+): string {
+  return sha256({
+    sessionId: route.sessionId,
+    sessionFile: route.sessionFile,
+    entryIds: coveredRouteEntryIds,
+    projections: projectionsWithinEntryPrefix(projections, coveredRouteEntryIds),
+  });
+}
+
+export function refreshTargetKey(target: RefreshTarget): string {
+  return sha256(target);
+}
+
 function assertRouteInput(route: SessionRouteIdentity, projections: readonly MemoryProjection[]): void {
   const routeIds = new Set(route.entryIds);
   const projectionIds = new Set<string>();
   for (const projection of projections) {
-    const ids = isOpaqueProviderSegment(projection) ? projection.entryIds : [projection.id];
-    for (const id of ids) {
-      if (!routeIds.has(id)) {
-        throw new Error("Working memory projection is not part of its route identity");
-      }
+    for (const id of entryIdsOf(projection)) {
+      if (!routeIds.has(id)) throw new Error("Working memory projection is not part of its route identity");
       if (projectionIds.has(id)) throw new Error("Working memory projection identity is duplicated");
       projectionIds.add(id);
     }
   }
 }
 
+function assertRefreshable(projections: readonly MemoryProjection[]): void {
+  if (projections.some(isOpaqueProviderSegment)) {
+    throw new Error("A MemoryCheckpoint cannot cross an opaque Provider segment");
+  }
+}
+
+function isEntryPrefix(prefix: readonly string[], route: readonly string[]): boolean {
+  return prefix.length <= route.length && prefix.every((id, index) => route[index] === id);
+}
+
+function checkpointIdentity(checkpoint: Omit<MemoryCheckpoint, "identity">): string {
+  return sha256(checkpoint);
+}
+
 export class OpenVikingSessionMemory {
   private readonly client: OpenVikingHttpClient;
-  private readonly contextTokenBudget: number;
+  private readonly generation: string;
+  private readonly capabilityProofId: string;
   private readonly commitPendingTokens: number;
-  private readonly keepRecentMessages: number;
   private readonly maxMirrors: number;
+  private readonly maxCheckpoints: number;
+  private readonly maxPendingRefreshes: number;
   private readonly taskTimeoutMs: number;
   private readonly taskPollMs: number;
+  private readonly policy: RetentionPolicy;
   private readonly shutdownController = new AbortController();
-  private readonly pending = new Map<string, Promise<PreparedSessionMemory>>();
-  private readonly ready = new Map<string, PreparedSessionMemory>();
   private readonly mirrors: RouteMirror[] = [];
-  private readonly queue: QueueJob[] = [];
-  private activeDrain: Promise<void> | undefined;
-  private readonly backgroundTasks = new Set<Promise<void>>();
+  private readonly checkpoints = new Map<string, MemoryCheckpoint>();
+  private readonly refreshes = new Map<string, RefreshJob>();
+  private readonly queue: RefreshJob[] = [];
   private readonly cleanupTasks = new Set<Promise<void>>();
+  private activeJob: RefreshJob | undefined;
+  private drainTask: Promise<void> | undefined;
   private touchSequence = 0;
 
   constructor(
     baseUrl: string,
-    apiKey?: string,
+    apiKey: string | undefined,
     requestTimeoutMs = DEFAULT_OPENVIKING_REQUEST_TIMEOUT_MS,
-    options: SessionWorkingMemoryOptions = {},
+    options: SessionWorkingMemoryOptions,
   ) {
+    if (!options.generation) throw new Error("Working memory generation is required");
+    if (!options.capabilityProofId) throw new Error("Working memory capability proof identity is required");
     this.client = new OpenVikingHttpClient(baseUrl, apiKey, requestTimeoutMs);
-    this.contextTokenBudget = positiveInteger(options.contextTokenBudget, DEFAULT_CONTEXT_TOKEN_BUDGET, "Context token budget");
+    this.generation = options.generation;
+    this.capabilityProofId = options.capabilityProofId;
     this.commitPendingTokens = positiveInteger(options.commitPendingTokens, DEFAULT_COMMIT_PENDING_TOKENS, "Commit token threshold");
-    this.keepRecentMessages = nonNegativeInteger(options.keepRecentMessages, DEFAULT_KEEP_RECENT_MESSAGES, "Recent message count");
     this.maxMirrors = positiveInteger(options.maxMirrors, DEFAULT_MAX_MIRRORS, "Route mirror limit");
+    this.maxCheckpoints = positiveInteger(options.maxCheckpoints, DEFAULT_MAX_CHECKPOINTS, "Checkpoint limit");
+    this.maxPendingRefreshes = positiveInteger(options.maxPendingRefreshes, DEFAULT_MAX_PENDING_REFRESHES, "Pending refresh limit");
     this.taskTimeoutMs = positiveInteger(options.taskTimeoutMs, DEFAULT_WORKING_MEMORY_TASK_TIMEOUT_MS, "Task timeout");
     this.taskPollMs = positiveInteger(options.taskPollMs, DEFAULT_TASK_POLL_MS, "Task poll interval");
+    this.policy = {
+      version: "openviking-session-retention-v1",
+      contextTokenBudget: positiveInteger(options.contextTokenBudget, DEFAULT_CONTEXT_TOKEN_BUDGET, "Context token budget"),
+      keepRecentMessages: nonNegativeInteger(options.keepRecentMessages, DEFAULT_KEEP_RECENT_MESSAGES, "Recent message count"),
+    };
   }
 
-  getReady(route: SessionRouteIdentity): PreparedSessionMemory | undefined {
-    const prepared = this.ready.get(route.fingerprint);
-    if (!prepared) return undefined;
-    return prepared.route.sessionId === route.sessionId
-      && prepared.route.sessionFile === route.sessionFile
-      && prepared.route.leafId === route.leafId
-      && JSON.stringify(prepared.route.entryIds) === JSON.stringify(route.entryIds)
-      ? prepared
-      : undefined;
+  generationIdentity(): string {
+    return this.generation;
   }
 
-  async waitForReady(
-    route: SessionRouteIdentity,
-    timeoutMs: number,
-    signal?: AbortSignal,
-  ): Promise<PreparedSessionMemory | undefined> {
-    if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 0) throw new Error("Ready wait timeout must be a non-negative integer");
-    const existing = this.getReady(route);
-    if (existing || timeoutMs === 0 || !this.pending.has(route.fingerprint)) return existing;
-
-    const deadline = Date.now() + timeoutMs;
-    while (this.pending.has(route.fingerprint) && Date.now() < deadline) {
-      signal?.throwIfAborted();
-      const prepared = this.getReady(route);
-      if (prepared) return prepared;
-      await new Promise<void>((resolveDelay) => setTimeout(resolveDelay, Math.min(5, deadline - Date.now())));
-    }
-    signal?.throwIfAborted();
-    return this.getReady(route);
+  retentionPolicy(): RetentionPolicy {
+    return this.policy;
   }
 
-  prepare(
+  emptyCheckpoint(route: SessionRouteIdentity, retentionBudgetIdentity: string): MemoryCheckpoint {
+    const checkpoint = {
+      generation: this.generation,
+      coveredRoutePrefixKey: historicalRoutePrefixKey(route, [], []),
+      coveredRouteEntryIds: [],
+      coveredThroughEntryId: null,
+      retentionBudgetIdentity,
+      sourceIds: [],
+      workingMemory: "",
+      activeHistory: [],
+      assemblyHash: sha256({ overview: "", messages: [] }),
+      producedUnderCapabilityProofId: this.capabilityProofId,
+      openVikingSessionId: null,
+    } satisfies Omit<MemoryCheckpoint, "identity">;
+    return { ...checkpoint, identity: checkpointIdentity(checkpoint) };
+  }
+
+  findCompatibleCheckpoint(
     route: SessionRouteIdentity,
     projections: readonly MemoryProjection[],
-    signal?: AbortSignal,
-  ): Promise<PreparedSessionMemory> {
+    retentionBudgetIdentity: string,
+    checkpointIdentity?: string,
+  ): MemoryCheckpoint | undefined {
     assertRouteInput(route, projections);
-    if (this.shutdownController.signal.aborted) return Promise.reject(new Error("Session Working Memory has stopped"));
-    const existing = this.getReady(route);
-    if (existing) return Promise.resolve(existing);
-    const pending = this.pending.get(route.fingerprint);
-    if (pending) return pending;
+    const candidates = [...this.checkpoints.values()]
+      .filter((checkpoint) => checkpoint.generation === this.generation
+        && checkpoint.retentionBudgetIdentity === retentionBudgetIdentity
+        && (checkpointIdentity === undefined || checkpoint.identity === checkpointIdentity)
+        && isEntryPrefix(checkpoint.coveredRouteEntryIds, route.entryIds)
+        && checkpoint.coveredRoutePrefixKey === historicalRoutePrefixKey(
+          route,
+          projections,
+          checkpoint.coveredRouteEntryIds,
+        ))
+      .sort((left, right) => right.coveredRouteEntryIds.length - left.coveredRouteEntryIds.length);
+    return candidates[0];
+  }
 
-    let resolveJob!: (prepared: PreparedSessionMemory) => void;
-    let rejectJob!: (error: unknown) => void;
-    const task = new Promise<PreparedSessionMemory>((resolve, reject) => {
-      resolveJob = resolve;
-      rejectJob = reject;
-    });
-    for (let index = this.queue.length - 1; index >= 0; index -= 1) {
-      const queued = this.queue[index];
-      if (queued.kind !== "prepare" || queued.route.sessionId !== route.sessionId) continue;
-      this.queue.splice(index, 1);
-      this.pending.delete(queued.key);
-      queued.reject(new Error("Session Working Memory preparation was superseded by a newer route"));
+  refreshCheckpoint(
+    target: RefreshTarget,
+    route: SessionRouteIdentity,
+    projections: readonly MemoryProjection[],
+    options: { required: boolean; signal?: AbortSignal },
+  ): Promise<CheckpointRefreshResult> {
+    assertRouteInput(route, projections);
+    assertRefreshable(projections);
+    this.assertTarget(target, route, projections);
+    if (this.shutdownController.signal.aborted) return Promise.reject(new Error("Session Working Memory has stopped"));
+
+    const key = refreshTargetKey(target);
+    const existingCheckpoint = this.checkpoints.get(key);
+    if (existingCheckpoint) return Promise.resolve({ kind: "accepted", checkpoint: existingCheckpoint });
+    let job = this.refreshes.get(key);
+    if (!job) {
+      if (this.refreshes.size >= this.maxPendingRefreshes) {
+        return Promise.reject(new Error("Session Working Memory refresh queue limit exceeded"));
+      }
+      job = this.createJob(key, target, route, projections, options.required);
+      if (!options.required) this.collapseQueuedSuccessor(job);
+      this.refreshes.set(key, job);
+      this.queue.push(job);
+      this.startDrain();
+    } else if (options.required) {
+      job.required = true;
     }
-    this.queue.push({
-      kind: "prepare",
-      key: route.fingerprint,
+    return this.waitForJob(job.promise, options.signal);
+  }
+
+  private createJob(
+    key: string,
+    target: RefreshTarget,
+    route: SessionRouteIdentity,
+    projections: readonly MemoryProjection[],
+    required: boolean,
+  ): RefreshJob {
+    let resolve!: (result: CheckpointRefreshResult) => void;
+    let reject!: (error: unknown) => void;
+    const promise = new Promise<CheckpointRefreshResult>((resolveResult, rejectResult) => {
+      resolve = resolveResult;
+      reject = rejectResult;
+    });
+    return {
+      key,
+      target: structuredClone(target),
       route: structuredClone(route),
       projections: projections.map((projection) => structuredClone(projection)),
-      signal,
-      resolve: resolveJob,
-      reject: rejectJob,
-    });
-    this.pending.set(route.fingerprint, task);
-    this.startDrain();
-    return task;
+      required,
+      started: false,
+      promise,
+      resolve,
+      reject,
+    };
+  }
+
+  /** 只有无人等待、尚未启动、同预算的线性后台后继可以替代旧目标。 */
+  private collapseQueuedSuccessor(successor: RefreshJob): void {
+    for (let index = this.queue.length - 1; index >= 0; index -= 1) {
+      const candidate = this.queue[index];
+      if (candidate.started
+        || candidate.required
+        || candidate.route.sessionId !== successor.route.sessionId
+        || candidate.route.sessionFile !== successor.route.sessionFile
+        || candidate.target.generation !== successor.target.generation
+        || candidate.target.retentionBudgetIdentity !== successor.target.retentionBudgetIdentity
+        || !isEntryPrefix(candidate.route.entryIds, successor.route.entryIds)) continue;
+      this.queue.splice(index, 1);
+      this.refreshes.delete(candidate.key);
+      candidate.resolve({ kind: "superseded" });
+    }
   }
 
   private startDrain(): void {
-    if (this.activeDrain) return;
-    const operation = this.drainQueue().finally(() => {
-      if (this.activeDrain !== operation) return;
-      this.activeDrain = undefined;
+    if (this.drainTask) return;
+    const operation = this.drain().finally(() => {
+      if (this.drainTask !== operation) return;
+      this.drainTask = undefined;
       if (this.queue.length > 0 && !this.shutdownController.signal.aborted) this.startDrain();
     });
-    this.activeDrain = operation;
+    this.drainTask = operation;
   }
 
-  private async drainQueue(): Promise<void> {
-    while (true) {
+  private async drain(): Promise<void> {
+    while (!this.shutdownController.signal.aborted) {
       const job = this.queue.shift();
       if (!job) return;
-      if (job.kind === "promotion") {
-        try {
-          await this.promoteSerial(job.mirror, job.flight, job.completed);
-          job.resolve();
-        } catch (error) {
-          job.reject(error);
-        }
-        continue;
-      }
+      job.started = true;
+      this.activeJob = job;
       try {
-        const prepared = await this.prepareFast(job.route, job.projections, job.signal);
-        this.ready.set(job.key, prepared.active);
-        this.trimReady();
-        if (prepared.flight) this.settleAfterFlight(job, prepared);
-        else {
-          this.pending.delete(job.key);
-          job.resolve(prepared.active);
-        }
+        const result = await this.executeRefresh(job);
+        job.resolve(result);
       } catch (error) {
-        this.ready.delete(job.key);
-        this.discardMirrorsForRoute(job.route, job.projections);
-        this.pending.delete(job.key);
         job.reject(error);
+      } finally {
+        if (this.activeJob === job) this.activeJob = undefined;
+        this.refreshes.delete(job.key);
       }
     }
   }
 
-  async shutdown(reason: unknown = new Error("Session Working Memory stopped")): Promise<void> {
-    if (!this.shutdownController.signal.aborted) this.shutdownController.abort(reason);
-    for (const job of this.queue.splice(0)) job.reject(reason);
-    if (this.activeDrain) await this.activeDrain.catch(() => undefined);
-    while (this.backgroundTasks.size > 0) await Promise.allSettled([...this.backgroundTasks]);
-    this.pending.clear();
-    this.ready.clear();
-    const sessionIds = this.mirrors.splice(0).map((mirror) => mirror.openVikingSessionId);
-    for (const sessionId of sessionIds) this.scheduleSessionDeletion(sessionId);
-    while (this.cleanupTasks.size > 0) await Promise.allSettled([...this.cleanupTasks]);
+  private async executeRefresh(job: RefreshJob): Promise<CheckpointRefreshResult> {
+    const signal = this.shutdownController.signal;
+    signal.throwIfAborted();
+    const routeProjections = projectMemorySources(job.projections);
+    const mirror = await this.findOrCreateMirror(job.route, routeProjections, signal);
+    try {
+      return await this.refreshMirror(job, mirror, routeProjections, signal);
+    } catch (error) {
+      this.retireMirror(mirror);
+      throw error;
+    }
   }
 
-  private async prepareFast(
-    route: SessionRouteIdentity,
-    projections: readonly MemoryProjection[],
-    signal?: AbortSignal,
-  ): Promise<FastPreparation> {
-    const operationSignal = signal
-      ? AbortSignal.any([this.shutdownController.signal, signal])
-      : this.shutdownController.signal;
-    operationSignal.throwIfAborted();
+  private async refreshMirror(
+    job: RefreshJob,
+    mirror: RouteMirror,
+    routeProjections: readonly OpenVikingProjection[],
+    signal: AbortSignal,
+  ): Promise<CheckpointRefreshResult> {
+    const appended = routeProjections.slice(mirror.projections.length);
+    for (const batch of appendBatches(appended)) {
+      mirror.pendingTokens += Math.ceil(batch.reduce((total, projection) => total + projection.content.length, 0) / 4);
+      const { result } = await this.client.request(
+        "POST",
+        `/api/v1/sessions/${encodeURIComponent(mirror.openVikingSessionId)}/messages/batch`,
+        { messages: batch },
+        signal,
+      );
+      mirror.pendingTokens = normalizeBatchPendingTokens(result) ?? mirror.pendingTokens;
+    }
+    mirror.projections = routeProjections.map((projection) => structuredClone(projection));
+    mirror.touched = ++this.touchSequence;
 
-    const routeProjections = projectMemorySources(projections);
+    if (mirror.pendingTokens < this.commitPendingTokens && !job.required) {
+      this.trimMirrors(mirror);
+      return { kind: "skipped" };
+    }
+    const { result } = await this.client.request(
+      "POST",
+      `/api/v1/sessions/${encodeURIComponent(mirror.openVikingSessionId)}/commit`,
+      { keep_recent_count: this.policy.keepRecentMessages },
+      signal,
+    );
+    const commit = normalizeCommitResult(result);
+    mirror.pendingTokens = 0;
+    if (commit.status === "skipped") {
+      if (job.required) throw new Error("Required checkpoint refresh was skipped by OpenViking");
+      this.trimMirrors(mirror);
+      return { kind: "skipped" };
+    }
+
+    await this.waitForTask(commit.taskId, signal);
+    const checkpoint = await this.assembleCheckpoint(job, mirror, signal);
+    if (refreshTargetKey(job.target) !== job.key) throw new Error("Checkpoint refresh target changed before publication");
+    this.checkpoints.set(job.key, checkpoint);
+    this.trimCheckpoints();
+    this.trimMirrors(mirror);
+    return { kind: "accepted", checkpoint };
+  }
+
+  private async findOrCreateMirror(
+    route: SessionRouteIdentity,
+    routeProjections: readonly OpenVikingProjection[],
+    signal: AbortSignal,
+  ): Promise<RouteMirror> {
     let mirror = this.mirrors
       .filter((candidate) => candidate.sessionId === route.sessionId
         && candidate.sessionFile === route.sessionFile
         && !candidate.retired
-        && isProjectionPrefix(candidate.projections, routeProjections))
+        && isProjectionPrefix(candidate.projections, routeProjections)
+        && (candidate.projections.length < routeProjections.length || candidate.pendingTokens > 0))
       .sort((left, right) => right.projections.length - left.projections.length)[0];
-    if (!mirror) {
-      mirror = {
-        sessionId: route.sessionId,
-        sessionFile: route.sessionFile,
-        openVikingSessionId: `pcm-${sha256(`${route.sessionId}\0${route.fingerprint}`).slice(0, 16)}-${randomUUID()}`,
-        projections: [],
-        pendingTokens: 0,
-        revision: 0,
-        retired: false,
-        touched: ++this.touchSequence,
-      };
-      this.mirrors.push(mirror);
+    if (mirror) return mirror;
+    await this.waitForCleanupCapacity();
+    signal.throwIfAborted();
+    mirror = {
+      sessionId: route.sessionId,
+      sessionFile: route.sessionFile,
+      openVikingSessionId: `pcm-${sha256(`${route.sessionId}\0${route.fingerprint}`).slice(0, 16)}-${randomUUID()}`,
+      projections: [],
+      pendingTokens: 0,
+      retired: false,
+      touched: ++this.touchSequence,
+    };
+    try {
       await this.client.request("POST", "/api/v1/sessions", {
         session_id: mirror.openVikingSessionId,
         memory_policy: {
@@ -366,165 +555,80 @@ export class OpenVikingSessionMemory {
           peer: { enabled: false },
           working_memory: { enabled: true },
         },
-      }, operationSignal);
+      }, signal);
+    } catch (error) {
+      await this.deleteOwnedSession(mirror.openVikingSessionId);
+      throw error;
     }
-
-    const appendedProjections = routeProjections.slice(mirror.projections.length);
-    for (let index = 0; index < appendedProjections.length; index += 100) {
-      const batch = appendedProjections.slice(index, index + 100);
-      mirror.pendingTokens += Math.ceil(batch.reduce((total, projection) => total + projection.content.length, 0) / 4);
-      const { result } = await this.client.request(
-        "POST",
-        `/api/v1/sessions/${encodeURIComponent(mirror.openVikingSessionId)}/messages/batch`,
-        { messages: batch },
-        operationSignal,
-      );
-      mirror.pendingTokens = normalizeBatchPendingTokens(result) ?? mirror.pendingTokens;
-    }
-    mirror.projections = routeProjections.map((projection) => structuredClone(projection));
-    mirror.latestRoute = structuredClone(route);
-    mirror.revision += 1;
-    mirror.touched = ++this.touchSequence;
-
-    await this.maybeStartCommit(mirror, operationSignal);
-    const active = await this.assembleContext(route, mirror, operationSignal);
-    this.trimMirrors(mirror);
-    return mirror.commitFlight ? { active, flight: mirror.commitFlight } : { active };
+    this.mirrors.push(mirror);
+    return mirror;
   }
 
-  private settleAfterFlight(job: PrepareJob, prepared: FastPreparation): void {
-    const flight = prepared.flight;
-    if (!flight) return;
-    void this.waitForFlight(flight, job.signal).then(
-      () => {
-        if (this.shutdownController.signal.aborted) {
-          job.reject(this.shutdownController.signal.reason ?? new Error("Session Working Memory stopped"));
-        } else {
-          job.resolve(this.getReady(job.route) ?? prepared.active);
-        }
-      },
-      (error) => job.reject(error),
-    ).finally(() => this.pending.delete(job.key));
-  }
-
-  private async waitForFlight(flight: CommitFlight, signal?: AbortSignal): Promise<void> {
-    if (!signal) {
-      await flight.done;
-      return;
-    }
-    signal.throwIfAborted();
-    await new Promise<void>((resolveWait, rejectWait) => {
-      const finish = (error?: unknown) => {
-        signal.removeEventListener("abort", onAbort);
-        if (error === undefined) resolveWait();
-        else rejectWait(error);
-      };
-      const onAbort = () => finish(signal.reason ?? new Error("Working memory preparation cancelled"));
-      signal.addEventListener("abort", onAbort, { once: true });
-      void flight.done.then(() => finish(), (error) => finish(error));
-    });
-  }
-
-  private async maybeStartCommit(mirror: RouteMirror, signal: AbortSignal): Promise<void> {
-    if (mirror.retired || mirror.commitFlight || mirror.pendingTokens < this.commitPendingTokens) return;
-    const { result } = await this.client.request(
-      "POST",
-      `/api/v1/sessions/${encodeURIComponent(mirror.openVikingSessionId)}/commit`,
-      { keep_recent_count: this.keepRecentMessages },
-      signal,
-    );
-    const commit = normalizeCommitResult(result);
-    mirror.pendingTokens = 0;
-    if (commit.status === "accepted") this.startCommitFlight(mirror, commit.taskId);
-  }
-
-  private startCommitFlight(mirror: RouteMirror, taskId: string): void {
-    const flight: CommitFlight = { taskId, done: Promise.resolve() };
-    mirror.commitFlight = flight;
-    const task = this.runCommitFlight(mirror, flight)
-      .catch(() => undefined)
-      .finally(() => this.backgroundTasks.delete(task));
-    flight.done = task;
-    this.backgroundTasks.add(task);
-  }
-
-  private async runCommitFlight(mirror: RouteMirror, flight: CommitFlight): Promise<void> {
-    let completed = false;
-    try {
-      await this.waitForTask(flight.taskId, this.shutdownController.signal);
-      completed = true;
-    } catch {
-      // The Phase 1 source-verifiable context remains valid when Phase 2 fails or times out.
-    }
-    if (this.shutdownController.signal.aborted) {
-      if (mirror.commitFlight === flight) mirror.commitFlight = undefined;
-      return;
-    }
-    await this.enqueuePromotion(mirror, flight, completed);
-  }
-
-  private enqueuePromotion(mirror: RouteMirror, flight: CommitFlight, completed: boolean): Promise<void> {
-    const promotion = new Promise<void>((resolvePromotion, rejectPromotion) => {
-      this.queue.push({
-        kind: "promotion",
-        mirror,
-        flight,
-        completed,
-        resolve: resolvePromotion,
-        reject: rejectPromotion,
-      });
-    });
-    this.startDrain();
-    return promotion;
-  }
-
-  private async promoteSerial(mirror: RouteMirror, flight: CommitFlight, completed: boolean): Promise<void> {
-    if (mirror.commitFlight !== flight) return;
-    mirror.commitFlight = undefined;
-    if (mirror.retired) {
-      this.removeMirror(mirror);
-      return;
-    }
-    const route = mirror.latestRoute;
-    const revision = mirror.revision;
-    if (completed && route) {
-      try {
-        const promoted = await this.assembleContext(route, mirror, this.shutdownController.signal);
-        if (!mirror.retired
-          && mirror.revision === revision
-          && mirror.latestRoute?.fingerprint === route.fingerprint) {
-          this.ready.set(route.fingerprint, promoted);
-          this.trimReady();
-        }
-      } catch {
-        // Keep the last source-verifiable active context when final assembly is unavailable.
-      }
-    }
-    try {
-      await this.maybeStartCommit(mirror, this.shutdownController.signal);
-    } catch {
-      // A later route preparation may retry the still-pending live tail.
-    }
-    this.trimMirrors(mirror);
-  }
-
-  private async assembleContext(
-    route: SessionRouteIdentity,
+  private async assembleCheckpoint(
+    job: RefreshJob,
     mirror: RouteMirror,
     signal: AbortSignal,
-  ): Promise<PreparedSessionMemory> {
-    const { result: assembled } = await this.client.request(
+  ): Promise<MemoryCheckpoint> {
+    const { result } = await this.client.request(
       "GET",
-      `/api/v1/sessions/${encodeURIComponent(mirror.openVikingSessionId)}/context?token_budget=${this.contextTokenBudget}`,
+      `/api/v1/sessions/${encodeURIComponent(mirror.openVikingSessionId)}/context?token_budget=${this.policy.contextTokenBudget}`,
       undefined,
       signal,
     );
-    const context = normalizeSessionContext(assembled);
-    const routeIds = new Set(route.entryIds);
-    if (context.messages.some((message) => message.sourceMessageIds.some((id) => !routeIds.has(id)))) {
-      throw new Error("OpenViking context contains sources outside the current Pi route");
+    const context = normalizeSessionContext(result);
+    const sourceIds = job.projections.filter(isMessageSource).map((projection) => projection.id);
+    const allowed = new Set(sourceIds);
+    if (context.messages.some((message) => message.sourceMessageIds.some((id) => !allowed.has(id)))) {
+      throw new Error("OpenViking checkpoint contains sources outside its RefreshTarget");
     }
-    return { route, openVikingSessionId: mirror.openVikingSessionId, context };
+    const checkpoint = {
+      generation: this.generation,
+      coveredRoutePrefixKey: job.target.routePrefixKey,
+      coveredRouteEntryIds: [...job.route.entryIds],
+      coveredThroughEntryId: job.target.watermark,
+      retentionBudgetIdentity: job.target.retentionBudgetIdentity,
+      sourceIds,
+      workingMemory: context.overview,
+      activeHistory: context.messages,
+      assemblyHash: sha256(context),
+      producedUnderCapabilityProofId: this.capabilityProofId,
+      openVikingSessionId: mirror.openVikingSessionId,
+    } satisfies Omit<MemoryCheckpoint, "identity">;
+    return { ...checkpoint, identity: checkpointIdentity(checkpoint) };
+  }
+
+  private assertTarget(
+    target: RefreshTarget,
+    route: SessionRouteIdentity,
+    projections: readonly MemoryProjection[],
+  ): void {
+    if (target.generation !== this.generation) throw new Error("Checkpoint refresh belongs to another runtime generation");
+    if (!target.retentionBudgetIdentity) throw new Error("Checkpoint refresh has no retention budget identity");
+    if (target.watermark !== (route.entryIds.at(-1) ?? null)) throw new Error("Checkpoint refresh watermark does not match its route");
+    if (target.routePrefixKey !== historicalRoutePrefixKey(route, projections)) {
+      throw new Error("Checkpoint refresh route prefix identity does not match its route");
+    }
+  }
+
+  private async waitForJob(
+    task: Promise<CheckpointRefreshResult>,
+    signal?: AbortSignal,
+  ): Promise<CheckpointRefreshResult> {
+    if (!signal) return task;
+    signal.throwIfAborted();
+    return new Promise<CheckpointRefreshResult>((resolve, reject) => {
+      let settled = false;
+      const finish = (result?: CheckpointRefreshResult, error?: unknown) => {
+        if (settled) return;
+        settled = true;
+        signal.removeEventListener("abort", onAbort);
+        if (error === undefined) resolve(result!);
+        else reject(error);
+      };
+      const onAbort = () => finish(undefined, signal.reason ?? new Error("Checkpoint refresh wait cancelled"));
+      signal.addEventListener("abort", onAbort, { once: true });
+      void task.then((result) => finish(result), (error) => finish(undefined, error));
+    });
   }
 
   private async waitForTask(taskId: string, signal: AbortSignal): Promise<void> {
@@ -548,29 +652,24 @@ export class OpenVikingSessionMemory {
           else rejectDelay(error);
         };
         const timeout = setTimeout(() => finish(), this.taskPollMs);
-        const onAbort = () => finish(signal.reason ?? new Error("Working memory preparation cancelled"));
+        const onAbort = () => finish(signal.reason ?? new Error("Working memory refresh cancelled"));
         if (signal.aborted) onAbort();
         else signal.addEventListener("abort", onAbort, { once: true });
       });
     }
     throw new Error("OpenViking working memory task timed out");
   }
-
-  private discardMirrorsForRoute(route: SessionRouteIdentity, projections: readonly MemoryProjection[]): void {
-    const routeProjections = projectMemorySources(projections);
-    for (const mirror of [...this.mirrors]) {
-      if (mirror.sessionId !== route.sessionId
-        || mirror.sessionFile !== route.sessionFile
-        || !isProjectionPrefix(mirror.projections, routeProjections)) continue;
-      this.retireMirror(mirror);
+  private async waitForCleanupCapacity(): Promise<void> {
+    while (this.cleanupTasks.size >= this.maxMirrors) {
+      await Promise.race(this.cleanupTasks);
     }
   }
 
-  private trimReady(): void {
-    while (this.ready.size > this.maxMirrors) {
-      const oldest = this.ready.keys().next().value as string | undefined;
+  private trimCheckpoints(): void {
+    while (this.checkpoints.size > this.maxCheckpoints) {
+      const oldest = this.checkpoints.keys().next().value as string | undefined;
       if (!oldest) break;
-      this.ready.delete(oldest);
+      this.checkpoints.delete(oldest);
     }
   }
 
@@ -587,20 +686,14 @@ export class OpenVikingSessionMemory {
   private retireMirror(mirror: RouteMirror): void {
     if (mirror.retired) return;
     mirror.retired = true;
-    for (const [key, prepared] of this.ready) {
-      if (prepared.openVikingSessionId === mirror.openVikingSessionId) this.ready.delete(key);
-    }
-    if (!mirror.commitFlight) this.removeMirror(mirror);
+    this.removeMirror(mirror);
   }
 
   private removeMirror(mirror: RouteMirror): void {
     const index = this.mirrors.indexOf(mirror);
     if (index < 0) return;
     this.mirrors.splice(index, 1);
-    this.scheduleSessionDeletion(mirror.openVikingSessionId);
-  }
-  private scheduleSessionDeletion(sessionId: string): void {
-    const task = this.deleteOwnedSession(sessionId).finally(() => this.cleanupTasks.delete(task));
+    const task = this.deleteOwnedSession(mirror.openVikingSessionId).finally(() => this.cleanupTasks.delete(task));
     this.cleanupTasks.add(task);
   }
 
@@ -616,4 +709,19 @@ export class OpenVikingSessionMemory {
     }
   }
 
+  async shutdown(reason: unknown = new Error("Session Working Memory stopped")): Promise<void> {
+    if (!this.shutdownController.signal.aborted) this.shutdownController.abort(reason);
+    for (const job of this.queue.splice(0)) {
+      this.refreshes.delete(job.key);
+      job.reject(reason);
+    }
+    if (this.drainTask) await this.drainTask.catch(() => undefined);
+    this.checkpoints.clear();
+    const mirrors = this.mirrors.splice(0);
+    for (const mirror of mirrors) {
+      const task = this.deleteOwnedSession(mirror.openVikingSessionId).finally(() => this.cleanupTasks.delete(task));
+      this.cleanupTasks.add(task);
+    }
+    while (this.cleanupTasks.size > 0) await Promise.allSettled([...this.cleanupTasks]);
+  }
 }

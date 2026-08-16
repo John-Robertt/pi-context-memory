@@ -2,9 +2,9 @@
   "schemaVersion": 2,
   "generatedBy": "scripts/validate-context-quality.mjs",
   "scope": "real-provider-quality",
-  "runId": "context-quality-2026-08-16T04-10-38-734Z",
-  "startedAt": "2026-08-16T04:10:38.745Z",
-  "completedAt": "2026-08-16T04:11:04.701Z",
+  "runId": "context-quality-2026-08-16T06-10-34-208Z",
+  "startedAt": "2026-08-16T06:10:34.221Z",
+  "completedAt": "2026-08-16T06:11:11.570Z",
   "piVersion": "0.84.2",
   "nodeVersion": "24.15.0",
   "openVikingVersion": "0.4.13",
@@ -19,28 +19,35 @@
         "token_type": "input",
         "provider": "local",
         "model_name": "bge-small-zh-v1.5-f16",
-        "token_count": 5572
+        "token_count": 879
       },
       {
         "source": "vlm",
         "token_type": "input",
         "provider": "litellm",
         "model_name": "openrouter/openai/gpt-5.6-luna",
-        "token_count": 17036
+        "token_count": 13273
       },
       {
         "source": "vlm",
         "token_type": "output",
         "provider": "litellm",
         "model_name": "openrouter/openai/gpt-5.6-luna",
-        "token_count": 1302
+        "token_count": 2320
       }
     ],
-    "memoryTotalTokens": 18338
+    "memoryTotalTokens": 15593
+  },
+  "actualCheckpointFlow": {
+    "requiredWait": true,
+    "requestContinuedBeforeRefresh": true,
+    "backgroundAccepted": true,
+    "firstCheckpointIdentity": "ad41b09436a5afdb14c4e5f9b945bf438fcae025938f61ffeb7f743904c98bf4",
+    "nextCheckpointIdentity": "297013ab942e1000c8e0a45e465c375027888840289e55b48bb2d96c0f5029d6"
   },
   "memoryModelCondition": {
     "credentialSource": "pi-auth",
-    "configFingerprint": "68ee5f06f2582488180630f50af72b3c23ba4c95a7c79d34bd30d28900cb8cef",
+    "configFingerprint": "7bbce118ea5619b7ae339f718787bebb3387d20cfe7072e730e49e7706b1fef3",
     "explicitRequestControls": [
       "thinking",
       "temperature",
@@ -71,11 +78,11 @@
     "repetitions": 1
   },
   "implementation": {
-    "sourceManifestSha256": "d9f39c58f20011cd726be0d2769e8047b7aa9f140ca02f880e1452b2025ee76d",
+    "sourceManifestSha256": "d0ce14b6ba4e1e24126465b88625ce4156b62de2de1ffdaaeb2c8b6259c39deb",
     "files": [
       {
         "path": ".pi/extensions/pi-context-memory/index.ts",
-        "sha256": "294bbc93efb44e7e125fe6344cc4ebbb17977442d1044fa6c06c70372f757e85"
+        "sha256": "877d471c12c3a188d0bf73fa80e9b49a18a7edcd60390bcd7dff6bc62266fe51"
       },
       {
         "path": ".pi/extensions/pi-context-memory/long-term-memory.ts",
@@ -107,15 +114,15 @@
       },
       {
         "path": ".pi/extensions/pi-context-memory/session-memory-coordination.ts",
-        "sha256": "0d7d550a31834832a185c3de5df419c62aa5988d76cf4954da7222ff3b0fce68"
+        "sha256": "92ce78e24dc1387a67245462ba098fc820f83512d84e11724e26d82c71cab1b1"
       },
       {
         "path": ".pi/extensions/pi-context-memory/session-working-memory.ts",
-        "sha256": "6c7432288aa112743b10a6f4fc43c5a475d1f8f1ca7039f090c8140a687021bf"
+        "sha256": "c208d579aebedd8c8d61cbd8ea4e0c80b85f0e9dc1e577b6b0c2a3ab1873e743"
       },
       {
         "path": ".pi/extensions/pi-context-memory/working-context-optimization.ts",
-        "sha256": "963a5fd37c1e21f91b3afeecbad44e32a1665b6e6f22e60573d5743ca4c8b668"
+        "sha256": "d13457dfd9f93775f2ed37b19bf62064a54df82ea8e4d72a95a960ff831aedf1"
       },
       {
         "path": "config/openviking-adapter-contract.json",
@@ -151,11 +158,11 @@
       },
       {
         "path": "scripts/validate-context-quality.mjs",
-        "sha256": "b970e81f0ba980373b4cca4d1a9e68eecf83341b09be9e7af63f3b57d8f0b927"
+        "sha256": "e3aad6fb3ce159f93b1718f3027441f3157866372fa0826132a4e19b8c4e4fb1"
       },
       {
         "path": "scripts/validation-evidence.mjs",
-        "sha256": "e29e88a7f8349a878bbdd54946d8293f0b52728b11088a00e4df88a756566e1f"
+        "sha256": "748b89d5d25bd7d6d16b19882de4e58b9046b50c5997932acad4390c5b29b668"
       },
       {
         "path": "scripts/validation-suite.mjs",
@@ -170,7 +177,7 @@
         "sha256": "8aed19f4611f47d8d000b89e6901727cd213282849e6faf5a5d1a4adda724694"
       }
     ],
-    "specificationManifestSha256": "7779091ef70e203ae8b11e01db4e2521258cc16bc6c62e9b1d460123f220479a",
+    "specificationManifestSha256": "f80d8c9bdc6c5e2c208524368ae137a5a60c083462ded3965c35341eba9e0cbc",
     "specificationFiles": [
       {
         "path": ".python-version",
@@ -186,14 +193,14 @@
       },
       {
         "path": "docs/validation/context-enhancement-state.md",
-        "sha256": "82bb5313921a8f5e8060012b92570876b75352db3aa7a83a9eb32e60848f3cda"
+        "sha256": "dfc3f2ed054bf78ac6946b9182b9fc93871fd59b2681bb43b15ece5e095f6699"
       },
       {
         "path": "validation/suite.json",
         "sha256": "2f34c5cec5f73f972887aaeb0ad7decf734500911f7ea0412061d33deb3d139b"
       }
     ],
-    "gitCommit": "d200dbd9eadc7aec7ea585d4a823abb3a8f2e2f5",
+    "gitCommit": "9d973c0c5c5ff46fa0d5d0eb8c537721fb3c3b5a",
     "workingTreeDirty": true
   },
   "passed": true,
@@ -206,6 +213,9 @@
     "enhancedQuality": true,
     "enhancedContextHookVerified": true,
     "realWorkingMemoryReady": true,
+    "actualCheckpointRequiredWait": true,
+    "actualCheckpointRequestParallel": true,
+    "actualCheckpointBackgroundAccepted": true,
     "memoryUsageAttributed": true,
     "sameTaskModel": true,
     "controlledMemoryAdapterSemanticsObserved": true,
@@ -243,11 +253,11 @@
         "tokens": {
           "input": 3,
           "output": 21,
-          "cacheRead": 22941,
-          "cacheWrite": 0,
+          "cacheRead": 0,
+          "cacheWrite": 22941,
           "total": 22965
         },
-        "cost": 0.00024231,
+        "cost": 0.002880525,
         "contextUsage": {
           "tokens": 22965,
           "contextWindow": 1050000,
@@ -255,21 +265,21 @@
         }
       },
       "requestResult": {
-        "entryId": "3dc92909",
+        "entryId": "90827530",
         "stopReason": "stop",
         "usage": {
           "input": 3,
           "output": 21,
-          "cacheRead": 22941,
-          "cacheWrite": 0,
+          "cacheRead": 0,
+          "cacheWrite": 22941,
           "reasoning": 0,
           "totalTokens": 22965,
           "cost": {
             "input": 3.0000000000000004e-7,
             "output": 0.0000126,
-            "cacheRead": 0.00022941000000000001,
-            "cacheWrite": 0,
-            "total": 0.00024231
+            "cacheRead": 0,
+            "cacheWrite": 0.002867625,
+            "total": 0.002880525
           }
         }
       },
@@ -310,37 +320,37 @@
           "input": 3,
           "output": 21,
           "cacheRead": 0,
-          "cacheWrite": 1557,
-          "total": 1581
+          "cacheWrite": 1711,
+          "total": 1735
         },
-        "cost": 0.000207525,
+        "cost": 0.000226775,
         "contextUsage": {
-          "tokens": 1581,
+          "tokens": 1735,
           "contextWindow": 1050000,
-          "percent": 0.15057142857142858
+          "percent": 0.16523809523809524
         }
       },
       "requestResult": {
-        "entryId": "cfcfbc33",
+        "entryId": "c2f970cb",
         "stopReason": "stop",
         "usage": {
           "input": 3,
           "output": 21,
           "cacheRead": 0,
-          "cacheWrite": 1557,
+          "cacheWrite": 1711,
           "reasoning": 0,
-          "totalTokens": 1581,
+          "totalTokens": 1735,
           "cost": {
             "input": 3.0000000000000004e-7,
             "output": 0.0000126,
             "cacheRead": 0,
-            "cacheWrite": 0.000194625,
-            "total": 0.000207525
+            "cacheWrite": 0.000213875,
+            "total": 0.000226775
           }
         }
       },
       "observations": {
-        "workingContextReady": 3,
+        "workingContextReady": 1,
         "hookVerifiedRequests": 1
       }
     }

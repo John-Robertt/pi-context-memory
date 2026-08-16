@@ -115,7 +115,8 @@ run manifest、每个已执行 attempt 和停止原因都进入 evidence：
 - 缺少兼容检查点、旧检查点过大或 delta 需覆盖时，本扩展在精确 RefreshTarget 完成前不发布 allow；完成后按当前路线重算。`ctx.abort()`/等待结果与 transport 实际请求分别记录；
 - 机会性 skipped 保留既有检查点与 delta，不发布检查点、不改变运行能力 proof；`refresh-required` 携带显式 retention 边界却返回 skipped 时一次性进入协议/策略故障，不重复提交；
 - 完整 RefreshTarget 相同才共享；未启动线性后继只在 retentionBudgetIdentity 相同时合并，运行任务保持目标，新 entry 留在 delta，分叉与迟到结果不能污染；
-- 刷新显著慢于相邻请求时，可用历史继续；必要刷新失败只使本扩展不确认依赖输出，transport 是否仍有其它请求由外部观测分类；
+- 刷新显著慢于相邻请求时，可用历史继续；机会性后台刷新失败保留旧 checkpoint+delta 和 ready 状态，必要刷新失败才使本扩展锁存并不确认依赖输出，transport 是否仍有其它请求由外部观测分类；
+- OpenViking 单条派生索引投影和 batch append JSON 分别满足 32 KiB/256 KiB 上限；省略投影含原始字节数、taskContentHash 和权威 `read_source` 入口，来源归档仍可恢复完整正文；
 - 后台刷新、必要等待和队列期间用户状态保持“增强记忆”。
 - 多工具批次完整匹配，raw 和 projected payload 均符合 Provider 协议；
 - 未持久化、未截断且预算内的实际 ToolBatch 可以 raw 保留；含 FullOutputCandidate 的内容在 fullOutputRef 发布前不获得本扩展 allow；
@@ -124,7 +125,7 @@ run manifest、每个已执行 attempt 和停止原因都进入 evidence：
 - 必要 refresh pending 时缩小任务历史预算，旧 RefreshTarget 不直接完成新请求；旧结果只作为候选 checkpoint 由新预算重算：过大时创建新 retentionBudgetIdentity 目标，新目标检查点可容纳时发送，当前身份的最小合法检查点仍超限时一次性 `context-budget`，不重复刷新；
 - Pi footer 显示最近任务 Provider usage/尾部估算并以 `(增强)` 标识，保留模型、累计 usage、费用与 branch；显示值和记忆模型窗口不影响授权，扩展不修改持久化 compaction setting；
 - 相同输入形成相同上下文哈希；
-- session、session file、实际 leaf、HistoricalRouteKey、CurrentTurnKey、MemoryCheckpoint identity、VerifiedActiveDelta hash、ProviderPayloadProfile、规范化内容和运行代际形成唯一采用身份；
+- session、session file、完整 request route fingerprint、HistoricalRouteKey、MemoryCheckpoint identity、VerifiedActiveDelta hash、ProviderPayloadProfile、完整 Provider 消息序列、规范化内容和运行代际形成唯一采用身份；
 - 分支、迟到结果、替换 session 和 reload 保持隔离；
 - 每个候选任务 Provider API 的 PayloadProofAdapter 先以 controlled payload 核对 raw 与 projected 序列化结果；只有另有 actual Provider 证据的 API 才标记受支持；
 - model_select 清除 pending 证明和预算缓存，下一请求绑定新模型；
@@ -144,7 +145,7 @@ run manifest、每个已执行 attempt 和停止原因都进入 evidence：
 
 在复杂 fixture 计数前，实际纵向检查点必须全部通过：
 
-- 真实记忆 Provider/模型按固定 MemoryRuntimeProfile 完成能力探针、accepted refresh、轮询、来源核验 assembly 和 MemoryCheckpoint 发布，最终请求记录证明 profile 字段实际生效且无 Provider/model fallback；
+- 真实记忆 Provider/模型按固定 MemoryRuntimeProfile 完成能力探针、accepted refresh、轮询、来源核验 assembly 和 MemoryCheckpoint 发布；超预算 delta 在该检查点发布前形成必要等待，兼容 checkpoint+delta 在后台 accepted refresh 完成前继续构造请求，最终记录证明 profile 字段实际生效且无 Provider/model fallback；
 - 真实受管 OpenViking 完成来源写入、实际索引、检索和当前 Pi message 展开；
 - 真实 Pi 首轮、checkpoint+delta、必要 refresh 与 CurrentTurn 循环均有独立 `transportAdopted` 和后续行动证据；慢 refresh 重叠时，不依赖该 refresh 的 turn 仍完成；
 - 实际大工具输出至少各触发一次 raw 与 projected 路径，后续任务模型依据投影和来源正确完成检查；
@@ -186,7 +187,7 @@ evidence 保存 transport 最终哈希或不可观测原因，使验证总则 §
 
 manifest 可以把 `changedAfterHook == 0`、`transportUnobserved == 0`、native summary 请求或新 entry 为零设为某个明确 Pi/扩展组合的兼容性通过条件。该结果只描述被测组合，不形成对任意 Pi 或其它扩展的行为要求。
 
-增强时点证明仍关联 run/request、Provider/模型/API、session/leaf、HistoricalRouteKey、CurrentTurnKey、MemoryCheckpoint、VerifiedActiveDelta、OpaqueProviderSegment、运行代际、构造时能力 proof ID、hook 时点 runtime snapshot、system/tools、消息哈希、ProviderPayloadProfile/PayloadProofAdapter 和 nonce；稳定 evidence 只保存非敏感身份、哈希与计数。
+增强时点证明仍关联 run/request、Provider/模型/API、session、完整 request route fingerprint、HistoricalRouteKey、MemoryCheckpoint、VerifiedActiveDelta、运行代际、构造时能力 proof ID、hook 时点 runtime snapshot、system/tools、完整消息序列、ProviderPayloadProfile/PayloadProofAdapter 和 nonce；稳定 evidence 只保存非敏感身份、哈希与计数。
 
 ## 9. 故障与恢复矩阵
 

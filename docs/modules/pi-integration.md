@@ -52,7 +52,7 @@ Pi 适配器发现结构化 `fullOutputPath` 时，只用该结构化值和当�
 
 其它扩展 custom 完全沿用 Pi Provider 基线：全 text 可形成 MessageSource；含 image/unsupported public block 的整条 message 或完整 ToolBatch 成为请求内存中的 `OpaqueProviderSegment { reason: "unsupported-content", entryIds, providerMessages, providerViewHash }`；孤立结果、重复调用 ID、缺失结果或错配形成 `reason: "tool-protocol"`，不得发布部分 MessageSource。providerMessages 只能是 `convertToLlm`/版本探针确认的有序输出，不含 raw entry/details；它原样保留，但不持久化、不进 OpenViking/log/stable evidence，也不能被 checkpoint 覆盖。预算要求替换却无法保持该有序 Provider view 时才报告 `opaque-content-unrepresentable`。
 
-`HistoricalRouteKey` 和 `CurrentTurnKey` 绑定 Pi Provider 基线中实际保留的有序消息、完成状态、协议关系及无文本 control 身份。记忆投影可以替代已经由 MessageSource/检查点覆盖的历史内容，但不得静默删除未被覆盖的 Pi Provider 内容。compaction 前仍在当前 parent 链上的原始 message entry 按自身身份读取；branch summary 的 `fromId` 只用于边界身份，不展开废弃 branch。
+`HistoricalRouteKey` 绑定 prompt 前 Pi Provider 基线中实际保留的有序消息、完成状态、协议关系及无文本 control 身份；完整 request route fingerprint 绑定当时当前 parent 链，PayloadProofAdapter 绑定 CurrentTurn 的实际 Provider 消息与顺序。记忆投影可以替代已经由 MessageSource/检查点覆盖的历史内容，但不得静默删除未被覆盖的 Pi Provider 内容。compaction 前仍在当前 parent 链上的原始 message entry 按自身身份读取；branch summary 的 `fromId` 只用于边界身份，不展开废弃 branch。
 
 临时 session 没有可恢复来源，不能形成跨重启增强记忆。本扩展保持初始化/故障并说明该边界；是否继续临时 session、切换持久化 session 或禁用扩展由用户决定。
 

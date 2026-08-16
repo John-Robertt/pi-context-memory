@@ -1,23 +1,20 @@
 import { createHash, randomUUID } from "node:crypto";
 
 import {
-  DEFAULT_OPENVIKING_REQUEST_TIMEOUT_MS,
-  type NormalizedOpenVikingMessage,
-} from "./openviking-protocol.ts";
-import {
   currentUserMessageIndex,
-  isOpaqueProviderSegment,
   messageMatchesSourceTask,
   type CurrentTurnToolSources,
-  type MemoryProjection,
 } from "./pi-session-protocol.ts";
 import {
-  OpenVikingSessionMemory,
-  type AssembledSessionContext,
-  type PreparedSessionMemory,
-  type SessionWorkingMemoryOptions,
+  projectMemorySources,
+  type MemoryCheckpoint,
+  type RetentionPolicy,
 } from "./session-working-memory.ts";
-import type { SessionRouteIdentity } from "./session-memory-coordination.ts";
+import type {
+  ResolvedHistoricalContext,
+  SessionRouteIdentity,
+  VerifiedActiveDelta,
+} from "./session-memory-coordination.ts";
 import {
   OPENAI_COMPLETIONS_PAYLOAD_PROOF_ADAPTER,
   openAICompletionsToolPayloadUpperBoundBytes,
@@ -29,7 +26,6 @@ const PROVIDER_MESSAGE_SERIALIZATION_FACTOR = 2;
 const PROVIDER_FRAMING_TOKEN_RESERVE = 256;
 const TRANSPORT_MARGIN_TOKEN_RESERVE = 512;
 const PROJECTED_EDGE_CHARS = 160;
-export const DEFAULT_IN_FLIGHT_READY_WAIT_MS = 1_000;
 
 export interface ProviderPayloadProfile {
   schemaVersion: 1;
@@ -61,13 +57,16 @@ export interface ProviderPayloadProfileInput {
   tools: unknown;
 }
 
-export interface WorkingContextOptions extends SessionWorkingMemoryOptions {
+export interface WorkingContextOptions {
   maxContextChars?: number;
 }
 
 export interface PreparedWorkingContext {
   route: SessionRouteIdentity;
-  openVikingSessionId: string;
+  checkpointIdentity: string;
+  retentionBudgetIdentity: string;
+  deltaHash: string;
+  openVikingSessionId: string | null;
   content: string;
   estimatedTokens: number;
   hasWorkingMemory: boolean;
@@ -82,6 +81,7 @@ export type ContextFaultKind =
   | "service"
   | "timeout"
   | "budget"
+  | "checkpoint-refresh-required"
   | "opaque-content-unrepresentable";
 
 export interface ContextFault {
@@ -90,18 +90,34 @@ export interface ContextFault {
 }
 
 /**
- * 工作上下文构造证明绑定运行代际、路线、leaf、增强内容与一次性 nonce；
+ * 工作上下文构造证明分别绑定完整请求路线与历史路线、检查点、delta、增强内容和一次性 nonce；
  * 完整 Provider 消息序列由 Pi 集成的 PayloadProofAdapter 另行绑定。
  */
 export interface AssemblyProof {
   nonce: string;
   generation: string;
-  routeFingerprint: string;
-  leafId: string | null;
-  openVikingSessionId: string;
+  requestRouteFingerprint: string;
+  historicalRouteFingerprint: string;
+  checkpointIdentity: string;
+  retentionBudgetIdentity: string;
+  deltaHash: string;
+  openVikingSessionId: string | null;
   enhancedContentHash: string;
   providerPayloadProfileId: string;
-  currentTurnKey: string;
+}
+
+export function assemblyRouteProofError(
+  proof: AssemblyProof,
+  requestRouteFingerprint: string | undefined,
+  historicalRouteFingerprint: string | undefined,
+): string | undefined {
+  if (requestRouteFingerprint !== proof.requestRouteFingerprint) {
+    return "complete request route changed after the context decision";
+  }
+  if (historicalRouteFingerprint !== proof.historicalRouteFingerprint) {
+    return "historical route changed after the context decision";
+  }
+  return undefined;
 }
 
 export interface CurrentTurnMetrics {
@@ -114,18 +130,18 @@ export interface CurrentTurnMetrics {
 
 export type ContextAuthorization<T> =
   | { kind: "allow"; enhancedContext: T[]; proof: AssemblyProof; metrics: CurrentTurnMetrics }
+  | { kind: "refresh-required"; fault: ContextFault }
   | { kind: "block"; fault: ContextFault };
 
 export interface AuthorizationInput<T> {
   generation: string;
-  route: SessionRouteIdentity;
-  projections: readonly MemoryProjection[];
+  requestRoute: SessionRouteIdentity;
+  historical: ResolvedHistoricalContext;
   messages: readonly T[];
   providerPayloadProfile: ProviderPayloadProfile;
   toolSources: CurrentTurnToolSources;
   toProviderMessages(messages: readonly T[]): readonly unknown[];
   ensureSources(entryIds: readonly string[]): Promise<void>;
-  readyWaitMs?: number;
   signal?: AbortSignal;
 }
 
@@ -183,6 +199,20 @@ export function createProviderPayloadProfile(input: ProviderPayloadProfileInput)
   return { ...identityInput, identity: sha256(identityInput) };
 }
 
+export function createRetentionBudgetIdentity(
+  profile: ProviderPayloadProfile,
+  policy: RetentionPolicy,
+): string {
+  return sha256({
+    schemaVersion: 1,
+    policy,
+    contextWindowTokens: profile.contextWindowTokens,
+    maxOutputTokens: profile.maxOutputTokens,
+    fixedTokenUpperBound: profile.fixedTokenUpperBound,
+    messageTokenBudget: profile.messageTokenBudget,
+    estimator: profile.estimator,
+  });
+}
 /** 在任意 Provider payload 结构中核对 nonce 所属的完整增强内容。 */
 export function payloadCarriesEnhancedContent(
   value: unknown,
@@ -218,9 +248,15 @@ function positiveInteger(value: number | undefined, fallback: number, name: stri
   return resolved;
 }
 
-function projectionMessageText(message: NormalizedOpenVikingMessage): string {
+function projectionMessageText(message: MemoryCheckpoint["activeHistory"][number]): string {
   const sourceIds = message.sourceMessageIds.join(",");
   return `[${message.role}${sourceIds ? `; Pi entries ${sourceIds}` : ""}]\n${message.text}`;
+}
+
+function deltaText(delta: VerifiedActiveDelta): string {
+  return projectMemorySources(delta.projections)
+    .map((message) => `[${message.role}; Pi entries ${message.source_message_ids.join(",")}]\n${message.content}`)
+    .join("\n\n");
 }
 
 function boundedMiddle(value: string, maxChars: number): string {
@@ -228,28 +264,33 @@ function boundedMiddle(value: string, maxChars: number): string {
   if (value.length <= maxChars) return value;
   const marker = "\n… content omitted …\n";
   if (maxChars <= marker.length) return value.slice(0, maxChars);
-  const half = Math.floor((maxChars - marker.length) / 2);
-  return `${value.slice(0, half)}${marker}${value.slice(-(maxChars - marker.length - half))}`;
+  const available = maxChars - marker.length;
+  const head = Math.floor(available / 2);
+  return `${value.slice(0, head)}${marker}${value.slice(-(available - head))}`;
 }
 
 export function formatWorkingContext(
-  route: SessionRouteIdentity,
-  context: AssembledSessionContext,
+  historical: ResolvedHistoricalContext,
   maxChars = DEFAULT_MAX_CONTEXT_CHARS,
-): string {
+): string | undefined {
   if (!Number.isSafeInteger(maxChars) || maxChars < 256) throw new Error("Context character limit must be at least 256");
-  const overview = context.overview.trim();
-  const active = context.messages.map(projectionMessageText).filter(Boolean).join("\n\n");
-  if (!overview && !active) return "";
+  const { route, checkpoint, delta } = historical;
+  const overview = checkpoint.workingMemory.trim();
+  const active = checkpoint.activeHistory.map(projectionMessageText).filter(Boolean).join("\n\n");
+  const deltaContent = deltaText(delta);
   let result = [
     "# Enhanced session context",
     `Pi history leaf: ${route.leafId ?? "root"}`,
     "This is a bounded derivative of the current Pi route. Use recall_session to verify critical source details.",
   ].join("\n");
+  const deltaSection = deltaContent ? `\n\n## Verified active delta\n${deltaContent}` : "";
+  const checkpointLimit = maxChars - deltaSection.length;
+  if (checkpointLimit < result.length) return undefined;
+
   const overviewPrefix = "\n\n## Working memory\n";
-  const activePrefix = "\n\n## Active history\n";
+  const activePrefix = "\n\n## Checkpoint active history\n";
   const appendSection = (prefix: string, content: string, fromTail: boolean, cap = Number.POSITIVE_INFINITY) => {
-    const allowance = Math.min(cap, maxChars - result.length - prefix.length);
+    const allowance = Math.min(cap, checkpointLimit - result.length - prefix.length);
     if (!content || allowance <= 0) return;
     const selected = fromTail
       ? content.length <= allowance ? content : content.slice(-allowance)
@@ -257,11 +298,12 @@ export function formatWorkingContext(
     result += `${prefix}${selected}`;
   };
   const overviewCap = active
-    ? Math.max(0, Math.floor((maxChars - result.length - overviewPrefix.length - activePrefix.length) / 2))
+    ? Math.max(0, Math.floor((checkpointLimit - result.length - overviewPrefix.length - activePrefix.length) / 2))
     : Number.POSITIVE_INFINITY;
   appendSection(overviewPrefix, overview, false, Math.min(24_000, overviewCap));
   appendSection(activePrefix, active, true);
-  if (result.length > maxChars) throw new Error("Working context exceeded its character limit");
+  result += deltaSection;
+  if (result.length > maxChars) return undefined;
   return result;
 }
 
@@ -470,6 +512,9 @@ export function buildEnhancedContext<T>(
     display: false,
     details: {
       routeFingerprint: prepared.route.fingerprint,
+      checkpointIdentity: prepared.checkpointIdentity,
+      retentionBudgetIdentity: prepared.retentionBudgetIdentity,
+      deltaHash: prepared.deltaHash,
       openVikingSessionId: prepared.openVikingSessionId,
       hasWorkingMemory: prepared.hasWorkingMemory,
       nonce,
@@ -480,52 +525,25 @@ export function buildEnhancedContext<T>(
 }
 
 export class WorkingContextOptimizer {
-  private readonly sessionMemory: OpenVikingSessionMemory;
   private readonly maxContextChars: number;
 
-  constructor(
-    baseUrl: string,
-    apiKey?: string,
-    requestTimeoutMs = DEFAULT_OPENVIKING_REQUEST_TIMEOUT_MS,
-    options: WorkingContextOptions = {},
-  ) {
+  constructor(options: WorkingContextOptions = {}) {
     this.maxContextChars = positiveInteger(options.maxContextChars, DEFAULT_MAX_CONTEXT_CHARS, "Context character limit");
     if (this.maxContextChars < 256) throw new Error("Context character limit must be at least 256");
-    this.sessionMemory = new OpenVikingSessionMemory(baseUrl, apiKey, requestTimeoutMs, options);
   }
 
-  getReady(route: SessionRouteIdentity): PreparedWorkingContext | undefined {
-    const prepared = this.sessionMemory.getReady(route);
-    return prepared ? this.project(prepared) : undefined;
+  prepare(historical: ResolvedHistoricalContext): PreparedWorkingContext {
+    const prepared = this.project(historical);
+    if (!prepared) throw new Error("Historical context exceeds the working context character limit");
+    return prepared;
   }
-
-  async waitForReady(
-    route: SessionRouteIdentity,
-    timeoutMs = DEFAULT_IN_FLIGHT_READY_WAIT_MS,
-    signal?: AbortSignal,
-  ): Promise<PreparedWorkingContext | undefined> {
-    const prepared = await this.sessionMemory.waitForReady(route, timeoutMs, signal);
-    return prepared ? this.project(prepared) : undefined;
-  }
-
-  async prepare(
-    route: SessionRouteIdentity,
-    projections: readonly MemoryProjection[],
-    signal?: AbortSignal,
-  ): Promise<PreparedWorkingContext> {
-    const prepared = await this.sessionMemory.prepare(route, projections, signal);
-    const result = this.project(prepared);
-    if (!result) throw new Error("OpenViking assembled an empty working context");
-    return result;
-  }
-
   /**
-   * 对一次请求只产生 allow 或 block。任何未准备、来源屏障、服务、超时、
-   * 容量或不可信表示的情况都是 block，且不携带原始 Pi messages。
+   * 工作上下文模块只消费已核验 checkpoint 与 delta；需要折叠历史时返回 refresh-required，
+   * 不创建 OpenViking Session，也不执行 append、commit 或 task polling。
    */
   async authorize<T>(input: AuthorizationInput<T>): Promise<ContextAuthorization<T>> {
     try {
-      if (input.projections.some(isOpaqueProviderSegment)) {
+      if (input.historical.hasOpaqueSegment) {
         return {
           kind: "block",
           fault: {
@@ -535,29 +553,24 @@ export class WorkingContextOptimizer {
         };
       }
       input.signal?.throwIfAborted();
-      let preparedSession = this.sessionMemory.getReady(input.route);
-      if (!preparedSession) {
-        preparedSession = await this.sessionMemory.waitForReady(
-          input.route,
-          input.readyWaitMs ?? DEFAULT_IN_FLIGHT_READY_WAIT_MS,
-          input.signal,
-        );
+      const { route, checkpoint, delta } = input.historical;
+      if (checkpoint.generation !== input.generation) {
+        return { kind: "block", fault: { kind: "route", detail: "MemoryCheckpoint belongs to another runtime generation" } };
       }
-      if (!preparedSession) {
-        return { kind: "block", fault: { kind: "not-ready", detail: "Enhanced memory is not ready for the current route" } };
-      }
-      if (preparedSession.route.fingerprint !== input.route.fingerprint) {
-        return { kind: "block", fault: { kind: "route", detail: "Prepared memory belongs to another route" } };
+      if (delta.checkpointIdentity !== checkpoint.identity) {
+        return { kind: "block", fault: { kind: "route", detail: "VerifiedActiveDelta does not follow the selected MemoryCheckpoint" } };
       }
       const parsed = currentTurnUnits(input.messages, input.toolSources);
-      if (parsed.fault || !parsed.units) return { kind: "block", fault: parsed.fault ?? { kind: "route", detail: "Current turn is unavailable" } };
+      if (parsed.fault || !parsed.units) {
+        return { kind: "block", fault: parsed.fault ?? { kind: "route", detail: "Current turn is unavailable" } };
+      }
       const toolBatchIndexes = parsed.units
         .map((unit, index) => ({ unit, index }))
         .filter((item) => item.unit.kind === "tool-batch");
       const selected = parsed.units.map((unit) => unit.raw);
       const nonce = randomUUID();
       let fitted = this.fitEnhancedContext(
-        preparedSession,
+        input.historical,
         selected.flat(),
         nonce,
         input.providerPayloadProfile,
@@ -579,7 +592,7 @@ export class WorkingContextOptimizer {
           selected[candidate.index] = candidate.unit.projected!;
           projectedIndexes.add(candidate.index);
           fitted = this.fitEnhancedContext(
-            preparedSession,
+            input.historical,
             selected.flat(),
             nonce,
             input.providerPayloadProfile,
@@ -593,13 +606,29 @@ export class WorkingContextOptimizer {
         if (projectionFault) return { kind: "block", fault: projectionFault };
         const opaque = parsed.units.some((unit) => unit.opaque)
           || toolBatchIndexes.some(({ unit }) => unit.projected === undefined);
+        if (opaque) {
+          return {
+            kind: "block",
+            fault: {
+              kind: "opaque-content-unrepresentable",
+              detail: "Current Provider-visible content cannot be represented within the Provider payload budget",
+            },
+          };
+        }
+        if (delta.projections.length > 0) {
+          return {
+            kind: "refresh-required",
+            fault: {
+              kind: "checkpoint-refresh-required",
+              detail: "VerifiedActiveDelta must be folded into a checkpoint for the current Provider payload budget",
+            },
+          };
+        }
         return {
           kind: "block",
           fault: {
-            kind: opaque ? "opaque-content-unrepresentable" : "budget",
-            detail: opaque
-              ? "Current Provider-visible content cannot be represented within the Provider payload budget"
-              : "Current turn and the minimum enhanced history exceed the Provider payload budget",
+            kind: "budget",
+            detail: "Current turn and the minimum checkpoint history exceed the Provider payload budget",
           },
         };
       }
@@ -608,23 +637,20 @@ export class WorkingContextOptimizer {
       input.signal?.throwIfAborted();
       if (projectedSourceEntryIds.length > 0) await input.ensureSources(projectedSourceEntryIds);
       input.signal?.throwIfAborted();
-      const currentTurnKey = sha256(stable({
-        profile: input.providerPayloadProfile.identity,
-        messages: parsed.units.flatMap((unit) => unit.raw),
-        toolSources: input.toolSources,
-      }));
       return {
         kind: "allow",
         enhancedContext: fitted.enhancedContext,
         proof: {
           nonce,
           generation: input.generation,
-          routeFingerprint: input.route.fingerprint,
-          leafId: input.route.leafId,
+          requestRouteFingerprint: input.requestRoute.fingerprint,
+          historicalRouteFingerprint: route.fingerprint,
+          checkpointIdentity: checkpoint.identity,
+          retentionBudgetIdentity: checkpoint.retentionBudgetIdentity,
+          deltaHash: delta.hash,
           openVikingSessionId: fitted.prepared.openVikingSessionId,
           enhancedContentHash: sha256(enhancedContent(fitted.prepared, nonce)),
           providerPayloadProfileId: input.providerPayloadProfile.identity,
-          currentTurnKey,
         },
         metrics: {
           rawToolBatches: toolBatchIndexes.length - projectedIndexes.size,
@@ -639,12 +665,8 @@ export class WorkingContextOptimizer {
     }
   }
 
-  async shutdown(reason?: unknown): Promise<void> {
-    await this.sessionMemory.shutdown(reason);
-  }
-
   private fitEnhancedContext<T>(
-    prepared: PreparedSessionMemory,
+    historical: ResolvedHistoricalContext,
     currentTurn: readonly T[],
     nonce: string,
     profile: ProviderPayloadProfile,
@@ -655,8 +677,11 @@ export class WorkingContextOptimizer {
     let best: { prepared: PreparedWorkingContext; enhancedContext: T[]; providerMessageTokenUpperBound: number } | undefined;
     while (low <= high) {
       const maxChars = Math.floor((low + high) / 2);
-      const projected = this.project(prepared, maxChars);
-      if (!projected) return undefined;
+      const projected = this.project(historical, maxChars);
+      if (!projected) {
+        low = maxChars + 1;
+        continue;
+      }
       const enhancedContext = buildEnhancedContext(currentTurn, projected, nonce);
       if (!enhancedContext) return undefined;
       const providerMessageTokenUpperBound = messageTokenUpperBound(toProviderMessages(enhancedContext));
@@ -671,17 +696,20 @@ export class WorkingContextOptimizer {
   }
 
   private project(
-    prepared: PreparedSessionMemory,
+    historical: ResolvedHistoricalContext,
     maxChars = this.maxContextChars,
   ): PreparedWorkingContext | undefined {
-    const content = formatWorkingContext(prepared.route, prepared.context, maxChars);
+    const content = formatWorkingContext(historical, maxChars);
     if (!content) return undefined;
     return {
-      route: prepared.route,
-      openVikingSessionId: prepared.openVikingSessionId,
+      route: historical.route,
+      checkpointIdentity: historical.checkpoint.identity,
+      retentionBudgetIdentity: historical.checkpoint.retentionBudgetIdentity,
+      deltaHash: historical.delta.hash,
+      openVikingSessionId: historical.checkpoint.openVikingSessionId,
       content,
-      estimatedTokens: prepared.context.estimatedTokens,
-      hasWorkingMemory: prepared.context.overview.length > 0,
+      estimatedTokens: Math.ceil(content.length / 4),
+      hasWorkingMemory: historical.checkpoint.workingMemory.length > 0,
     };
   }
 }

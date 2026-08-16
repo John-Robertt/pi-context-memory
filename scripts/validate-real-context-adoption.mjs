@@ -240,7 +240,8 @@ try {
         ? (await readFile(observationPath, "utf8")).trim().split("\n").filter(Boolean).map((line) => JSON.parse(line))
         : [];
       const request = current.find((event) => event.type === "before_provider_request");
-      const ready = current.find((event) => event.type === "working_context_ready"
+      const ready = current.find((event) => event.type === "checkpoint_refresh_complete"
+        && event.outcome === "accepted"
         && event.leafId === historicalLeafId
         && event.hasWorkingMemory === true);
       if (request && ready && ready.sequence > request.sequence) {
@@ -258,11 +259,13 @@ try {
     ? (await readFile(observationPath, "utf8")).trim().split("\n").filter(Boolean).map((line) => JSON.parse(line))
     : [];
   const providerRequests = observations.filter((event) => event.type === "before_provider_request");
-  const workingReady = observations.filter((event) => event.type === "working_context_ready");
-  const workingErrors = observations.filter((event) => event.type === "working_context_error");
+  const workingReady = observations.filter((event) => event.type === "checkpoint_refresh_complete");
+  const workingErrors = observations.filter((event) => event.type === "checkpoint_refresh_error");
   const firstRequest = providerRequests[0];
   const secondRequest = providerRequests[1];
-  const acceptedFinalReady = workingReady.find((event) => event.leafId === historicalLeafId && event.hasWorkingMemory === true);
+  const acceptedFinalReady = workingReady.find((event) => event.outcome === "accepted"
+    && event.leafId === historicalLeafId
+    && event.hasWorkingMemory === true);
   const stats = (await client.send("get_session_stats")).data;
   summary = {
     schemaVersion: 1,
