@@ -2,9 +2,9 @@
   "schemaVersion": 2,
   "generatedBy": "scripts/validate-context-quality.mjs",
   "scope": "real-provider-quality",
-  "runId": "context-quality-2026-08-15T21-00-40-657Z",
-  "startedAt": "2026-08-15T21:00:40.668Z",
-  "completedAt": "2026-08-15T21:01:05.735Z",
+  "runId": "context-quality-2026-08-16T04-10-38-734Z",
+  "startedAt": "2026-08-16T04:10:38.745Z",
+  "completedAt": "2026-08-16T04:11:04.701Z",
   "piVersion": "0.84.2",
   "nodeVersion": "24.15.0",
   "openVikingVersion": "0.4.13",
@@ -19,29 +19,34 @@
         "token_type": "input",
         "provider": "local",
         "model_name": "bge-small-zh-v1.5-f16",
-        "token_count": 5650
+        "token_count": 5572
       },
       {
         "source": "vlm",
         "token_type": "input",
         "provider": "litellm",
         "model_name": "openrouter/openai/gpt-5.6-luna",
-        "token_count": 16437
+        "token_count": 17036
       },
       {
         "source": "vlm",
         "token_type": "output",
         "provider": "litellm",
         "model_name": "openrouter/openai/gpt-5.6-luna",
-        "token_count": 1170
+        "token_count": 1302
       }
     ],
-    "memoryTotalTokens": 17607
+    "memoryTotalTokens": 18338
   },
   "memoryModelCondition": {
     "credentialSource": "pi-auth",
-    "configFingerprint": "dc7169352e9795bd85c35cb803b6b74e261f688e95db24202767dd31d70c0bc9",
-    "explicitRequestControls": [],
+    "configFingerprint": "68ee5f06f2582488180630f50af72b3c23ba4c95a7c79d34bd30d28900cb8cef",
+    "explicitRequestControls": [
+      "thinking",
+      "temperature",
+      "max_retries",
+      "stream"
+    ],
     "controlledAdapterProbe": {
       "adapter": "LiteLLM OpenRouter",
       "model": "openrouter/openai/gpt-5.6-luna",
@@ -66,11 +71,11 @@
     "repetitions": 1
   },
   "implementation": {
-    "sourceManifestSha256": "a9bca61e74d0a597873b6f875fc25717f91560c5a43ea498dfbc93a18f2f77db",
+    "sourceManifestSha256": "d9f39c58f20011cd726be0d2769e8047b7aa9f140ca02f880e1452b2025ee76d",
     "files": [
       {
         "path": ".pi/extensions/pi-context-memory/index.ts",
-        "sha256": "6c4b6c4a64e7a2b2e354e23882f7759b697c3abfd656503d293c3bff86de7c82"
+        "sha256": "294bbc93efb44e7e125fe6344cc4ebbb17977442d1044fa6c06c70372f757e85"
       },
       {
         "path": ".pi/extensions/pi-context-memory/long-term-memory.ts",
@@ -78,11 +83,19 @@
       },
       {
         "path": ".pi/extensions/pi-context-memory/memory-model-configuration.ts",
-        "sha256": "b2c752817d11894e06aa5150d1a98e3052de9559a308f51cd9468a5ccd3a0d9d"
+        "sha256": "5b2df81612f5d7b1bd7efd4d08c7badaa4a41569cab784c41e3573d3ac510d8c"
+      },
+      {
+        "path": ".pi/extensions/pi-context-memory/memory-runtime-capability.ts",
+        "sha256": "8d77b15f5239fd5081e243005916d490ed8d824c4f992f6979b18ade931267e0"
+      },
+      {
+        "path": ".pi/extensions/pi-context-memory/memory-runtime-profile.ts",
+        "sha256": "802a1df5ba9e1d459e2f97a836d772e8eca39527e3bb2ead9e89585b1241f452"
       },
       {
         "path": ".pi/extensions/pi-context-memory/openviking-protocol.ts",
-        "sha256": "ca435ae48adf4e7d3f0051e0b3e89bb018095ce0493dcc647efc1e9f0a9b5a08"
+        "sha256": "af2d47062ac74385c6fe3f9892255f199753c58d36eaf2f1404adbbe05083a7b"
       },
       {
         "path": ".pi/extensions/pi-context-memory/pi-session-protocol.ts",
@@ -90,7 +103,7 @@
       },
       {
         "path": ".pi/extensions/pi-context-memory/provider-payload-proof.ts",
-        "sha256": "254a012c081d193f8c8296afdeeac723fd0d7324449c4597e0cd26ec1b12fa01"
+        "sha256": "61b979899e398ba717e51454964bb64eba465059b542a5e5802914bc5e89fc6d"
       },
       {
         "path": ".pi/extensions/pi-context-memory/session-memory-coordination.ts",
@@ -130,11 +143,11 @@
       },
       {
         "path": "scripts/openviking-config.py",
-        "sha256": "ff25ea5c4705d54f810a5f0824ede8625e83f1b9a79eeeef2b6f55f7ba22d5fe"
+        "sha256": "50ae858774e582a20d347d3347178db1da2ea2d2c534418b8b1487308a7099a2"
       },
       {
         "path": "scripts/start-openviking.mjs",
-        "sha256": "4589184c25d44bf18c5e97934d252a6f7728f6db10991937531e84f85dea3a21"
+        "sha256": "dcdfd444520964a64ca8ceb309570041e125a3bd8e7b1f721d6465b1a6eeddca"
       },
       {
         "path": "scripts/validate-context-quality.mjs",
@@ -142,7 +155,7 @@
       },
       {
         "path": "scripts/validation-evidence.mjs",
-        "sha256": "c769b4ee116bba775961c0b7ce48571a4df3c52061d51cf95d6e0285f5a221ae"
+        "sha256": "e29e88a7f8349a878bbdd54946d8293f0b52728b11088a00e4df88a756566e1f"
       },
       {
         "path": "scripts/validation-suite.mjs",
@@ -157,7 +170,7 @@
         "sha256": "8aed19f4611f47d8d000b89e6901727cd213282849e6faf5a5d1a4adda724694"
       }
     ],
-    "specificationManifestSha256": "90d036c94101f2ab41ac97edf158cc96d0c0c683e0a1b2f7e6c64445bc351e2c",
+    "specificationManifestSha256": "7779091ef70e203ae8b11e01db4e2521258cc16bc6c62e9b1d460123f220479a",
     "specificationFiles": [
       {
         "path": ".python-version",
@@ -169,29 +182,29 @@
       },
       {
         "path": "docs/validation/README.md",
-        "sha256": "fcb69766fc4b3de4fef7ffc2731ff6fd2b7897c9f67047eeb0a417ad8f4ee40a"
+        "sha256": "9fb53547a6bb0b6d720d44e095b81e3fd99dc47ce350c33faf2d58469440b52e"
       },
       {
         "path": "docs/validation/context-enhancement-state.md",
-        "sha256": "c74d995db95d0faa261647ccd44b7ace9fbe4c00fd54729a530b82c865d76068"
+        "sha256": "82bb5313921a8f5e8060012b92570876b75352db3aa7a83a9eb32e60848f3cda"
       },
       {
         "path": "validation/suite.json",
         "sha256": "2f34c5cec5f73f972887aaeb0ad7decf734500911f7ea0412061d33deb3d139b"
       }
     ],
-    "gitCommit": "58e68da7474569e78aea01ba4e6cf7ec06074491",
+    "gitCommit": "d200dbd9eadc7aec7ea585d4a823abb3a8f2e2f5",
     "workingTreeDirty": true
   },
-  "passed": false,
+  "passed": true,
   "checks": {
     "credentialRoutedThroughInternalEnvironment": true,
     "openVikingCredentialEnvironmentIsolated": true,
     "openVikingChildCleaned": true,
     "taskPiCredentialEnvironmentExcluded": true,
     "nativeQuality": true,
-    "enhancedQuality": false,
-    "enhancedContextHookVerified": false,
+    "enhancedQuality": true,
+    "enhancedContextHookVerified": true,
     "realWorkingMemoryReady": true,
     "memoryUsageAttributed": true,
     "sameTaskModel": true,
@@ -242,7 +255,7 @@
         }
       },
       "requestResult": {
-        "entryId": "4b5fd2cc",
+        "entryId": "3dc92909",
         "stopReason": "stop",
         "usage": {
           "input": 3,
@@ -266,15 +279,15 @@
       }
     },
     "enhanced": {
-      "text": "",
-      "textSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "text": "{\"decision\":\"bounded-current-route\",\"evidence_entry_id\":\"b000000c\"}",
+      "textSha256": "e498c1876538dc5395d9f0b7e772100199bd8aff9e3e5738dd9c9b2ff2da8b56",
       "checker": {
-        "validJson": false,
-        "requiredDecision": false,
-        "requiredEvidence": false,
+        "validJson": true,
+        "requiredDecision": true,
+        "requiredEvidence": true,
         "forbiddenDecisionExcluded": true
       },
-      "hookVerified": false,
+      "hookVerified": true,
       "model": "openrouter/openai/gpt-5.6-luna",
       "condition": {
         "model": "openrouter/openai/gpt-5.6-luna",
@@ -294,40 +307,41 @@
         "toolResults": 2,
         "totalMessages": 34,
         "tokens": {
-          "input": 0,
-          "output": 0,
+          "input": 3,
+          "output": 21,
           "cacheRead": 0,
-          "cacheWrite": 0,
-          "total": 0
+          "cacheWrite": 1557,
+          "total": 1581
         },
-        "cost": 0,
+        "cost": 0.000207525,
         "contextUsage": {
-          "tokens": null,
+          "tokens": 1581,
           "contextWindow": 1050000,
-          "percent": null
+          "percent": 0.15057142857142858
         }
       },
       "requestResult": {
-        "entryId": "e23e4942",
-        "stopReason": "aborted",
+        "entryId": "cfcfbc33",
+        "stopReason": "stop",
         "usage": {
-          "input": 0,
-          "output": 0,
+          "input": 3,
+          "output": 21,
           "cacheRead": 0,
-          "cacheWrite": 0,
-          "totalTokens": 0,
+          "cacheWrite": 1557,
+          "reasoning": 0,
+          "totalTokens": 1581,
           "cost": {
-            "input": 0,
-            "output": 0,
+            "input": 3.0000000000000004e-7,
+            "output": 0.0000126,
             "cacheRead": 0,
-            "cacheWrite": 0,
-            "total": 0
+            "cacheWrite": 0.000194625,
+            "total": 0.000207525
           }
         }
       },
       "observations": {
-        "workingContextReady": 2,
-        "hookVerifiedRequests": 0
+        "workingContextReady": 3,
+        "hookVerifiedRequests": 1
       }
     }
   },

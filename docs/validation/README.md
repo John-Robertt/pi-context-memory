@@ -34,7 +34,7 @@
 | --- | --- | --- |
 | 来源归档 | 真实 Pi `SessionManager`、项目内真实文件系统、实际完整工具输出和读回哈希 | 注入写入、损坏和期限失败 |
 | 来源索引与召回 | 真实受管 OpenViking、实际 embedding/索引、当前 branch URI 和 Pi message 展开 | 构造 malformed envelope、空结果和后端错误 |
-| 记忆模型运行时 | 真实受管 OpenViking 以固定 MemoryRuntimeProfile 调用已配置的实际记忆 Provider/模型，完成探针、accepted refresh、assembly、检查点发布和租约续租；最终请求证明 profile 字段生效 | 穷举协议分支、超时和故障锁存 |
+| 记忆模型运行时 | 真实受管 OpenViking 以固定 MemoryRuntimeProfile 调用已配置的实际记忆 Provider/模型，完成隔离探针、accepted task、来源核验 assembly、usage 归属、能力撤销和显式新代恢复；最终配置与 task 证明 profile 字段生效 | 穷举协议分支、绑定不匹配和故障锁存 |
 | Pi 集成与增强采用 | 真实 Pi 生命周期；采集 context、hook verified/rejected/unobserved、handler 顺序和 transport 结果 | 前后 handler 篡改、重复 nonce 和本扩展故障 |
 | CurrentTurn 与 ToolBatch | 真实 Pi 工具调用、消息持久化、`convertToLlm` Provider 基线、结构化记忆投影、actual 大输出和任务后续行动 | opaque block、边界尺寸、私有 metadata 与 locator 哨兵 |
 | 复杂长任务 | 当前实际任务 Provider/模型、实际记忆 Provider/模型、受管 OpenViking、真实工具和独立任务 checker | 不允许替代 |
@@ -48,7 +48,7 @@
 
 只有需要改变任务 Provider、任务模型、记忆 Provider 或记忆模型时才停止并请求用户决定。认证、配额或服务故障按 blocked/failed 规则记录，不能未经授权改用其它 Provider 或模型。
 
-支持矩阵按实际证据发布：当前坐标通过 actual 检查后才能声明支持；仅通过 controlled/替身检查的 Provider、模型或 API 适配保持未验证。
+stable evidence 的 Provider/模型结论适用于 suite 固定坐标。产品配置契约确定可接受字段，每个精确配置必须在当前受管进程上通过真实能力探针后才可授权增强；controlled/替身只证明本项目控制流。
 
 ## 4. 受控本地入口
 
@@ -121,7 +121,7 @@ summaryContaminationHits == 0
 两个 arm 共享相同 fixture、checker、任务模型、Provider、thinking、工具、权限、初始工作区、输入、停止条件和重复次数。每个 pair 使用独立工作区；arm 顺序在 manifest 中预先平衡，缓存策略固定且可观测。完整成本包含：
 
 - 任务模型请求；
-- 记忆模型初始化与续租能力探针；
+- 记忆模型初始或显式恢复能力探针；
 - Working Memory 生成、提取和合并；
 - 召回、重试、故障处理及被测组合实际产生的 compaction/tree summary；
 - 其它由增强系统触发的 API generation。
@@ -139,7 +139,7 @@ summaryContaminationHits == 0
 | OpenViking 直接依赖与闭包 | `pyproject.toml`、`uv.lock` | 核对 schema/adapter 契约并重跑实际节点 |
 | Pi profile、任务/记忆模型和样本政策 | `validation/suite.json` | 生成新 resolved run manifest；Provider/模型变化先由用户决定 |
 | OpenViking 配置适配字段和凭据规则 | `config/openviking-adapter-contract.json` | 未经 schema 与适配器探针验证不得扩展支持 |
-| 请求预算、timeout、retry 与租约 | 对应 Runtime/Payload profile 或责任模块 | profile/实现指纹变化使相关 evidence stale |
+| 请求预算、timeout 与 retry | 对应 Runtime/Payload profile 或责任模块 | profile/实现指纹变化使相关 evidence stale |
 | 版本、usage、账单、端口与运行结果 | run artifact/evidence | 只由 runner 实际观测，不回写为长期配置 |
 
 升级只修改对应权威入口；runner 解析实际坐标并生成带哈希的 resolved manifest，行为探针和 actual suite 通过后才替换稳定 evidence。长期文档引用权威来源或说明契约，不复制当前版本、模型和运行期测量值。

@@ -24,6 +24,10 @@ import {
 import { SessionMemoryCoordinator } from "../.pi/extensions/pi-context-memory/session-memory-coordination.ts";
 import { normalizeCommitResult, normalizeSessionContext } from "../.pi/extensions/pi-context-memory/openviking-protocol.ts";
 import {
+  MEMORY_CAPABILITY_PROBE_VERSION,
+  MEMORY_CAPABILITY_PROOF_VERSION,
+} from "../.pi/extensions/pi-context-memory/memory-runtime-capability.ts";
+import {
   currentTurnToolSources,
   projectRoute,
   sanitizeFullOutputLocators,
@@ -518,6 +522,30 @@ function readObservations(path) {
   return readFileSync(path, "utf8").trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
 }
 
+function controlledCapabilityProof(launchId, settingsFingerprint, compiled, configFingerprint = compiled.configFingerprint) {
+  const completedAtMs = Date.now() - 1_000;
+  const completedAt = new Date(completedAtMs).toISOString();
+  return {
+    proofVersion: MEMORY_CAPABILITY_PROOF_VERSION,
+    proofId: `controlled-${createHash("sha256").update(`${launchId}\0${settingsFingerprint}\0${configFingerprint}`).digest("hex").slice(0, 24)}`,
+    probeVersion: MEMORY_CAPABILITY_PROBE_VERSION,
+    launchId,
+    childPid: process.pid,
+    provider: compiled.profile.provider,
+    model: compiled.profile.model,
+    api: compiled.profile.api,
+    settingsFingerprint,
+    configFingerprint,
+    profileFingerprint: compiled.profileFingerprint,
+    adapterVersion: compiled.profile.adapterVersion,
+    taskId: "controlled-capability-task",
+    assemblyHash: createHash("sha256").update(`${launchId}\0assembly`).digest("hex"),
+    usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
+    completedAt,
+  };
+}
+
+
 async function runPiAdoptionCase(openViking) {
   const caseDir = join(artifactRoot, "pi-adoption");
   const home = join(caseDir, "home");
@@ -530,13 +558,18 @@ async function runPiAdoptionCase(openViking) {
   const settingsTargetPath = join(settingsTargetDir, "memory-model.jsonc");
   const providerPath = join(caseDir, "local-provider.ts");
   const lifecycleControlPath = join(caseDir, "lifecycle-control.ts");
+  const runtimeRevocationPath = join(caseDir, "runtime-revocation.ts");
   mkdirSync(home, { recursive: true });
   mkdirSync(agentDir, { recursive: true });
   writeJson(join(agentDir, "settings.json"), {
     compaction: { enabled: true, reserveTokens: 1_000, keepRecentTokens: 1 },
   });
   mkdirSync(runtimeDir, { recursive: true });
-  const memorySetting = { provider: "openai", model: "local-memory", api_key: "local-validation" };
+  const memorySetting = {
+    provider: suite.models.memoryProvider,
+    model: suite.models.memoryRoute,
+    api_key: "local-validation",
+  };
   const settingsFingerprint = createHash("sha256")
     .update(JSON.stringify(Object.fromEntries(Object.entries(memorySetting).sort(([left], [right]) => left.localeCompare(right)))))
     .digest("hex");
@@ -571,14 +604,25 @@ async function runPiAdoptionCase(openViking) {
     childPid: process.pid,
     phase: "ready",
     ready: true,
+    serviceReady: true,
+    requestReady: true,
     activeProvider: memorySetting.provider,
     activeModel: memorySetting.model,
     activeSettingsFingerprint,
     activeConfigFingerprint,
+    activeProfile: compiledMemoryConfig.profile,
+    activeProfileFingerprint: compiledMemoryConfig.profileFingerprint,
+    memoryCapability: controlledCapabilityProof(
+      launchId,
+      activeSettingsFingerprint,
+      compiledMemoryConfig,
+      activeConfigFingerprint,
+    ),
     targetProvider: memorySetting.provider,
     targetModel: memorySetting.model,
     targetSettingsFingerprint: activeSettingsFingerprint,
     targetConfigFingerprint: activeConfigFingerprint,
+    targetProfileFingerprint: compiledMemoryConfig.profileFingerprint,
   });
   const replaceRuntimeGeneration = (suffix) => {
     launchId = `${launchId}-${suffix}`;
@@ -648,6 +692,18 @@ async function runPiAdoptionCase(openViking) {
     "}",
     "",
   ].join("\n"), "utf8");
+  writeFileSync(runtimeRevocationPath, [
+    "import { readFileSync, writeFileSync } from \"node:fs\";",
+    `const runtimeStatePath = ${JSON.stringify(join(runtimeDir, "state.json"))};`,
+    "export default function runtimeRevocation(pi) {",
+    "  pi.on(\"before_provider_request\", (event) => {",
+    "    if (!JSON.stringify(event.payload).includes(\"runtime process revocation probe\")) return;",
+    "    const state = JSON.parse(readFileSync(runtimeStatePath, \"utf8\"));",
+    "    writeFileSync(runtimeStatePath, `${JSON.stringify({ ...state, childPid: 999999999 })}\\n`, \"utf8\");",
+    "  });",
+    "}",
+    "",
+  ].join("\n"), "utf8");
 
   const child = spawn("pi", [
     "--mode", "rpc",
@@ -657,6 +713,7 @@ async function runPiAdoptionCase(openViking) {
     "--no-skills",
     "--no-prompt-templates",
     "--no-extensions",
+    "--extension", runtimeRevocationPath,
     "--extension", join(root, ".pi/extensions/pi-context-memory/index.ts"),
     "--extension", providerPath,
     "--extension", lifecycleControlPath,
@@ -1024,6 +1081,7 @@ async function runPiAdoptionCase(openViking) {
     const inFlightWaitElapsedMs = inFlightWaitStart && inFlightWaitProvider
       ? Date.parse(inFlightWaitProvider.at) - Date.parse(inFlightWaitStart.at)
       : Number.POSITIVE_INFINITY;
+    const runtimeRevocationRun = await promptAndSettle("runtime process revocation probe");
 
     const observations = readObservations(observationLog);
     const treeEvents = observations.filter((event) => event.type === "session_tree");
@@ -1173,6 +1231,10 @@ async function runPiAdoptionCase(openViking) {
         && inFlightProviderIndex > inFlightReadyIndex
         && inFlightWaitElapsedMs <= DEFAULT_IN_FLIGHT_READY_WAIT_MS + 50
         && runHasVerifiedTransport(inFlightWaitRun),
+      runtimeRevocationAtHookBlocked: runtimeRevocationRun.payloads.length === 0
+        && runtimeRevocationRun.observations.some((event) => event.type === "before_provider_request"
+          && event.hookOutcome === "rejected"
+          && event.rejectionReason === "Memory runtime capability is unavailable"),
       desiredConfigDoesNotDisableRuntime: runHasVerifiedTransport(desiredMismatchRun)
         && runHasVerifiedTransport(stableRuntimeRun),
       hookOutcomeAccounting,
@@ -1212,7 +1274,11 @@ async function runPiCurrentTurnCase(openViking) {
   mkdirSync(home, { recursive: true });
   mkdirSync(agentDir, { recursive: true });
   mkdirSync(runtimeDir, { recursive: true });
-  const memorySetting = { provider: "openai", model: "local-memory", api_key: "local-validation" };
+  const memorySetting = {
+    provider: suite.models.memoryProvider,
+    model: suite.models.memoryRoute,
+    api_key: "local-validation",
+  };
   const settingsFingerprint = createHash("sha256")
     .update(JSON.stringify(Object.fromEntries(Object.entries(memorySetting).sort(([left], [right]) => left.localeCompare(right)))))
     .digest("hex");
@@ -1238,14 +1304,20 @@ async function runPiCurrentTurnCase(openViking) {
     childPid: process.pid,
     phase: "ready",
     ready: true,
+    serviceReady: true,
+    requestReady: true,
     activeProvider: memorySetting.provider,
     activeModel: memorySetting.model,
     activeSettingsFingerprint: settingsFingerprint,
     activeConfigFingerprint: compiledMemoryConfig.configFingerprint,
+    activeProfile: compiledMemoryConfig.profile,
+    activeProfileFingerprint: compiledMemoryConfig.profileFingerprint,
+    memoryCapability: controlledCapabilityProof(launchId, settingsFingerprint, compiledMemoryConfig),
     targetProvider: memorySetting.provider,
     targetModel: memorySetting.model,
     targetSettingsFingerprint: settingsFingerprint,
     targetConfigFingerprint: compiledMemoryConfig.configFingerprint,
+    targetProfileFingerprint: compiledMemoryConfig.profileFingerprint,
   });
 
   const provider = await startLocalProvider();
@@ -2111,6 +2183,17 @@ try {
   checks.providerPayloadWireProfileBound = openAICompletionsToolPayloadUpperBoundBytes(payloadProfileInput.tools)
     === Buffer.byteLength(JSON.stringify(wireProfilePayload.tools), "utf8")
     && openAICompletionsPayloadMatchesProfile(wireProfilePayload, wireProfileProof)
+    && openAICompletionsPayloadMatchesProfile({
+      ...wireProfilePayload,
+      messages: [{ role: "developer", content: payloadProfileInput.systemPrompt }],
+    }, wireProfileProof)
+    && !openAICompletionsPayloadMatchesProfile({
+      ...wireProfilePayload,
+      messages: [
+        { role: "system", content: payloadProfileInput.systemPrompt },
+        { role: "developer", content: payloadProfileInput.systemPrompt },
+      ],
+    }, wireProfileProof)
     && !openAICompletionsPayloadMatchesProfile({
       ...wireProfilePayload,
       messages: [{ role: "system", content: `${payloadProfileInput.systemPrompt} changed` }],
@@ -2158,7 +2241,14 @@ try {
     ],
   };
   checks.proofToolSequenceBound = Boolean(toolSequenceProof)
-    && openAICompletionsPayloadMatches(toolSequencePayload, "validation-nonce", toolSequenceProof);
+    && openAICompletionsPayloadMatches(toolSequencePayload, "validation-nonce", toolSequenceProof)
+    && openAICompletionsPayloadMatches({
+      ...toolSequencePayload,
+      messages: [
+        { role: "developer", content: "system" },
+        ...toolSequencePayload.messages.slice(1),
+      ],
+    }, "validation-nonce", toolSequenceProof);
 
   const sequenceNonce = "validation-sequence-nonce";
   const sequenceAdopted = buildEnhancedContext([
@@ -2444,6 +2534,7 @@ try {
   checks.transportObservedIndependently = piAdoption.transportObservedIndependently
     && authorizationBlock.transportObservedIndependently;
   checks.inFlightContextWaitAdopted = piAdoption.inFlightContextWaitAdopted;
+  checks.runtimeRevocationAtHookBlocked = piAdoption.runtimeRevocationAtHookBlocked;
   checks.desiredConfigDoesNotDisableRuntime = piAdoption.desiredConfigDoesNotDisableRuntime;
   checks.providerPayloadCurrentTurn = piAdoption.currentTurnOnly;
   checks.piCurrentTurnRaw = piCurrentTurn.raw;

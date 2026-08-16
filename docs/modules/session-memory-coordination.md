@@ -11,7 +11,7 @@
 每个协调实例固定属于一个 Pi session ID 与 session file，并拥有：
 
 - 运行状态：`initializing | ready | faulted | stopping`；
-- 当前 OpenViking 运行代际与能力证明；
+- 当前 OpenViking 运行代际与能力模块已校验 proof 的只读身份；
 - 每条当前路线可兼容的 MemoryCheckpoint 身份、来源后缀 watermark 与后台刷新状态；
 - 来源归档与完整结果屏障；
 - 有界 pending 请求授权和单次请求证明；
@@ -30,7 +30,7 @@
 5. CurrentTurn 实际消息具有稳定顺序和内容哈希；已持久化部分与同版本 MessageSource 精确一致，投影内容必须具有权威 entry 与来源；
 6. 来源列出和展开只返回当前快照仍存在的 MessageSource；
 7. MessageSource 的 task-content、完成状态、task-content hash 与当前 Pi entry 重新规范化结果一致，authority hash 核对原始 entry；ControlBoundary 不含 summary 文本；
-8. MemoryCheckpoint 的 coveredRoutePrefixKey 必须是当前 HistoricalRoute 不跨越 OpaqueProviderSegment 的精确前缀，来源集合属于该前缀，检查点 generation 与当前代际一致；当前代际另有未过期能力证明，检查点的 producing proof 只作来源追溯；
+8. MemoryCheckpoint 的 coveredRoutePrefixKey 必须是当前 HistoricalRoute 不跨越 OpaqueProviderSegment 的精确前缀，来源集合属于该前缀，检查点 generation 与当前代际一致；当前代际另有与受管进程和配置一致的能力证明，检查点的 producing proof 只作来源追溯；
 9. VerifiedActiveDelta 是该检查点覆盖 watermark 之后、当前 prompt 之前的有序 MessageSource/ControlBoundary 后缀，全部来源可恢复；
 10. 请求授权同时绑定实际 leaf、HistoricalRouteKey、CurrentTurnKey、检查点 identity、delta hash、OpaqueProviderSegment hash 和最终内容哈希。
 
@@ -66,7 +66,7 @@ faulted
   → session shutdown → stopping
 ```
 
-`faulted` 是本扩展锁存状态；后台成功或服务恢复不自动改写结论。只有用户选择重启/重新验证时，本模块才创建新代际并核验当前 branch；其它处理方式不由本模块决定。
+`faulted` 是本扩展锁存状态；后台成功或服务恢复不自动改写结论。只有用户选择 Launcher 重启/重新验证并由能力模块形成新代际后，本模块才消费该代际并核验当前 branch；其它处理方式不由本模块决定。
 
 后台刷新是 ready 运行状态中的派生任务，不形成独立用户状态，也不等同于路线不可用。每次授权根据兼容检查点、VerifiedActiveDelta、来源与预算计算 `available | refresh-required`：前者直接继续，后者加入唯一必要刷新屏障。刷新失败或等待达到当前 `MemoryRuntimeProfile` 的操作边界时进入 faulted。
 
@@ -84,7 +84,7 @@ faulted
 - `authorizeRequest`：组合运行、路线、来源和上下文构造结果，返回允许或阻断；
 - `verifyRequestProof`：在本扩展 Provider handler 时点原子复核并消费单次请求证明；
 - `latchFault`：原子锁存首个当前代际故障和后续相关证据；
-- `beginGeneration`：显式恢复时清理旧代派生状态并进入初始化；
+- `beginGeneration`：消费能力模块已校验的新代际，清理本 session 的旧代派生状态并进入初始化；
 - 当前路线来源列表和权威展开；
 - 有界的后台索引、准备、取消与 shutdown 协调。
 
@@ -99,7 +99,7 @@ block { faultCode, diagnostic }
 
 ## 6. 并发与期限
 
-- 同一运行代际共享一个能力初始化或续租任务；
+- Launcher 只在进程启动或显式恢复时建立能力 proof；同一运行代际的协调实例只消费已校验结果与必要初始化等待，不创建运行能力探针任务；
 - 同一 session 的来源写入保持 entry 顺序；
 - generation、精确 route prefix、watermark 与 retentionBudgetIdentity 全部相同才共享 checkpoint refresh；
 - 后台刷新运行期间，已发布的兼容检查点继续可读，新 entry 留在 VerifiedActiveDelta；

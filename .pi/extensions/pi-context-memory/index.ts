@@ -53,6 +53,7 @@ import {
   type OpenVikingRuntimeState,
 } from "./memory-model-configuration.ts";
 import { DEFAULT_OPENVIKING_REQUEST_TIMEOUT_MS } from "./openviking-protocol.ts";
+import { memoryRuntimeGenerationFromState } from "./memory-runtime-capability.ts";
 import {
   createOpenAICompletionsPayloadProof,
   openAICompletionsPayloadMatches,
@@ -79,6 +80,7 @@ const PI_PROTOCOL_PROFILE: PiProtocolProfile = {
 interface PendingRequestProof {
   assembly: AssemblyProof;
   payload: ProviderPayloadProof;
+  memoryCapabilityProofId: string;
 }
 
 interface LatchedGenerationFault {
@@ -317,7 +319,7 @@ function formatMemoryModelState(
 ): string {
   const configured = setting ? `${setting.provider}/${setting.model}` : "not configured";
   const running = state?.activeProvider && state.activeModel ? `${state.activeProvider}/${state.activeModel}` : "no VLM loaded";
-  const applied = Boolean(state?.ready && (setting
+  const applied = Boolean(state?.serviceReady && (setting
     ? state.activeSettingsFingerprint === memoryModelSettingsFingerprint(setting)
     : state.activeProvider === undefined
       && state.activeModel === undefined
@@ -331,9 +333,13 @@ function formatMemoryModelState(
     `Configuration file: ${configPath}`,
     `Configured memory model: ${configured}`,
     `Running OpenViking model: ${running}`,
-    `Service readiness: ${state?.ready ? "ready" : state?.phase ?? "launcher unavailable"}`,
+    `Service readiness: ${state?.serviceReady ? "ready" : state?.phase ?? "launcher unavailable"}`,
+    `Memory runtime profile: ${state?.activeProfileFingerprint ?? "unavailable"}`,
+    `Memory capability: ${state?.memoryCapability ? "verified for current process" : "unavailable"}`,
+    `Request readiness: ${state?.requestReady ? "ready" : "blocked"}`,
     `Configuration: ${configurationStatus}`,
-    state?.configurationError ? `Last cold-start configuration error: ${state.configurationError}` : undefined,
+    state?.configurationError ? `Configuration error: ${state.configurationError}` : undefined,
+    state?.error ? `Runtime error: ${state.error}` : undefined,
     `Extension authorization: ${authorization}`,
   ].filter((line): line is string => Boolean(line)).join("\n");
 }
@@ -391,6 +397,7 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
   }
   let workingContextOptimizer: WorkingContextOptimizer | undefined;
   let workingContextGeneration: string | undefined;
+  let workingContextCapabilityProofId: string | undefined;
   let workingContextTransition: Promise<void> = Promise.resolve();
   let coordinator: SessionMemoryCoordinator | undefined;
   let coordinatorIdentity: string | undefined;
@@ -494,15 +501,22 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
     memoryModelWatchReady = memoryModelWatchers.length === filesByDirectory.size;
     return memoryModelWatchReady;
   }
-  function transitionWorkingContext(nextGeneration?: string): Promise<boolean> {
+
+  function transitionWorkingContext(state?: OpenVikingRuntimeState): Promise<boolean> {
+    const nextGeneration = memoryRuntimeGenerationFromState(state);
+    const nextCapabilityProofId = nextGeneration ? state?.memoryCapability?.proofId : undefined;
     const transition = async (): Promise<boolean> => {
       clearFaultForNewGeneration(nextGeneration);
-      if (nextGeneration && !shuttingDown && workingContextOptimizer && workingContextGeneration === nextGeneration) return true;
+      if (nextGeneration && !shuttingDown && workingContextOptimizer && workingContextGeneration === nextGeneration) {
+        workingContextCapabilityProofId = nextCapabilityProofId;
+        return true;
+      }
       const previous = workingContextOptimizer;
       workingContextOptimizer = undefined;
       workingContextGeneration = undefined;
+      workingContextCapabilityProofId = undefined;
       if (previous) await previous.shutdown(new Error("Working context runtime generation changed"));
-      if (!nextGeneration || shuttingDown) return false;
+      if (!nextGeneration || !state?.activeProfile || shuttingDown) return false;
       if (!openVikingUrl) {
         writeRecord("working_context_config_error", {
           error: openVikingEndpointError ?? "OpenViking endpoint is unavailable",
@@ -510,8 +524,11 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
         return false;
       }
       try {
-        workingContextOptimizer = new WorkingContextOptimizer(openVikingUrl, openVikingApiKey, openVikingTimeoutMs);
+        workingContextOptimizer = new WorkingContextOptimizer(openVikingUrl, openVikingApiKey, openVikingTimeoutMs, {
+          taskTimeoutMs: state.activeProfile.requestTimeoutMs,
+        });
         workingContextGeneration = nextGeneration;
+        workingContextCapabilityProofId = nextCapabilityProofId;
         return true;
       } catch (error) {
         writeRecord("working_context_config_error", { error: error instanceof Error ? error.message : String(error) });
@@ -521,11 +538,6 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
     const operation = workingContextTransition.then(transition, transition);
     workingContextTransition = operation.then(() => undefined, () => undefined);
     return operation;
-  }
-
-  function runtimeWorkingContextGeneration(state: OpenVikingRuntimeState | undefined): string | undefined {
-    if (!state?.ready || !state.childPid || !state.activeProvider || !state.activeModel) return undefined;
-    return `${state.launchId}\0${state.childPid}`;
   }
 
   function setAuthorization(value: "初始化中" | "增强记忆" | "已阻断"): void {
@@ -617,10 +629,10 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
     }
 
     if (!shuttingDown && checkEpoch === memoryModelWatchEpoch) {
-      const generation = runtimeWorkingContextGeneration(state);
+      const generation = memoryRuntimeGenerationFromState(state);
       const previousGeneration = workingContextGeneration;
       const wasAvailable = memoryEnhancementAvailable;
-      const generationReady = await transitionWorkingContext(generation);
+      const generationReady = await transitionWorkingContext(state);
       if (!shuttingDown && checkEpoch === memoryModelWatchEpoch) {
         memoryEnhancementAvailable = Boolean(generation && generationReady && root);
         if (memoryEnhancementAvailable) {
@@ -648,7 +660,7 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
       if (diagnosticKey !== lastMemoryModelConfigDiagnosticKey) {
         lastMemoryModelConfigDiagnosticKey = diagnosticKey;
         writeRecord("memory_model_config_error", { error: diagnosticMessage, contentFingerprint });
-        const continuation = runtimeWorkingContextGeneration(state)
+        const continuation = memoryRuntimeGenerationFromState(state)
           ? "The running OpenViking instance remains available until restart."
           : "Enhanced requests remain blocked until memory runtime validation succeeds.";
         if (ctx.hasUI) ctx.ui.notify(`${diagnosticMessage}\n${continuation}`, "warning");
@@ -658,9 +670,9 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
     }
   }
 
-  function scheduleMemoryModelConfigCheck(ctx: ExtensionContext, force = false): void {
+  function scheduleMemoryModelConfigCheck(ctx: ExtensionContext, force = false): Promise<void> | undefined {
     latestMemoryModelContext = ctx;
-    if (shuttingDown || memoryModelConfigCheck || (!force && memoryEnhancementAvailable)) return;
+    if (shuttingDown || memoryModelConfigCheck || (!force && memoryEnhancementAvailable)) return memoryModelConfigCheck;
     const checkEpoch = memoryModelWatchEpoch;
     memoryModelRecheckRequested = false;
     if (!memoryEnhancementAvailable && renderedMemoryUiState !== "faulted") setMemoryUiState(ctx, "initializing");
@@ -671,8 +683,18 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
         scheduleMemoryModelConfigCheck(latestMemoryModelContext, true);
       }
     });
+    return memoryModelConfigCheck;
   }
 
+  async function refreshMemoryRuntimeState(ctx: ExtensionContext): Promise<void> {
+    let pending = scheduleMemoryModelConfigCheck(ctx, true);
+    while (pending) {
+      await pending;
+      const next = memoryModelConfigCheck;
+      if (!next || next === pending) return;
+      pending = next;
+    }
+  }
   function currentCoordinator(ctx: ExtensionContext): SessionMemoryCoordinator | undefined {
     const identity = sessionIdentity(ctx);
     if (!identity) return undefined;
@@ -896,8 +918,8 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
         if (memoryModelConfigCheck) await memoryModelConfigCheck;
         setMemoryUiState(ctx, "initializing");
         const state = await requestOpenVikingRestart(root);
-        const generation = runtimeWorkingContextGeneration(state);
-        const generationReady = await transitionWorkingContext(generation);
+        const generation = memoryRuntimeGenerationFromState(state);
+        const generationReady = await transitionWorkingContext(state);
         memoryEnhancementAvailable = Boolean(generation && generationReady);
         if (memoryEnhancementAvailable) {
           setMemoryUiState(ctx, "initializing");
@@ -915,8 +937,8 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         const state = root ? await readRuntimeState(root).catch(() => undefined) : undefined;
-        const generation = runtimeWorkingContextGeneration(state);
-        const generationReady = await transitionWorkingContext(generation);
+        const generation = memoryRuntimeGenerationFromState(state);
+        const generationReady = await transitionWorkingContext(state);
         memoryEnhancementAvailable = Boolean(generation && generationReady);
         if (memoryEnhancementAvailable) {
           setMemoryUiState(ctx, uiStateBeforeRestart === "active" ? "active" : "initializing");
@@ -1092,6 +1114,7 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
 
   pi.on("context", async (event, ctx) => {
     retireUnobservedProof("superseded by a new context request");
+    await refreshMemoryRuntimeState(ctx);
     const snapshot = sessionRouteSnapshot(ctx);
     const activeCoordinator = currentCoordinator(ctx);
     const generationCurrent = memoryEnhancementAvailable
@@ -1182,8 +1205,17 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
             detail: `No verified Provider payload adapter is available for ${model?.api ?? "unknown API"}`,
           },
         };
+      } else if (!workingContextCapabilityProofId) {
+        authorization = {
+          kind: "block",
+          fault: { kind: "not-ready", detail: "Memory capability proof identity is unavailable" },
+        };
       } else {
-        requestProof = { assembly: authorization.proof, payload: payloadProof };
+        requestProof = {
+          assembly: authorization.proof,
+          payload: payloadProof,
+          memoryCapabilityProofId: workingContextCapabilityProofId,
+        };
       }
     }
 
@@ -1246,11 +1278,25 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
     maybeFail("before_provider_headers");
   });
 
-  pi.on("before_provider_request", (event, ctx) => {
+  pi.on("before_provider_request", async (event, ctx) => {
     providerRequestIndex += 1;
     const payloadHasEnhancedContext = payloadUsesEnhancedContext(event.payload);
     const proof = pendingAssemblyProof;
     pendingAssemblyProof = undefined;
+    let currentRuntimeGeneration: string | undefined;
+    let currentMemoryCapabilityProofId: string | undefined;
+    let runtimeValidationError: string | undefined;
+    if (proof) {
+      try {
+        const runtimeRoot = await locateProjectRoot(ctx.cwd);
+        const runtimeState = await readRuntimeState(runtimeRoot);
+        currentRuntimeGeneration = memoryRuntimeGenerationFromState(runtimeState);
+        currentMemoryCapabilityProofId = runtimeState?.memoryCapability?.proofId;
+        if (!currentRuntimeGeneration) runtimeValidationError = "Memory runtime capability is unavailable";
+      } catch (error) {
+        runtimeValidationError = error instanceof Error ? error.message : String(error);
+      }
+    }
     let currentProviderPayloadProfile: ProviderPayloadProfile | undefined;
     let currentProviderPayloadProfileId: string | undefined;
     let providerPayloadProfileError: string | undefined;
@@ -1280,9 +1326,15 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
     )) {
       hookOutcome = "rejected";
       rejectionReason = "handler payload changed the constructed enhanced content";
-    } else if (workingContextGeneration !== proof.assembly.generation) {
+    } else if (!currentRuntimeGeneration) {
+      hookOutcome = "rejected";
+      rejectionReason = runtimeValidationError ?? "memory runtime capability is unavailable";
+    } else if (currentRuntimeGeneration !== proof.assembly.generation) {
       hookOutcome = "rejected";
       rejectionReason = "runtime generation changed after the context decision";
+    } else if (currentMemoryCapabilityProofId !== proof.memoryCapabilityProofId) {
+      hookOutcome = "rejected";
+      rejectionReason = "memory capability proof changed after the context decision";
     } else if (ctx.model?.provider !== proof.payload.provider
       || ctx.model.id !== proof.payload.model
       || ctx.model.api !== proof.payload.api) {
@@ -1329,6 +1381,8 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
       hookOutcome,
       rejectionReason,
       nonce: proof?.assembly.nonce,
+      memoryCapabilityProofId: proof?.memoryCapabilityProofId,
+      currentMemoryCapabilityProofId,
       providerPayloadProfileId: proof?.assembly.providerPayloadProfileId,
       currentProviderPayloadProfileId,
       currentTurnKey: proof?.assembly.currentTurnKey,

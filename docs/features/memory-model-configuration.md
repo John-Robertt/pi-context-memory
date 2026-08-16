@@ -8,13 +8,13 @@ OpenViking 原生配置、生成配置格式和进程通信由系统设计管理
 
 ## 2. 目标与边界
 
-系统在 `~/.pi/pi-context-memory.jsonc` 维护用户级记忆模型配置。文件不存在时创建合法模板，并以注释列出已有实际纵向证据的 Provider/模型支持范围、必要连接字段和认证入口；只有协议适配或替身证据的组合不作为已支持项。已有文件由用户拥有，系统不自动覆盖；直接填写 key 时该文件包含实际值，环境引用只保存变量名。
+系统在 `~/.pi/pi-context-memory.jsonc` 维护用户级记忆模型配置。文件不存在时创建合法模板，并以注释列出当前配置契约接受的 Provider、连接字段和认证入口；每个精确配置由受管进程的实际能力探针决定能否授权增强。已有文件由用户拥有，系统不自动覆盖；直接填写 key 时该文件包含实际值，环境引用只保存变量名。
 
 记忆模型设置独立于 Pi `/model` 的任务模型设置。修改或应用记忆模型配置不改变任务模型、Pi session 或当前 branch，也不产生任务模型请求。
 
-用户不配置 thinking、temperature、timeout、retry、并发、租约或 Working Memory 策略。系统为已支持的精确 Provider/模型/API 使用经过实际验证的内部运行 profile；无法匹配 profile 的模型目标返回 unsupported，不依赖上游默认值或自动切换其它模型。
+用户不配置 thinking、temperature、timeout、retry、并发或 Working Memory 策略。系统为配置桥接受的精确 Provider/模型/API 生成同一版本化内部 profile，不依赖上游隐式默认值，也不配置备用 Provider/model；该目标只有在当前受管进程的真实能力探针通过后才可授权增强。
 
-`memoryModel.api_key` 归属于当前 Provider 或 LiteLLM 来源，可直接填写，也可使用 `$NAME` 或 `${NAME}` 引用 Launcher 环境变量。预检把它解析为内存值；生成配置只保存固定内部引用，实际值只在启动受管 OpenViking 时进入固定内部环境变量。切换引用、direct key 或 `null` 不会让已使用的用户变量进入后续子进程。配置、运行状态、诊断、日志和 Pi session 不回显凭据。
+`memoryModel.api_key` 归属于当前 Provider 或 LiteLLM 来源，可直接填写，也可使用 `$NAME` 或 `${NAME}` 引用 Launcher 环境变量。系统按凭据契约完成预检和子进程隔离；配置、运行状态、诊断、日志和 Pi session 不回显凭据。
 
 扩展启用时，只有当前记忆模型实际能力已验证，本扩展才确认增强输出。`memoryModel: null` 时保持初始化/故障；请求到达后只执行本扩展已定义的等待或 abort，transport 结果另行观测，后续由用户决定。
 
@@ -27,7 +27,7 @@ OpenViking 原生配置、生成配置格式和进程通信由系统设计管理
 - 项目受管 OpenViking 实例实际加载的 Provider、模型和内部运行 profile；
 - 配置与运行实例是否一致；
 - 服务 readiness；
-- 记忆模型实际能力证明、绑定代际和有效期；
+- 记忆模型实际能力证明及其绑定代际；
 - 当前故障错误码和恢复入口。
 
 命令只检查和展示，不重写用户 JSONC。语法错误报告文件与行列，语义错误报告对应字段；诊断保持脱敏。
@@ -38,7 +38,7 @@ OpenViking 原生配置、生成配置格式和进程通信由系统设计管理
 
 `/restart-viking` 将当前有效用户配置应用到当前项目启动器拥有的 OpenViking 实例：
 
-1. 读取用户 JSONC，并为精确 Provider/模型/API 匹配受支持内部运行 profile；
+1. 读取用户 JSONC，并为精确 Provider/模型/API 生成内部运行 profile；
 2. 完成 schema、连接字段、凭据引用和目标端口预检；
 3. 保持旧实例运行直到新目标具备启动条件；
 4. 停止当前启动器拥有的旧子进程；
@@ -82,9 +82,9 @@ OpenViking 原生配置、生成配置格式和进程通信由系统设计管理
 - 环境引用的实际值不进入用户配置或生成配置；直接 key 只存在于用户自行填写的配置；
 - 界面、状态、诊断、日志、evidence 和 Pi session 不回显凭据；
 - `/memory-model` 准确区分用户配置、内部运行 profile、运行实例、服务 readiness 和模型能力；
-- 只有最终实际记忆请求已证明生效的 profile 才进入支持范围，且不配置 Provider/model fallback；
+- 配置兼容范围跟随受审查的 OpenViking schema；每个实际目标只有在当前受管进程中完成 task usage 与 Working Memory 能力探针后才授权，生成配置不含 Provider/model fallback；
 - `/restart-viking` 只控制项目启动器拥有的实例；
-- 新运行代际只有在未过期的实际记忆模型能力证明存在时确认增强输出；
+- 新运行代际只有在与当前受管进程、proof ID 和配置一致的实际记忆模型能力证明存在时确认增强输出；
 - 配置、服务或能力故障时，本扩展不确认增强输出；`ctx.abort()` 和 transport 结果分别观测；
 - 当前 ready 实例不受未显式应用的配置变化影响；
 - 多个 Pi session 观察同一用户配置，每个项目的实例所有权保持隔离；

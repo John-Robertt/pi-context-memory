@@ -159,12 +159,12 @@ export function normalizeCommitResult(value: unknown):
   throw new Error(`OpenViking commit response has unknown status ${String(commit.status)}`);
 }
 
-export function normalizeTaskState(value: unknown): { status: string; error?: unknown } {
+export function normalizeTaskState(value: unknown): { status: string; error?: unknown; result?: unknown } {
   if (!value || typeof value !== "object" || typeof (value as Record<string, unknown>).status !== "string") {
     throw new Error("OpenViking task response is invalid");
   }
   const task = value as Record<string, unknown>;
-  return { status: task.status as string, error: task.error };
+  return { status: task.status as string, error: task.error, result: task.result };
 }
 
 function openVikingMessageText(value: Record<string, unknown>): string {

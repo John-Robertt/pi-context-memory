@@ -1,9 +1,9 @@
 {
   "schemaVersion": 2,
   "generatedBy": "scripts/validate-memory-model-runtime.mjs",
-  "scope": "local",
-  "runId": "memory-model-runtime-2026-08-15T20-58-34-043Z",
-  "recordedAt": "2026-08-15T20:59:31.457Z",
+  "scope": "managed-provider-runtime",
+  "runId": "memory-model-runtime-2026-08-16T04-08-38-229Z",
+  "recordedAt": "2026-08-16T04:10:02.752Z",
   "piVersion": "0.84.2",
   "nodeVersion": "24.15.0",
   "platform": "darwin",
@@ -11,19 +11,27 @@
   "vlmSchemaSha256": "ae867bbe4e9067170c18feb29db53c2e683dcabfef90a0f8a819bc92477acaae",
   "adapterContractSha256": "1f0e49f8d18851891f73e6a5f4fa3704406c3ea690089b113484cd5c36e8262e",
   "implementation": {
-    "sourceManifestSha256": "4f249a720ef2a98581e8a9159a86e059a97bb532144e863b5bdd3da84889c4fc",
+    "sourceManifestSha256": "73f1450323b3f601099b888b59d911837e7cf673fc172c79b37d634c4e4636fb",
     "files": [
       {
         "path": ".pi/extensions/pi-context-memory/index.ts",
-        "sha256": "6c4b6c4a64e7a2b2e354e23882f7759b697c3abfd656503d293c3bff86de7c82"
+        "sha256": "294bbc93efb44e7e125fe6344cc4ebbb17977442d1044fa6c06c70372f757e85"
       },
       {
         "path": ".pi/extensions/pi-context-memory/memory-model-configuration.ts",
-        "sha256": "b2c752817d11894e06aa5150d1a98e3052de9559a308f51cd9468a5ccd3a0d9d"
+        "sha256": "5b2df81612f5d7b1bd7efd4d08c7badaa4a41569cab784c41e3573d3ac510d8c"
+      },
+      {
+        "path": ".pi/extensions/pi-context-memory/memory-runtime-capability.ts",
+        "sha256": "8d77b15f5239fd5081e243005916d490ed8d824c4f992f6979b18ade931267e0"
+      },
+      {
+        "path": ".pi/extensions/pi-context-memory/memory-runtime-profile.ts",
+        "sha256": "802a1df5ba9e1d459e2f97a836d772e8eca39527e3bb2ead9e89585b1241f452"
       },
       {
         "path": ".pi/extensions/pi-context-memory/openviking-protocol.ts",
-        "sha256": "ca435ae48adf4e7d3f0051e0b3e89bb018095ce0493dcc647efc1e9f0a9b5a08"
+        "sha256": "af2d47062ac74385c6fe3f9892255f199753c58d36eaf2f1404adbbe05083a7b"
       },
       {
         "path": ".pi/extensions/pi-context-memory/pi-session-protocol.ts",
@@ -31,7 +39,7 @@
       },
       {
         "path": ".pi/extensions/pi-context-memory/provider-payload-proof.ts",
-        "sha256": "254a012c081d193f8c8296afdeeac723fd0d7324449c4597e0cd26ec1b12fa01"
+        "sha256": "61b979899e398ba717e51454964bb64eba465059b542a5e5802914bc5e89fc6d"
       },
       {
         "path": ".pi/extensions/pi-context-memory/session-memory-coordination.ts",
@@ -71,15 +79,15 @@
       },
       {
         "path": "scripts/openviking-config.py",
-        "sha256": "ff25ea5c4705d54f810a5f0824ede8625e83f1b9a79eeeef2b6f55f7ba22d5fe"
+        "sha256": "50ae858774e582a20d347d3347178db1da2ea2d2c534418b8b1487308a7099a2"
       },
       {
         "path": "scripts/start-openviking.mjs",
-        "sha256": "4589184c25d44bf18c5e97934d252a6f7728f6db10991937531e84f85dea3a21"
+        "sha256": "dcdfd444520964a64ca8ceb309570041e125a3bd8e7b1f721d6465b1a6eeddca"
       },
       {
         "path": "scripts/validate-memory-model-runtime.mjs",
-        "sha256": "8976c00959c00cecb36b350b9a44e0cbf0d4574a97a419dc6df5737ba5e56272"
+        "sha256": "4bd8186a91b3f4de17be76f67047fa768b0768f159758f249163b4c8e9374094"
       },
       {
         "path": "scripts/validate-openviking-vlm-adapters.py",
@@ -87,7 +95,7 @@
       },
       {
         "path": "scripts/validation-evidence.mjs",
-        "sha256": "c769b4ee116bba775961c0b7ce48571a4df3c52061d51cf95d6e0285f5a221ae"
+        "sha256": "e29e88a7f8349a878bbdd54946d8293f0b52728b11088a00e4df88a756566e1f"
       },
       {
         "path": "scripts/validation-suite.mjs",
@@ -98,7 +106,7 @@
         "sha256": "910184bff539fd56b4b7f8fc2ee46439f3113c7394c1538d60ef3a5e3c78f094"
       }
     ],
-    "specificationManifestSha256": "2d90a50bf6cb504507ad5ee7377d95b06a2f0b78d705a9d97ae00170100a7d7f",
+    "specificationManifestSha256": "69cc6effb5da7cee4669b691484e418f46b1bbc89b35d7427fb627e11a5ca4fa",
     "specificationFiles": [
       {
         "path": ".python-version",
@@ -110,19 +118,76 @@
       },
       {
         "path": "docs/validation/README.md",
-        "sha256": "fcb69766fc4b3de4fef7ffc2731ff6fd2b7897c9f67047eeb0a417ad8f4ee40a"
+        "sha256": "9fb53547a6bb0b6d720d44e095b81e3fd99dc47ce350c33faf2d58469440b52e"
       },
       {
         "path": "docs/validation/memory-model-runtime.md",
-        "sha256": "07411a7ce71a9d0c09b8155243030ebbad7f14b8bde6eec95cf9a0e3c7dc5bf2"
+        "sha256": "f9a506dea2c5a25c2b6f9037a870d0d6fb47cfcf35424f3fa1be6852ac3c10a9"
       },
       {
         "path": "validation/suite.json",
         "sha256": "2f34c5cec5f73f972887aaeb0ad7decf734500911f7ea0412061d33deb3d139b"
       }
     ],
-    "gitCommit": "58e68da7474569e78aea01ba4e6cf7ec06074491",
+    "gitCommit": "d200dbd9eadc7aec7ea585d4a823abb3a8f2e2f5",
     "workingTreeDirty": true
+  },
+  "actual": {
+    "models": {
+      "provider": "litellm",
+      "model": "openrouter/openai/gpt-5.6-luna",
+      "api": "openviking-vlm"
+    },
+    "profileFingerprint": "a96f7ed50cb6d0543e03019dadfc672ffae95f1481277728428974b05235d045",
+    "first": {
+      "launchId": "d7027b8b-a0f1-4c31-ac47-ff80e03fc44f",
+      "childPid": 33143,
+      "proofId": "64c99ca1-b2fb-49c1-98f5-8b66480dac98",
+      "taskId": "27183ef3-54ba-4c17-958d-663dbfa7b4f6",
+      "usage": {
+        "promptTokens": 599,
+        "completionTokens": 366,
+        "totalTokens": 965
+      },
+      "assemblyHash": "d102e3a5c82350bb91f1331e94093fae0dd10500bb84b2e4c497b79d9564c2d0"
+    },
+    "recovered": {
+      "launchId": "d7027b8b-a0f1-4c31-ac47-ff80e03fc44f",
+      "childPid": 33149,
+      "proofId": "c98242fd-b009-4a38-a6e0-b4a8a23651d4",
+      "taskId": "924e88ca-8bd8-4f67-9fc4-3581bb9e9c9a",
+      "usage": {
+        "promptTokens": 599,
+        "completionTokens": 329,
+        "totalTokens": 928
+      },
+      "assemblyHash": "93b5fb9e93b2e244996edf0a95be6dab258f03c0d7103db34ab3447a06802dfe"
+    },
+    "usageRows": [
+      {
+        "source": "vlm",
+        "token_type": "input",
+        "provider": "litellm",
+        "model_name": "openrouter/openai/gpt-5.6-luna",
+        "token_count": 599
+      },
+      {
+        "source": "vlm",
+        "token_type": "output",
+        "provider": "litellm",
+        "model_name": "openrouter/openai/gpt-5.6-luna",
+        "token_count": 366
+      }
+    ],
+    "checks": {
+      "actualCapabilityPublished": true,
+      "actualProfileApplied": true,
+      "actualTaskUsage": true,
+      "actualProbeSessionCleaned": true,
+      "actualProviderUsageBound": true,
+      "actualProcessExitRevokesCapability": true,
+      "actualExplicitGenerationRecovery": true
+    }
   },
   "passed": true,
   "checks": {
@@ -132,7 +197,7 @@
     "schemaObserved": true,
     "litellmCatalogObserved": true,
     "generatedConfigParsed": true,
-    "providerDefaultsNotOverridden": true,
+    "runtimeProfileApplied": true,
     "deterministicFingerprint": true,
     "credentialRotationChangesConfigFingerprint": true,
     "credentialsBoundToInternalEnvironment": true,
@@ -158,9 +223,17 @@
     "configurationDiagnosticContentHashed": true,
     "concurrentLauncherRejected": true,
     "deadChildReadySuppressed": true,
+    "capabilityGatePublished": true,
+    "capabilityProofDefinesGeneration": true,
+    "inconsistentCapabilityUsageRejected": true,
     "targetPortPreflightPreservesInstance": true,
     "preflightPreservesInstance": true,
     "orderedRestart": true,
+    "capabilityFailureBlocks": true,
+    "capabilityErrorsRedacted": true,
+    "failedProbeCleanupReported": true,
+    "emptyWorkingMemoryOverviewRejected": true,
+    "explicitCapabilityRecovery": true,
     "childCredentialEnvironmentIsolated": true,
     "removedReferenceRemainsExcluded": true,
     "sourceOnlyCredentialEnvironmentEmpty": true,
@@ -199,11 +272,18 @@
     "staleLifecycleLockRequiresExplicitRecovery": true,
     "invalidColdStartCredentialExcluded": true,
     "invalidColdStartKeepsSourceRuntime": true,
-    "unrelatedReadyNotReconciled": true
+    "unrelatedReadyNotReconciled": true,
+    "actualCapabilityPublished": true,
+    "actualProfileApplied": true,
+    "actualTaskUsage": true,
+    "actualProbeSessionCleaned": true,
+    "actualProviderUsageBound": true,
+    "actualProcessExitRevokesCapability": true,
+    "actualExplicitGenerationRecovery": true
   },
   "limitations": [
-    "The local scope uses a protocol-compatible OpenViking process double and makes no external Provider requests.",
-    "Working Memory protocol and automatic Pi context adoption have separate local evidence; the paired quality runner records the selected real memory adapter semantics.",
-    "One fixed paired task-quality sample exists; general task quality and complete API-cost attribution remain outside this local runner."
+    "The controlled process double covers deterministic protocol, ownership, failure, and recovery branches; the managed-provider arm proves the production probe against the suite-selected real memory route.",
+    "Checkpoint refresh remains outside this capability-gate delivery.",
+    "General task quality and complete API-cost attribution remain later product stages."
   ]
 }

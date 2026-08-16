@@ -25,6 +25,8 @@ import {
   readOptionalJson,
   runtimePaths,
 } from "../.pi/extensions/pi-context-memory/memory-model-configuration.ts";
+import { probeMemoryRuntimeCapability } from "../.pi/extensions/pi-context-memory/memory-runtime-capability.ts";
+import { MEMORY_RUNTIME_REQUEST_TIMEOUT_MS } from "../.pi/extensions/pi-context-memory/memory-runtime-profile.ts";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const paths = runtimePaths(root);
@@ -42,6 +44,7 @@ const stopTimeoutMs = positiveInteger(
 const operationTimeoutMs = OPENVIKING_CONFIG_BRIDGE_TIMEOUT_MS
   + (4 * stopTimeoutMs)
   + readinessTimeoutMs
+  + MEMORY_RUNTIME_REQUEST_TIMEOUT_MS
   + OPENVIKING_CONTROL_REQUEST_GRACE_MS;
 const launchId = randomUUID();
 const intentionalStops = new WeakSet();
@@ -205,6 +208,19 @@ async function stopOwnedChild() {
   ownedAddress = undefined;
 }
 
+function redactionSecrets(candidate) {
+  const credential = candidate?.[COMPILED_OPENVIKING_CREDENTIAL];
+  return [credential?.value, process.env.PCR_OPENVIKING_API_KEY].filter(Boolean);
+}
+
+function redactedErrorMessage(error, secrets) {
+  let message = error instanceof Error ? error.message : String(error);
+  for (const secret of [...new Set(secrets)].sort((left, right) => right.length - left.length)) {
+    message = message.split(secret).join("<redacted>");
+  }
+  return message;
+}
+
 function forwardRedacted(stream, destination, secrets) {
   const values = [...new Set(secrets.filter(Boolean))].sort((left, right) => right.length - left.length);
   if (values.length === 0) {
@@ -248,8 +264,8 @@ function spawnServer(configPath, candidate) {
     shell: false,
   });
   if (!ignoreChildOutput) {
-    forwardRedacted(target.stdout, process.stdout, [credential?.value]);
-    forwardRedacted(target.stderr, process.stderr, [credential?.value]);
+    forwardRedacted(target.stdout, process.stdout, redactionSecrets(candidate));
+    forwardRedacted(target.stderr, process.stderr, redactionSecrets(candidate));
   }
   child = target;
   target.once("error", (error) => {
@@ -259,11 +275,16 @@ function spawnServer(configPath, candidate) {
         ...currentState,
         phase: "failed",
         ready: false,
+        serviceReady: false,
+        requestReady: false,
         childPid: undefined,
         activeProvider: undefined,
         activeModel: undefined,
         activeSettingsFingerprint: undefined,
         activeConfigFingerprint: undefined,
+        activeProfile: undefined,
+        activeProfileFingerprint: undefined,
+        memoryCapability: undefined,
         error: `OpenViking failed to start: ${error.message}`,
       }).catch((publishError) => console.error(`Cannot publish OpenViking failure: ${publishError.message}`));
     }
@@ -277,11 +298,16 @@ function spawnServer(configPath, candidate) {
       ...currentState,
       phase: "failed",
       ready: false,
+      serviceReady: false,
+      requestReady: false,
       childPid: undefined,
       activeProvider: undefined,
       activeModel: undefined,
       activeSettingsFingerprint: undefined,
       activeConfigFingerprint: undefined,
+      activeProfile: undefined,
+      activeProfileFingerprint: undefined,
+      memoryCapability: undefined,
       error: `OpenViking exited before shutdown (${code ?? signal ?? "unknown"})`,
     }).catch((publishError) => console.error(`Cannot publish OpenViking exit: ${publishError.message}`));
   });
@@ -311,6 +337,30 @@ async function waitUntilReady(target, address) {
   throw new Error(`OpenViking readiness timed out after ${readinessTimeoutMs}ms`);
 }
 
+
+function capabilityTarget(candidate, target, address) {
+  if (!candidate.profile || !candidate.profileFingerprint || !target.pid) return undefined;
+  const host = address.host.includes(":") ? `[${address.host}]` : address.host;
+  return {
+    baseUrl: `http://${host}:${address.port}`,
+    apiKey: process.env.PCR_OPENVIKING_API_KEY,
+    launchId,
+    childPid: target.pid,
+    settingsFingerprint: candidate.settingsFingerprint,
+    configFingerprint: candidate.configFingerprint,
+    profile: candidate.profile,
+    profileFingerprint: candidate.profileFingerprint,
+  };
+}
+
+
+async function establishCapability(candidate, target, address) {
+  const capability = capabilityTarget(candidate, target, address);
+  if (!capability) return undefined;
+  return probeMemoryRuntimeCapability(capability);
+}
+
+
 async function applyCandidate(candidate, initial, operationId) {
   let address;
   try {
@@ -334,12 +384,15 @@ async function applyCandidate(candidate, initial, operationId) {
       ...currentState,
       phase: initial ? "starting" : "restarting",
       ready: Boolean(!initial && child && currentState?.ready),
+      serviceReady: Boolean(!initial && child && currentState?.serviceReady),
+      requestReady: Boolean(!initial && child && currentState?.requestReady),
       childPid: child?.pid,
       operationId,
       targetProvider: candidate.provider,
       targetModel: candidate.model,
       targetSettingsFingerprint: candidate.settingsFingerprint,
       targetConfigFingerprint: candidate.configFingerprint,
+      targetProfileFingerprint: candidate.profileFingerprint,
       configurationError: candidate.configurationError,
       error: undefined,
     });
@@ -354,11 +407,16 @@ async function applyCandidate(candidate, initial, operationId) {
       ...currentState,
       phase: "restarting",
       ready: false,
+      serviceReady: false,
+      requestReady: false,
       childPid: undefined,
       activeProvider: undefined,
       activeModel: undefined,
       activeSettingsFingerprint: undefined,
       activeConfigFingerprint: undefined,
+      activeProfile: undefined,
+      activeProfileFingerprint: undefined,
+      memoryCapability: undefined,
     });
     if (await portIsOpen(address.host, address.port)) {
       throw new Error(`OpenViking port ${address.host}:${address.port} remained occupied after owned instance stopped`);
@@ -371,6 +429,8 @@ async function applyCandidate(candidate, initial, operationId) {
     ...currentState,
     phase: initial ? "starting" : "restarting",
     ready: false,
+    serviceReady: false,
+    requestReady: false,
     childPid: started.pid,
   });
   try {
@@ -382,15 +442,41 @@ async function applyCandidate(candidate, initial, operationId) {
   if (child !== started || started.exitCode !== null || started.signalCode !== null) {
     throw new Error(`OpenViking exited after readiness (${started.exitCode ?? started.signalCode ?? "unknown"})`);
   }
-  return publishState({
+  await publishState({
     ...currentState,
-    phase: "ready",
-    ready: true,
+    phase: initial ? "starting" : "restarting",
+    ready: candidate.profile === undefined,
+    serviceReady: true,
+    requestReady: false,
     childPid: started.pid,
     activeProvider: candidate.provider,
     activeModel: candidate.model,
     activeSettingsFingerprint: candidate.settingsFingerprint,
     activeConfigFingerprint: candidate.configFingerprint,
+    activeProfile: candidate.profile,
+    activeProfileFingerprint: candidate.profileFingerprint,
+    memoryCapability: undefined,
+    error: undefined,
+  });
+  if (!candidate.profile) {
+    return publishState({ ...currentState, phase: "ready", ready: true });
+  }
+  let memoryCapability;
+  try {
+    memoryCapability = await establishCapability(candidate, started, address);
+  } catch (error) {
+    throw new Error(`OpenViking memory capability probe failed: ${redactedErrorMessage(error, redactionSecrets(candidate))}`);
+  }
+  if (!memoryCapability || child !== started || started.exitCode !== null || started.signalCode !== null) {
+    throw new Error("OpenViking process changed during memory capability probing");
+  }
+  return publishState({
+    ...currentState,
+    phase: "ready",
+    ready: true,
+    serviceReady: true,
+    requestReady: true,
+    memoryCapability,
     error: undefined,
   });
 }
@@ -467,6 +553,9 @@ const controlServer = createServer(async (request, response) => {
       ...currentState,
       phase: "failed",
       ready: false,
+      serviceReady: Boolean(child),
+      requestReady: false,
+      memoryCapability: undefined,
       childPid: child?.pid,
       error: message,
     });
@@ -491,22 +580,29 @@ async function performShutdown(signal) {
       ...currentState,
       phase: "stopped",
       ready: false,
+      serviceReady: false,
+      requestReady: false,
       childPid: undefined,
       activeProvider: undefined,
       activeModel: undefined,
       activeSettingsFingerprint: undefined,
       activeConfigFingerprint: undefined,
+      activeProfile: undefined,
+      activeProfileFingerprint: undefined,
+      memoryCapability: undefined,
       error: signal,
     });
     await removeOwnedLauncherInfo();
     await releaseLifecycleLock();
   } catch (error) {
     shuttingDown = false;
-    const ownedStillReady = Boolean(child && currentState?.ready);
     await publishState({
       ...currentState,
-      phase: ownedStillReady ? "ready" : "failed",
-      ready: ownedStillReady,
+      phase: "failed",
+      ready: false,
+      serviceReady: Boolean(child),
+      requestReady: false,
+      memoryCapability: undefined,
       childPid: child?.pid,
       error: error instanceof Error ? error.message : String(error),
     }).catch(() => undefined);
@@ -561,6 +657,9 @@ async function main() {
       ...currentState,
       phase: "failed",
       ready: false,
+      serviceReady: Boolean(currentState?.serviceReady && child?.pid && pidAlive(child.pid)),
+      requestReady: false,
+      memoryCapability: undefined,
       childPid: child?.pid,
       error: message,
     });

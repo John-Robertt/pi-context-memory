@@ -150,6 +150,25 @@ def compile_config(payload):
     if not isinstance(base_config, dict):
         raise ValueError("Base OpenViking configuration must be a JSON object")
     setting = normalized_setting(payload.get("setting"))
+    runtime_profile = payload.get("runtimeProfile")
+    profile_fields = {
+        "profileVersion", "provider", "model", "api", "thinking", "temperature", "stream",
+        "maxOutputTokens", "requestTimeoutMs", "maxRetries", "maxConcurrency", "adapterVersion",
+    }
+    if not isinstance(runtime_profile, dict) or set(runtime_profile) != profile_fields:
+        raise ValueError("MemoryRuntimeProfile fields are invalid")
+    if runtime_profile["provider"] != setting["provider"] or runtime_profile["model"] != setting["model"]:
+        raise ValueError("MemoryRuntimeProfile does not match the memory model target")
+    if runtime_profile["api"] != "openviking-vlm" or runtime_profile["thinking"] is not False \
+            or runtime_profile["temperature"] != 0 or runtime_profile["stream"] is not False:
+        raise ValueError("MemoryRuntimeProfile request semantics are unsupported")
+    for field in ("profileVersion", "maxOutputTokens", "requestTimeoutMs", "maxConcurrency"):
+        if not isinstance(runtime_profile[field], int) or runtime_profile[field] <= 0:
+            raise ValueError(f"MemoryRuntimeProfile {field} must be a positive integer")
+    if not isinstance(runtime_profile["maxRetries"], int) or runtime_profile["maxRetries"] < 0:
+        raise ValueError("MemoryRuntimeProfile maxRetries must be a non-negative integer")
+    if not isinstance(runtime_profile["adapterVersion"], str) or not runtime_profile["adapterVersion"]:
+        raise ValueError("MemoryRuntimeProfile adapterVersion is invalid")
 
     provider = setting["provider"]
     api_key = setting.get("api_key")
@@ -164,6 +183,13 @@ def compile_config(payload):
     vlm = {
         "provider": provider,
         "model": setting["model"],
+        "thinking": runtime_profile["thinking"],
+        "temperature": runtime_profile["temperature"],
+        "stream": runtime_profile["stream"],
+        "max_tokens": runtime_profile["maxOutputTokens"],
+        "timeout": runtime_profile["requestTimeoutMs"] / 1000,
+        "max_retries": runtime_profile["maxRetries"],
+        "max_concurrent": runtime_profile["maxConcurrency"],
     }
     if api_key:
         vlm["api_key"] = OPENVIKING_MEMORY_API_KEY_REFERENCE
@@ -182,8 +208,11 @@ def compile_config(payload):
         "provider": provider,
         "model": setting["model"],
         "settingsFingerprint": stable_hash(setting),
+        "profile": runtime_profile,
+        "profileFingerprint": stable_hash(runtime_profile),
         "configFingerprint": stable_hash({
             "config": generated,
+            "runtimeProfile": runtime_profile,
             "credentialFingerprint": stable_hash(api_key) if api_key else None,
         }),
     }

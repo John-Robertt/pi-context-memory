@@ -50,9 +50,9 @@ Pi session entry 仍是事实权威；来源文件由 `long-term-memory.ts` 管�
 
 模块维护扩展支持的最小用户配置面，并通过 [`../contracts/openviking-adapter.md`](../contracts/openviking-adapter.md) 转换为 OpenViking 运行配置。
 
-用户配置只读解析；缺失模板原子创建。直接凭据或环境引用在预检中形成只存在于内存的编译凭据；运行配置只保存固定内部引用，Launcher 在 spawn 时把实际值注入受管 OpenViking 的固定内部环境变量。具体凭据与子进程环境边界由 [`../system/memory-model-runtime.md`](../system/memory-model-runtime.md) 统一定义。凭据值不进入状态、日志、evidence 或 Pi session。
+模块按 [`../contracts/openviking-adapter.md`](../contracts/openviking-adapter.md) 消费用户配置与编译结果，并维护缺失模板的原子创建。凭据值不进入状态、日志、evidence 或 Pi session。
 
-用户配置只选择 Provider、模型、凭据引用和必要连接字段。模块按 [`../system/memory-model-runtime.md`](../system/memory-model-runtime.md) 的唯一 `MemoryRuntimeProfile` 定义匹配精确 Provider/模型/API，再编译 OpenViking 运行配置；用户不能用任意透传字段改变 profile，无法匹配的配置不进入支持范围。
+用户配置只选择 Provider、模型、凭据引用和必要连接字段。模块按配置契约接受字段，并按 [`../system/memory-model-runtime.md`](../system/memory-model-runtime.md) 的唯一 `MemoryRuntimeProfile` 定义为精确 Provider、模型和 API 生成运行目标；当前受管进程的实际能力探针决定该目标能否授权增强。
 
 模块区分：
 
@@ -62,7 +62,7 @@ Pi session entry 仍是事实权威；来源文件由 `long-term-memory.ts` 管�
 - 记忆模型实际完成 Working Memory；
 - 当前代际具备任务请求能力。
 
-实际能力证明来自隔离 Session 的生产协议探针，绑定 launchId、childPid、模型、配置指纹、`MemoryRuntimeProfile` 指纹、协议版本、探针实现和 `validUntil`。同代际业务 accepted task 只有在完整 assembly 核验并发布新检查点后续租；`health`、`ready`、模型对象存在或过期证明不能建立任务请求能力。
+实际能力证明来自隔离 Session 的生产协议探针，绑定 launchId、childPid、模型、配置指纹、`MemoryRuntimeProfile` 指纹、协议版本和探针实现。证明与创建它的受管进程代际共同生效；业务 Session 只负责检查点。`health`、`ready` 或模型对象存在不能建立任务请求能力。
 
 ## 5. OpenViking Session 与派生记忆检查点
 
@@ -88,14 +88,14 @@ MemoryCheckpoint = {
 
 检查点只能覆盖与 assembly 请求完全一致、且不跨越 OpaqueProviderSegment 的路线前缀；其中 Working Memory 与 active history 均通过 OpenViking 适配器限界并回到当前 MessageSource。合法空历史使用扩展本地空检查点。检查点内容由本模块拥有，Session 记忆协调只持有身份、兼容关系和刷新状态。
 
-OpenViking append 只使用 MessageSource 的 taskContent、完成状态、source ID，以及同 entry 来源记录中 fullOutputRef 的有界存在性/哈希标记；不读取 thinking、私有 metadata、OpaqueProviderSegment、FullOutputCandidate、本机路径或完整结果 blob。刷新 retention 依据 `MemoryRuntimeProfile.maxInput` 与预算版本分段，adapter 在 commit 前验证单次模型输入有界；Pi 已截断结果的完整正文继续留在来源 blob。任一不可拆分 MessageSource 仍超过支持 profile 时返回输入预算错误，不截断未知语义。
+OpenViking append 只使用 MessageSource 的 taskContent、完成状态、source ID，以及同 entry 来源记录中 fullOutputRef 的有界存在性/哈希标记；不读取 thinking、私有 metadata、OpaqueProviderSegment、FullOutputCandidate、本机路径或完整结果 blob。刷新 retention 依据长时记忆自己的版本化输入预算分段；Pi 已截断结果的完整正文继续留在来源 blob。任一不可拆分 MessageSource 仍超过该预算时返回输入预算错误，不截断未知语义。
 
 后台刷新遵守：
 
-1. 在 `agent_settled` 的完整用户回合边界、路线切换预热，或来源后缀达到任务上下文预算/MemoryRuntimeProfile.maxInput 高水位时，为确定的路线 watermark 安排刷新；中间 `turn_end` 与单个工具结果只归档已最终化来源，不单独触发 Working Memory；
+1. 在 `agent_settled` 的完整用户回合边界、路线切换预热，或来源后缀达到任务上下文/长时记忆输入预算高水位时，为确定的路线 watermark 安排刷新；中间 `turn_end` 与单个工具结果只归档已最终化来源，不单独触发 Working Memory；
 2. 完整 RefreshTarget 相同的调用共享；尚未启动的线性后继只有 retentionBudgetIdentity 相同才合并到最新 watermark；运行中的目标不可升级或换绑，新预算请求在其完成后重新评估并按需创建自己的目标；
 3. commit `accepted` 必须观察 task 终态；只有 completed 且最终 assembly、来源和预算核验成功时才原子发布新检查点；
-4. 机会性 commit `skipped` 保留现有检查点与来源后缀，不发布伪检查点，也不续租能力；`refresh-required` 使用与预算版本绑定的显式 retention 边界，仍返回 skipped 时报告契约/策略错误，不重复形成无界任务；
+4. 机会性 commit `skipped` 保留现有检查点与来源后缀，不发布伪检查点；`refresh-required` 使用与预算版本绑定的显式 retention 边界，仍返回 skipped 时报告契约/策略错误，不重复形成无界任务；
 5. accepted task 失败、取消、达到 profile 期限或 assembly 不可信时报告当前代际能力故障；stopping 中由扩展发起的取消只完成清理；
 6. 检查点缓存、镜像、pending 和完成结果均有固定上限；迟到结果只属于创建它的完整 RefreshTarget。
 

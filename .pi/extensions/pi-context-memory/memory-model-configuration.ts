@@ -6,6 +6,13 @@ import { chmod, link, mkdir, open, readFile, rename, rm, writeFile } from "node:
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 
+import {
+  createMemoryRuntimeProfile,
+  memoryRuntimeProfileFingerprint,
+  type MemoryRuntimeProfile,
+} from "./memory-runtime-profile.ts";
+import type { MemoryCapabilityProof } from "./memory-runtime-capability.ts";
+
 export const OPENVIKING_CONFIG_BRIDGE_TIMEOUT_MS = 15_000;
 export const DEFAULT_OPENVIKING_READINESS_TIMEOUT_MS = 30_000;
 export const DEFAULT_OPENVIKING_STOP_TIMEOUT_MS = 5_000;
@@ -14,7 +21,7 @@ export const DEFAULT_OPENVIKING_OPERATION_TIMEOUT_MS = OPENVIKING_CONFIG_BRIDGE_
   + (4 * DEFAULT_OPENVIKING_STOP_TIMEOUT_MS)
   + DEFAULT_OPENVIKING_READINESS_TIMEOUT_MS
   + OPENVIKING_CONTROL_REQUEST_GRACE_MS;
-export const OPENVIKING_RUNTIME_SCHEMA_VERSION = 1 as const;
+export const OPENVIKING_RUNTIME_SCHEMA_VERSION = 2 as const;
 export const MEMORY_MODEL_CONFIG_FILENAME = "pi-context-memory.jsonc";
 export const OPENVIKING_MEMORY_API_KEY_ENV = "PCR_OPENVIKING_MEMORY_API_KEY";
 export const OPENVIKING_MEMORY_API_KEY_REFERENCE = `\${${OPENVIKING_MEMORY_API_KEY_ENV}}`;
@@ -59,6 +66,8 @@ export interface CompiledOpenVikingConfig {
   model: string;
   settingsFingerprint: string;
   configFingerprint: string;
+  profile: MemoryRuntimeProfile;
+  profileFingerprint: string;
   credentialEnvironmentVariable?: string | null;
   [COMPILED_OPENVIKING_CREDENTIAL]?: {
     value: string;
@@ -85,14 +94,20 @@ export interface OpenVikingRuntimeState {
   childPid?: number;
   phase: "starting" | "ready" | "restarting" | "failed" | "stopped";
   ready: boolean;
+  serviceReady: boolean;
+  requestReady: boolean;
   activeProvider?: string;
   activeModel?: string;
   activeSettingsFingerprint?: string;
   activeConfigFingerprint?: string;
+  activeProfile?: MemoryRuntimeProfile;
+  activeProfileFingerprint?: string;
+  memoryCapability?: MemoryCapabilityProof;
   targetProvider?: string;
   targetModel?: string;
   targetSettingsFingerprint?: string;
   targetConfigFingerprint?: string;
+  targetProfileFingerprint?: string;
   configurationError?: string;
   error?: string;
 }
@@ -292,13 +307,13 @@ export function describeMemoryModelCapabilities(
 function memoryModelTemplate(capabilities: MemoryModelCapabilities): string {
   const lines = [
     "{",
-    "  // 从下方选择一个 Provider 示例，用对应对象替换 null。",
+    "  // 从下方选择一个 OpenViking 已识别的 Provider 示例，用对应对象替换 null。",
     "  // api_key 可直接填写 key，或用 $NAME / ${NAME} 引用启动器环境变量。",
     "  // 本文件包含直接 key 时必须保持仅当前用户可读写。",
-    "  // 保存有效配置后，在 Pi 中执行 /restart-viking 应用。",
+    "  // 保存有效配置后，在 Pi 中执行 /restart-viking；当前真实能力探针通过后才授权增强。",
     "  \"memoryModel\": null,",
     "",
-    `  // 当前 OpenViking ${capabilities.openVikingVersion} 配置适配器识别的 Provider；示例不等于 actual 支持：`,
+    `  // 当前 OpenViking ${capabilities.openVikingVersion} 配置适配器识别的 Provider：`,
   ];
   for (const provider of capabilities.providers) {
     const model = provider.name === "azure" ? "<deployment-name>" : provider.name === "litellm" ? "<litellm-provider>/<model-id>" : "<model-id>";
@@ -600,10 +615,17 @@ export async function compileOpenVikingConfig(
       throw new Error(`api_key references unset environment variable ${credentialEnvironmentVariable}`);
     }
   }
+  const profile = createMemoryRuntimeProfile(setting.provider, setting.model);
+  const profileFingerprint = memoryRuntimeProfileFingerprint(profile);
   const compiled = await runBridge<CompiledOpenVikingConfig>(root, "compile", {
     baseConfig,
     setting: credentialValue ? { ...setting, api_key: credentialValue } : setting,
+    runtimeProfile: profile,
   });
+  if (compiled.profileFingerprint !== profileFingerprint
+    || JSON.stringify(compiled.profile) !== JSON.stringify(profile)) {
+    throw new Error("OpenViking configuration bridge returned a different MemoryRuntimeProfile");
+  }
   compiled.settingsFingerprint = createHash("sha256")
     .update(JSON.stringify(Object.fromEntries(Object.entries(setting).sort(([left], [right]) => left.localeCompare(right)))))
     .digest("hex");
@@ -660,16 +682,21 @@ export async function readRuntimeState(
   if (launcher.launchId !== state.launchId || launcher.launchId !== lock.launchId) return undefined;
   if (launcher.launcherPid !== state.launcherPid || launcher.launcherPid !== lock.launcherPid) return undefined;
   if (!processAlive(launcher.launcherPid)) return undefined;
-  if (state.ready && !processAlive(state.childPid)) {
+  if (state.childPid && !processAlive(state.childPid)) {
     return {
       ...state,
       phase: "failed",
       ready: false,
+      serviceReady: false,
+      requestReady: false,
       childPid: undefined,
       activeProvider: undefined,
       activeModel: undefined,
       activeSettingsFingerprint: undefined,
       activeConfigFingerprint: undefined,
+      activeProfile: undefined,
+      activeProfileFingerprint: undefined,
+      memoryCapability: undefined,
       error: "Managed OpenViking process is not running",
     };
   }

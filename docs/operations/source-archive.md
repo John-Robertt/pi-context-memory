@@ -31,7 +31,7 @@ node scripts/validate-source-archive.mjs
 - `archive_skipped`：session 没有持久化来源；
 - `archive_error`：归档失败，记录触发点和错误。
 
-归档在 session 内按顺序异步执行，普通 Provider turn 不等待无关磁盘 I/O；完整输出复制受 `PCR_ARCHIVE_COPY_TIMEOUT_MS` 约束，退出等待由归档模块的关闭策略拥有。请求所需来源或 FullOutputCandidate 尚未稳定发布时必须等待对应来源屏障；失败会使本扩展 block 并锁存故障，不返回原始 Pi messages，也不自动恢复或重放 prompt。修复后由用户重启并重新验证；当前尚未符合该契约的实现以 [`../DEVELOPMENT.md`](../DEVELOPMENT.md) 为准。
+归档在 session 内按顺序异步执行，普通 Provider turn 不等待无关磁盘 I/O；完整输出复制受 `PCR_ARCHIVE_COPY_TIMEOUT_MS` 约束，退出等待由归档模块的关闭策略拥有。请求所需来源或 FullOutputCandidate 尚未稳定发布时必须等待对应来源屏障；失败会使本扩展 block 并锁存故障，不返回原始 Pi messages，也不自动恢复或重放 prompt。修复后由用户重启并重新验证。
 
 OpenViking索引使用独立队列和独立错误状态；索引失败不会把已经成功的本地归档标记为失败。
 

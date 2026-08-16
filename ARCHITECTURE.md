@@ -127,7 +127,7 @@ Pi session 保留完整权威历史。已有 compaction/branch summary 只参与
 
 关键节点按其真实责任边界验证：本地数据结构使用真实文件和 Pi session，宿主集成使用真实 Pi 生命周期，记忆能力使用受管 OpenViking 与已配置的实际记忆 Provider/模型，任务结果和请求采用使用当前实际任务 Provider/模型，成本使用 Provider usage 或账单。替身只证明受控分支和故障语义，不能把模拟成功提升为系统完成证据。
 
-验证 manifest 冻结 Provider/模型/API、Pi/OpenViking 与 extension composition。坐标不变时按既有授权执行付费验证；Provider/模型变化由用户决定。扩展组合变化只使兼容性证据失效，不授权本扩展重排组件。只有 actual 证据覆盖的 Provider/模型/API 进入支持矩阵。
+验证 manifest 固定当前 evidence 的 Provider、模型、API、Pi、OpenViking 与 extension composition；坐标或扩展组合变化需要用户决定并重新验证。产品运行时由 OpenViking 配置契约确定可接受字段，每个受管进程上的精确配置必须通过真实记忆能力探针才能进入增强请求；扩展加载顺序保持用户控制。
 
 ## 5. 系统组成
 
@@ -314,17 +314,14 @@ Pi
 ### 7.1 正常请求
 
 ```text
-Pi 产生当前 session、branch 和 Provider 基线
-  → Pi 集成从结构证据发布记忆投影与 OpaqueProviderSegment
-  → Session 记忆协调取得精确路线身份和运行代际
-  → 长时记忆确认来源、运行 profile、能力和兼容检查点
-  → Session 记忆协调形成检查点、VerifiedActiveDelta 与 opaque 后缀，必要时等待刷新
-  → 工作上下文优化构造有界增强历史并保留未覆盖 Provider 内容
+Pi 发布当前 session、branch 和 Provider 基线
+  → Pi 集成提供结构化来源、控制边界与必须原样保留的 Provider 内容
+  → Session 记忆协调绑定精确路线和运行代际，选择可采用的派生记忆与当前来源后缀
+  → 长时记忆核验来源、运行能力和检查点，按需执行后台刷新
+  → 工作上下文优化在任务模型预算内构造增强历史
   → Session 记忆协调重新确认路线、代际和内容
-  → Pi 集成在 context hook 应用增强消息
-  → 本扩展 handler 将到达输出分为 verified | rejected；未到达者由 runner 记 unobserved
-  → Pi 与其它扩展继续其生命周期
-  → transport 独立记录；只有 verified 再分 adopted | changed | unobserved
+  → Pi 集成应用本扩展输出并记录自身 hook 结果
+  → Pi 与其它扩展继续宿主生命周期，transport 独立观测最终采用
 ```
 
 后台记忆刷新可以等待、排队、合并和复用；它不是路线可用性的同义词。只有现有检查点与新近来源无法形成可信、有界输入时，请求才等待对应刷新；用户状态持续显示“增强记忆”。

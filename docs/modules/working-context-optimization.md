@@ -20,7 +20,7 @@
 - 每项来源的可恢复证明；
 - 当前 system prompt、active tool schema 及其规范化哈希；
 - Pi 集成提供的 ProviderPayloadProfile（任务 Provider、模型、API、上下文窗口、输出上限、系统与工具开销、传输余量、适配和估算版本）；
-- 长时记忆提供的当前 MemoryRuntimeProfile.maxInput 与检查点预算版本。
+- 长时记忆提供的检查点 retention 输入边界与预算版本。
 
 输出包含：
 
@@ -117,9 +117,9 @@ inputBudget = contextWindow - outputReserve - transportMargin
 enhancedBudget = inputBudget - systemPromptCost - activeToolSchemaCost - providerFramingCost
 ```
 
-`outputReserve` 取受支持 Provider API 实际请求的输出上限；其它扣减使用 profile 的版本化保守估算。当前受支持 adapter 先生成 Provider message 序列，再以规范化 JSON 的 UTF-8 字节数两倍作为消息上界；tool schema 按完整 API wrapper 的 UTF-8 字节上界计算，system prompt 另按 UTF-8 字节和固定 framing/transport 余量扣减。handler 对实际 wire system、tools 和输出字段重建同一 profile。profile 无法限界、adapter/base URL/compat 变化、最终输出设置扩大、system/tools 变化或结果超过预算时返回失败。Pi footer 百分比和记忆模型上下文窗口不参与授权计算。
+`outputReserve` 取受支持 Provider API 实际请求的输出上限；其它扣减使用 profile 的版本化保守估算。当前 adapter 先生成 Provider message 序列，再以规范化 JSON 的 UTF-8 字节数两倍作为消息上界；tool schema 按完整 API wrapper 的 UTF-8 字节上界计算，system prompt 另按 UTF-8 字节和固定 framing/transport 余量扣减。handler 要求实际 wire 首项是唯一的 `system` 或 `developer` instruction，内容哈希与 profile 相同，并同时核对 tools 和输出字段。profile 无法限界、adapter/base URL/compat 变化、instruction/tools 变化或结果超过预算时返回失败。Pi footer 百分比和记忆模型上下文窗口不参与授权计算。
 
-模块同时从会改变 checkpoint retention/output 边界的预算事实生成 `retentionBudgetIdentity`：MemoryRuntimeProfile.maxInput、预算版本、任务模型 context window/output reserve、system/tool 规范化成本、Provider framing/transport margin 和 estimator 版本。它不包含本次 CurrentTurn、system/tool 正文哈希或其它与历史空间无关字段；相同 identity 表示可共享同一检查点生成边界，不表示最终请求证明相同。
+模块同时从会改变 checkpoint retention/output 边界的预算事实生成 `retentionBudgetIdentity`：长时记忆 retention 输入边界、预算版本、任务模型 context window/output reserve、system/tool 规范化成本、Provider framing/transport margin 和 estimator 版本。它不包含本次 CurrentTurn、system/tool 正文哈希或其它与历史空间无关字段；相同 identity 表示可共享同一检查点生成边界，不表示最终请求证明相同。
 
 模块按以下优先级选择内容：
 
@@ -158,7 +158,7 @@ enhancedBudget = inputBudget - systemPromptCost - activeToolSchemaCost - provide
 - `opaque-content-unrepresentable`：Pi Provider 基线中的不透明内容必须被替换才能进入预算，但本扩展无法保持其语义；
 - `source-required`：投影需要尚未完成的来源屏障；
 - `source-unrecoverable`：投影省略的完整结构单元没有可恢复来源；
-- `checkpoint-refresh-required`：当前预算需要用指定 retentionBudgetIdentity 重新生成过大的旧检查点，或把来源后缀覆盖进新检查点；交由协调器建立唯一必要刷新屏障；
+- `checkpoint-refresh-required`：已发布检查点超过当前 retentionBudgetIdentity 的历史预算，或来源后缀需要纳入新检查点；交由协调器建立唯一必要刷新屏障；
 - `context-budget`：结构必需输入在刷新后仍超出模型窗口；
 - `memory-malformed`：MemoryCheckpoint、VerifiedActiveDelta 或来源绑定不符合适配契约；
 - `route-mismatch`：输入与路线身份不一致。

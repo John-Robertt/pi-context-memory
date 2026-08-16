@@ -67,6 +67,13 @@ function hasOnlyKeys(value: Record<string, unknown>, allowed: readonly string[])
   return Object.keys(value).every((key) => allowed.includes(key));
 }
 
+function isInstructionMessage(value: unknown): value is Record<string, unknown> {
+  return Boolean(value
+    && typeof value === "object"
+    && ((value as Record<string, unknown>).role === "system"
+      || (value as Record<string, unknown>).role === "developer"));
+}
+
 function canonicalPiContent(content: unknown): unknown[] | undefined {
   if (typeof content === "string") return textContent(content);
   if (!Array.isArray(content)) return undefined;
@@ -202,16 +209,10 @@ export function openAICompletionsPayloadMatches(
   if (value.model !== proof.model) return false;
   const messages = value.messages;
   if (!Array.isArray(messages)) return false;
-  if (messages.some((message) => message
-    && typeof message === "object"
-    && (message as Record<string, unknown>).role === "developer")) return false;
   const start = messages.findIndex((message) => JSON.stringify(message).includes(nonce));
   if (start < 0) return false;
   const prefix = messages.slice(0, start);
-  if (prefix.length !== 1
-    || !prefix[0]
-    || typeof prefix[0] !== "object"
-    || (prefix[0] as Record<string, unknown>).role !== "system") return false;
+  if (prefix.length !== 1 || !isInstructionMessage(prefix[0])) return false;
   const constructed = messages.slice(start);
   if (constructed.length !== proof.messageCount) return false;
   const canonical = constructed.map(canonicalOpenAIMessage);
@@ -227,12 +228,10 @@ export function openAICompletionsPayloadMatchesProfile(
   const value = payload as Record<string, unknown>;
   const messages = value.messages;
   if (!Array.isArray(messages)) return false;
-  const systemMessages = messages.filter((message) => message
-    && typeof message === "object"
-    && (message as Record<string, unknown>).role === "system");
-  if (systemMessages.length !== 1) return false;
-  const systemMessage = systemMessages[0] as Record<string, unknown>;
-  if (!hasOnlyKeys(systemMessage, ["role", "content"]) || typeof systemMessage.content !== "string") return false;
+  const instructionMessages = messages.filter(isInstructionMessage);
+  if (instructionMessages.length !== 1 || messages[0] !== instructionMessages[0]) return false;
+  const instructionMessage = instructionMessages[0];
+  if (!hasOnlyKeys(instructionMessage, ["role", "content"]) || typeof instructionMessage.content !== "string") return false;
 
   const rawTools = value.tools === undefined ? [] : value.tools;
   if (!Array.isArray(rawTools)) return false;
@@ -256,6 +255,6 @@ export function openAICompletionsPayloadMatchesProfile(
   const maxOutput = value.max_completion_tokens ?? value.max_tokens;
   if (value.max_completion_tokens !== undefined && value.max_tokens !== undefined) return false;
   return maxOutput === proof.maxOutputTokens
-    && hash(systemMessage.content) === proof.systemPromptHash
+    && hash(instructionMessage.content) === proof.systemPromptHash
     && hash(tools) === proof.toolsHash;
 }

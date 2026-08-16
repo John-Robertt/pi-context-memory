@@ -4,7 +4,7 @@
 
 本文定义如何证明 [`../features/memory-model-configuration.md`](../features/memory-model-configuration.md) 的用户体验、[`../system/memory-model-runtime.md`](../system/memory-model-runtime.md) 的配置与运行代际，以及 [`../contracts/openviking-adapter.md`](../contracts/openviking-adapter.md) 的实际记忆模型能力证明成立。
 
-验证先使用本地配置入口、协议替身和受控进程覆盖确定性边界，再使用真实受管 OpenViking 与当前已配置的实际记忆 Provider/模型证明能力探针、accepted task、assembly、续租和恢复。只有替身通过时不能把记忆模型能力标记为完成。
+验证先使用本地配置入口、协议替身和受控进程覆盖确定性边界，再使用真实受管 OpenViking 与当前已配置的实际记忆 Provider/模型证明能力探针、accepted task、assembly、进程撤销和恢复。能力 proof 与受管进程代际共同生效，空闲期记忆 Provider 请求数保持为零；只有替身通过时不能把记忆模型能力标记为完成。
 
 真实验证沿用 manifest 固定的记忆 Provider/模型；坐标不变时，其付费调用属于正常验证，不逐次申请授权。需要改变记忆 Provider 或模型时才停止并请求用户决定。
 
@@ -12,10 +12,8 @@
 
 固定检查包括：
 
-- 候选 Provider 子集通过项目安装的 OpenViking 聚合配置入口；只有实际纵向检查通过的 Provider/模型组合进入已支持矩阵；
-- 配置桥不读取上游私有 registry 或 backend 路由表；
-- 上游新增未知 Provider 不影响已有受支持配置；
-- 模板说明必要字段、认证入口和官方路由来源，不复制完整 Provider 目录；
+- 配置桥按项目契约接受 Provider 字段、凭据形态和 VLM schema；每个精确配置仍需通过当前受管进程的实际能力探针；
+- 模板说明当前契约接受的必要字段、认证入口和官方路由来源；
 - 默认路径严格位于隔离 HOME 的 `.pi/pi-context-memory.jsonc`；
 - 缺失用户配置原子独占创建，已有普通文件只收紧权限而不改写内容；当前 POSIX runner 核对 `0600`；
 - 普通注释、字符串 URL 和尾逗号正确解析；
@@ -26,8 +24,8 @@
 - 必要凭据缺失或引用变量未设置时在停止旧实例前失败；
 - 无 `api_key` 配置不会隐式继承 ambient 认证环境；需要环境变量的原生认证保持未支持，直到具有独立配置契约与 actual 证据；
 - key、OAuth token、云凭据和认证响应不进入状态、日志、evidence 或 Pi session；
-- 每个已支持 Provider/模型/API 精确匹配一个带版本与指纹的 MemoryRuntimeProfile；用户配置不接受 profile 内部字段或任意请求体透传；
-- profile 的 thinking、temperature、stream、maxInput、maxOutput、requestTimeout、maxRetries、maxConcurrency、capabilityLeaseTtl、renewalLead 和 adapterVersion 都在目标 Provider 最终请求与运行观测中得到实际验证；
+- 每个被配置桥接受的 Provider/模型/API 都生成与该目标绑定的版本化 MemoryRuntimeProfile；用户配置不接受 profile 内部字段或任意请求体透传；
+- profile 的 thinking、temperature、stream、maxOutput、requestTimeout、maxRetries 与 maxConcurrency 精确进入受审查 OpenViking VLM 配置；实际 task usage 另行绑定目标 Provider/模型；adapterVersion 进入运行代际绑定；
 - 配置不依赖 OpenViking 隐式默认值，不配置 backup Provider/model，retry 保持同一坐标。
 
 ## 3. 命令语义
@@ -66,9 +64,9 @@
 2. 写入带来源 ID 的确定性消息；
 3. commit 返回 `accepted + task ID`；
 4. task 达到 completed；
-5. context assembly 具有有效 Working Memory 和当前来源；
+5. context assembly 同时具有包含版本化 marker 的非空 Working Memory overview，以及只属于探针的 retained source；
 6. 探针 Session 被删除；
-7. 能力证明绑定 launchId、childPid、Provider、模型、API、配置、MemoryRuntimeProfile、adapter、探针版本和 `validUntil`。
+7. 能力证明绑定 launchId、childPid、Provider、模型、API、配置、MemoryRuntimeProfile、adapter 和探针版本。
 
 以下状态不能通过：
 
@@ -76,11 +74,11 @@
 - 配置成功但模型调用失败；
 - commit 返回 `skipped`；
 - task failed、cancelled、未知或超时；
-- assembly 为空、缺失来源、跨路线或包含通用失败文本；
-- 探针证明与 active 子进程或配置指纹不一致。
+- overview 为空、无 marker、为通用 fallback，或 retained message 缺失/含无关来源；
+- proof 与 active 子进程、配置/profile 指纹不一致，生成时间无效，或 usage 总量不一致。
 
 真实模型探针保存 Provider、模型、task、token、响应 ID 和内容哈希，不保存完整响应或凭据。探针费用进入完整成本归属。
-实际证据还必须覆盖一次业务 Session accepted task 完成 assembly、发布 MemoryCheckpoint 并续租，一次进入 renewalLead 后旧证明仍授权且后台续租，一次 `validUntil` 到期后的实际请求屏障与重新探针，以及一次实际进程中断后 `/restart-viking` 创建新代际并恢复。协议替身只能补充失败矩阵。
+实际证据覆盖初始能力探针、profile 配置边界、task usage、marker-bearing overview、探针 Session 清理、实际进程中断后能力撤销，以及 `/restart-viking` 以新子进程和新 proof 恢复。协议替身覆盖 service ready 但能力失败、空 overview，以及 proof 绑定、生成时间和 usage 不一致。
 
 ## 6. 运行代际与请求能力
 
@@ -90,11 +88,10 @@
 - 重启预检失败保持当前 ready 实例；
 - active 子进程停止立即撤销旧代 requestReady；
 - 新子进程 service ready 但能力未通过时，本扩展不确认增强输出；abort 与 transport 结果分别记录；
-- 同代际业务 accepted task 只有在完整 assembly 核验并发布 MemoryCheckpoint 后续租；
-- 进入 renewalLead 后旧证明在 `validUntil` 前继续授权，后台续租不会制造请求停顿；
-- 能力证明到期且续租 pending/失败时，本扩展不确认增强输出；不从内部状态推断最终 Provider 零请求；
-- 能力证明只对绑定的子进程、配置、MemoryRuntimeProfile 和 adapter 版本有效；
-- 新代际不复用旧代 checkpoint、refresh、能力租约或请求证明；
+- Launcher 启动、显式恢复和实际记忆操作之外的空闲期，记忆 Provider 请求数保持为零；
+- Provider hook 重新读取 runtime，并在进程代际或能力 proof ID 变化时阻断；不从内部状态推断最终 Provider 零请求；
+- 能力证明只对绑定的子进程、proof ID、配置、MemoryRuntimeProfile 和 adapter 版本有效；proof ID 变化必须定义新代际，即使 child PID 被复用；
+- 新代际不复用旧代 checkpoint、refresh、能力 proof 或请求证明；
 - 新代际只从当前 Pi branch 重建；
 - 运行实例与配置目标不一致时诊断准确但不影响有效旧代。
 
@@ -134,6 +131,6 @@ node scripts/validate-context-quality.mjs
 node scripts/check-validation-evidence.mjs
 ```
 
-`memory-model-runtime` evidence 分别保存 controlled/actual：配置、权限、所有权和协议故障可由受控证据覆盖；profile 采用、能力探针、租约、重启与恢复关联固定 ValidationCoordinates、真实响应 ID/usage 和 artifact。`context-enhancement` evidence 分别记录本扩展 block/abort 与 transport 实际结果，不从内部状态推断最终采用。
+`memory-model-runtime` evidence 分别保存 controlled/actual：配置、权限、所有权、协议故障及 proof 绑定由受控证据覆盖；profile 采用、初始能力探针、进程撤销、重启与恢复关联固定 ValidationCoordinates、真实响应 ID/usage 和 artifact。`context-enhancement` evidence 分别记录本扩展 block/abort 与 transport 实际结果，不从内部状态推断最终采用。
 
 runner 和 stable evidence 必须随实现更新后才能证明本文目标。当前有效证据范围由 [`../DEVELOPMENT.md`](../DEVELOPMENT.md) 维护。

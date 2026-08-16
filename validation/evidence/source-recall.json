@@ -2,8 +2,8 @@
   "schemaVersion": 2,
   "generatedBy": "scripts/validate-source-recall.mjs",
   "scope": "local",
-  "runId": "source-recall-2026-08-15T20-59-43-773Z",
-  "recordedAt": "2026-08-15T21:00:02.512Z",
+  "runId": "source-recall-2026-08-16T04-10-11-321Z",
+  "recordedAt": "2026-08-16T04:10:29.769Z",
   "piVersion": "0.84.2",
   "nodeVersion": "24.15.0",
   "openVikingVersion": "0.4.13",
@@ -13,7 +13,7 @@
     "effective": {
       "defaultAccount": "pi-context-memory",
       "defaultUser": "pi-context-memory",
-      "storageWorkspace": ".artifacts/source-recall/source-recall-2026-08-15T20-59-43-773Z/openviking-data",
+      "storageWorkspace": ".artifacts/source-recall/source-recall-2026-08-16T04-10-11-321Z/openviking-data",
       "embedding": {
         "dense": {
           "cache_dir": "./.cache/openviking/models",
@@ -40,22 +40,22 @@
       "watchSchedulerEnabled": false,
       "server": {
         "host": "127.0.0.1",
-        "port": 50393,
+        "port": 59053,
         "agent_evolution": {
           "enabled": false
         }
       }
     },
-    "effectiveSha256": "b0f179d6ddc6458d35f34b6cd4162f02437bf08f51785f1d76188b99d0a9059a",
+    "effectiveSha256": "50a7937824e50d163e7650a7da53b15472a3ca59e84e1264c50d016b9c99d242",
     "controlledByRunner": true,
     "denseEmbeddingProvider": "local"
   },
   "implementation": {
-    "sourceManifestSha256": "1b9af3372286b0c673598a125e24c6864f18c0f62fd1e5acf17832c6ca4a42cf",
+    "sourceManifestSha256": "4180a75eaa25452380ac0e50bb677a684a087a938db6b1316f1bf78b7b7b119b",
     "files": [
       {
         "path": ".pi/extensions/pi-context-memory/index.ts",
-        "sha256": "6c4b6c4a64e7a2b2e354e23882f7759b697c3abfd656503d293c3bff86de7c82"
+        "sha256": "294bbc93efb44e7e125fe6344cc4ebbb17977442d1044fa6c06c70372f757e85"
       },
       {
         "path": ".pi/extensions/pi-context-memory/long-term-memory.ts",
@@ -63,11 +63,19 @@
       },
       {
         "path": ".pi/extensions/pi-context-memory/memory-model-configuration.ts",
-        "sha256": "b2c752817d11894e06aa5150d1a98e3052de9559a308f51cd9468a5ccd3a0d9d"
+        "sha256": "5b2df81612f5d7b1bd7efd4d08c7badaa4a41569cab784c41e3573d3ac510d8c"
+      },
+      {
+        "path": ".pi/extensions/pi-context-memory/memory-runtime-capability.ts",
+        "sha256": "8d77b15f5239fd5081e243005916d490ed8d824c4f992f6979b18ade931267e0"
+      },
+      {
+        "path": ".pi/extensions/pi-context-memory/memory-runtime-profile.ts",
+        "sha256": "802a1df5ba9e1d459e2f97a836d772e8eca39527e3bb2ead9e89585b1241f452"
       },
       {
         "path": ".pi/extensions/pi-context-memory/openviking-protocol.ts",
-        "sha256": "ca435ae48adf4e7d3f0051e0b3e89bb018095ce0493dcc647efc1e9f0a9b5a08"
+        "sha256": "af2d47062ac74385c6fe3f9892255f199753c58d36eaf2f1404adbbe05083a7b"
       },
       {
         "path": ".pi/extensions/pi-context-memory/pi-session-protocol.ts",
@@ -75,7 +83,7 @@
       },
       {
         "path": ".pi/extensions/pi-context-memory/provider-payload-proof.ts",
-        "sha256": "254a012c081d193f8c8296afdeeac723fd0d7324449c4597e0cd26ec1b12fa01"
+        "sha256": "61b979899e398ba717e51454964bb64eba465059b542a5e5802914bc5e89fc6d"
       },
       {
         "path": ".pi/extensions/pi-context-memory/recall-and-provenance.ts",
@@ -123,7 +131,7 @@
       },
       {
         "path": "scripts/validation-evidence.mjs",
-        "sha256": "c769b4ee116bba775961c0b7ce48571a4df3c52061d51cf95d6e0285f5a221ae"
+        "sha256": "e29e88a7f8349a878bbdd54946d8293f0b52728b11088a00e4df88a756566e1f"
       },
       {
         "path": "scripts/validation-suite.mjs",
@@ -134,7 +142,7 @@
         "sha256": "910184bff539fd56b4b7f8fc2ee46439f3113c7394c1538d60ef3a5e3c78f094"
       }
     ],
-    "specificationManifestSha256": "fb3482eb560d881690ed81134a57203c52fc904e44f4cdfde73981ef7c3453c7",
+    "specificationManifestSha256": "54861ccb9b534b3dc70f5b87964baf9a666fa3f08fe234ad4cd1e152ef05fbf6",
     "specificationFiles": [
       {
         "path": ".python-version",
@@ -146,7 +154,7 @@
       },
       {
         "path": "docs/validation/README.md",
-        "sha256": "fcb69766fc4b3de4fef7ffc2731ff6fd2b7897c9f67047eeb0a417ad8f4ee40a"
+        "sha256": "9fb53547a6bb0b6d720d44e095b81e3fd99dc47ce350c33faf2d58469440b52e"
       },
       {
         "path": "docs/validation/source-recall.md",
@@ -157,7 +165,7 @@
         "sha256": "2f34c5cec5f73f972887aaeb0ad7decf734500911f7ea0412061d33deb3d139b"
       }
     ],
-    "gitCommit": "58e68da7474569e78aea01ba4e6cf7ec06074491",
+    "gitCommit": "d200dbd9eadc7aec7ea585d4a823abb3a8f2e2f5",
     "workingTreeDirty": true
   },
   "passed": true,
@@ -199,7 +207,7 @@
     "insecureRemoteRejected": true
   },
   "candidateCounts": {
-    "indexedResources": 49,
+    "indexedResources": 50,
     "sentinelBackendCandidates": 3,
     "sentinelCurrentRouteCandidates": 3,
     "branchBackendCandidates": 3,

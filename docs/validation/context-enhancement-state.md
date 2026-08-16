@@ -113,7 +113,7 @@ run manifest、每个已执行 attempt 和停止原因都进入 evidence：
 - `context` 选择 coveredRoutePrefixKey 仍为当前路线精确前缀的 MemoryCheckpoint，并形成来源完整的 VerifiedActiveDelta；
 - refresh pending/running 时，兼容 checkpoint+delta 可入预算则本扩展立即构造 allow；hook/transport 结果分别记录；
 - 缺少兼容检查点、旧检查点过大或 delta 需覆盖时，本扩展在精确 RefreshTarget 完成前不发布 allow；完成后按当前路线重算。`ctx.abort()`/等待结果与 transport 实际请求分别记录；
-- 机会性 skipped 保留既有检查点与 delta，不发布检查点、不续租能力；`refresh-required` 携带显式 retention 边界却返回 skipped 时一次性进入协议/策略故障，不重复提交；
+- 机会性 skipped 保留既有检查点与 delta，不发布检查点、不改变运行能力 proof；`refresh-required` 携带显式 retention 边界却返回 skipped 时一次性进入协议/策略故障，不重复提交；
 - 完整 RefreshTarget 相同才共享；未启动线性后继只在 retentionBudgetIdentity 相同时合并，运行任务保持目标，新 entry 留在 delta，分叉与迟到结果不能污染；
 - 刷新显著慢于相邻请求时，可用历史继续；必要刷新失败只使本扩展不确认依赖输出，transport 是否仍有其它请求由外部观测分类；
 - 后台刷新、必要等待和队列期间用户状态保持“增强记忆”。
@@ -131,7 +131,7 @@ run manifest、每个已执行 attempt 和停止原因都进入 evidence：
 - 本 handler 可见 malformed payload 记 hookRejected；constructed 输出因更早 handler/取消而未到达本 handler 时记 hookUnobserved，二者 transport 结果都另行保存；
 - 本 handler 前的 payload/proof 修改记 hookRejected；本 handler 后修改不改变 verified 时点事实，但 transport 哈希不一致且 false claim 为零；
 - 用户文本不能伪造增强证明；nonce 只能在本 handler 时点消费一次；
-- 测试确认本扩展未禁用、重排、改写其它扩展或要求 foreign customType 注册 allowlist；
+- foreign customType 按 Pi Provider 基线处理，无需额外注册；其它扩展及其 handler 顺序保持不变；
 - compaction/tree handler 的返回值、调用顺序、实际 summary Provider 请求和新 entry 分别记录；
 - suite 所选且已通过探针的 `PiProtocolProfile` 基准组合中，返回 `{ cancel: true }` 或空 summary 后实际结果符合探针；后加载受控 handler 改变结果时记录 `host-behavior-unverified`，不归因为本扩展控制失败，也不自动处理其它 handler；
 - 未通过行为探针的宿主不被声明为已抑制 summary，扩展只给出兼容性诊断；
@@ -144,11 +144,11 @@ run manifest、每个已执行 attempt 和停止原因都进入 evidence：
 
 在复杂 fixture 计数前，实际纵向检查点必须全部通过：
 
-- 真实记忆 Provider/模型按固定 MemoryRuntimeProfile 完成能力探针、accepted refresh、轮询、来源核验 assembly、MemoryCheckpoint 发布与租约续租，最终请求记录证明 profile 字段实际生效且无 Provider/model fallback；
+- 真实记忆 Provider/模型按固定 MemoryRuntimeProfile 完成能力探针、accepted refresh、轮询、来源核验 assembly 和 MemoryCheckpoint 发布，最终请求记录证明 profile 字段实际生效且无 Provider/model fallback；
 - 真实受管 OpenViking 完成来源写入、实际索引、检索和当前 Pi message 展开；
 - 真实 Pi 首轮、checkpoint+delta、必要 refresh 与 CurrentTurn 循环均有独立 `transportAdopted` 和后续行动证据；慢 refresh 重叠时，不依赖该 refresh 的 turn 仍完成；
 - 实际大工具输出至少各触发一次 raw 与 projected 路径，后续任务模型依据投影和来源正确完成检查；
-- OpenViking 中断、renewalLead、租约到期和用户修复分别记录本扩展续租/block/新代际行为与 transport 实际请求数；不从内部状态推断零请求；
+- OpenViking 中断、能力 proof/进程身份失效和用户修复分别记录本扩展 block/新代际行为与 transport 实际请求数；空闲期记忆 Provider 请求数保持为零；不从内部状态推断零请求；
 - 真实 Pi session 的 text/image/mixed、user/assistant/tool/bash/custom 与 Pi 基线一致；foreign custom text 不因 customType 丢失，mixed/image 整单元 opaque，当前未知 role 按 Pi drop；thinking 等 raw 协议按 Pi 保留但不进长期记忆，private metadata/locator 不泄漏；
 - fullOutputRef 在临时文件删除后仍可恢复；image/未来 Pi 可见 opaque 预算内原样保留，超预算只形成本扩展能力诊断；
 - compaction/tree handler 返回、实际宿主结果、增强 footer 与 summary 污染隔离分别由真实 Pi session 证明。
@@ -160,7 +160,7 @@ run manifest、每个已执行 attempt 和停止原因都进入 evidence：
 - OpenViking 进程和实际模型能力状态；
 - 每个 `context` 授权、请求证明和 Provider 接收事件；
 - 工具调用、结果、来源屏障和投影统计；
-- MemoryCheckpoint、VerifiedActiveDelta、refresh task 目标/终态、assembly、租约和 profile 采用；
+- MemoryCheckpoint、VerifiedActiveDelta、refresh task 目标/终态、assembly 和 profile 采用；
 - compaction 与 tree summary 的 Provider 请求及新 entry 计数；
 - 任务模型和记忆模型 usage；
 - 用户介入、重试、阻断和结束原因。
@@ -186,7 +186,7 @@ evidence 保存 transport 最终哈希或不可观测原因，使验证总则 §
 
 manifest 可以把 `changedAfterHook == 0`、`transportUnobserved == 0`、native summary 请求或新 entry 为零设为某个明确 Pi/扩展组合的兼容性通过条件。该结果只描述被测组合，不形成对任意 Pi 或其它扩展的行为要求。
 
-增强时点证明仍关联 run/request、Provider/模型/API、session/leaf、HistoricalRouteKey、CurrentTurnKey、MemoryCheckpoint、VerifiedActiveDelta、OpaqueProviderSegment、运行代际、system/tools、消息哈希、ProviderPayloadProfile/PayloadProofAdapter 和 nonce；稳定 evidence 只保存哈希与计数。
+增强时点证明仍关联 run/request、Provider/模型/API、session/leaf、HistoricalRouteKey、CurrentTurnKey、MemoryCheckpoint、VerifiedActiveDelta、OpaqueProviderSegment、运行代际、构造时能力 proof ID、hook 时点 runtime snapshot、system/tools、消息哈希、ProviderPayloadProfile/PayloadProofAdapter 和 nonce；稳定 evidence 只保存非敏感身份、哈希与计数。
 
 ## 9. 故障与恢复矩阵
 
@@ -201,7 +201,7 @@ manifest 可以把 `changedAfterHook == 0`、`transportUnobserved == 0`、native
 - checkpoint 前缀不兼容、必要 refresh profile 超时、后端取消、分支切换和迟到结果；
 - 用户主动取消等待但运行代际仍然健康；
 - ToolBatch 不完整、OpaqueProviderSegment 超预算和普通 context-budget；
-- 本扩展 handler 时点之前 proof 被修改。handler 之后的变化按 §8 记为 transport 兼容性观测，不作为本扩展故障注入。
+- `context` 决定后、Provider hook 前使受管子进程身份失效、runtime 能力撤销、能力 proof ID 改变或 payload proof 被修改；handler 之后的变化按 §8 记为 transport 兼容性观测，不作为本扩展故障注入。
 
 用户取消只要求本扩展释放等待者且不发布 allow；`ctx.abort()` 与 transport 实际结果分别记录，不锁存服务故障。
 
@@ -258,7 +258,7 @@ node scripts/check-validation-evidence.mjs
 - task checker 的逐项结果与最终产物哈希；
 - 独立外部服务事件和 blocked 归因；
 - constructed、hookVerified/hookRejected/hookUnobserved、verified transport 分区、其它 transport 结果、falseClaim 和 extensionContinuedAfterBlock 计数；
-- compaction/tree handler 返回与实际 summary 请求/entry 结果、Provider 基线/记忆投影违规、跨组件修改、summary 污染、MemoryCheckpoint/refresh/lease/profile 和 API generation 归属；
+- compaction/tree handler 返回与实际 summary 请求/entry 结果、Provider 基线/记忆投影违规、跨组件修改、summary 污染、MemoryCheckpoint/refresh/profile 和 API generation 归属；
 - eligible、completed、failed、blocked、inconclusive 和可靠性聚合；
 - 实现文件清单、哈希与最终 `passed`。
 

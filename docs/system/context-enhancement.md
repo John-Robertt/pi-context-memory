@@ -84,34 +84,9 @@ Pi 集成先验证 context 时刻的完整 `SessionRouteSnapshot`，再以当前
 
 ## 5. 工具批次与来源屏障
 
-### 5.1 原子批次
+工作上下文优化按 [`../modules/working-context-optimization.md`](../modules/working-context-optimization.md) 定义的 `ToolBatch` 协议与预算规则，在 Pi Provider 基线内选择 raw 或 projected 表示。Pi 集成提供结构化批次和来源身份；长时记忆负责稳定来源；Session 记忆协调只在请求依赖尚未发布的来源时建立对应屏障。
 
-一个包含工具调用的 assistant 消息与其全部对应 tool result 构成 `ToolBatch`。批次只有在调用 ID 完整匹配、每个调用具有一个最终结果且顺序可解释时才可进入上下文构造。
-
-批次处理只有两种合法结果：
-
-- **raw**：保留整个批次的 Pi Provider 基线消息结构与顺序，只执行已知 locator 的精确规范化，不生成语义投影；
-- **projected**：保留调用/结果的 Provider 协议外壳与顺序，用本地确定性投影替换批次 taskContent，并为每个被省略单元提供稳定来源入口。
-
-系统不保留孤立 tool call 或 tool result，也不在批次内部按字符截断协议消息。
-
-### 5.2 投影内容
-
-工具批次投影由本地确定性算法生成，不调用模型，至少包含：
-
-- 批次顺序、工具名称和调用 ID；
-- assistant task-content、完成状态、大小、哈希和有界 head/tail；thinking 正文不进入投影；
-- 参数规范化表示的大小、哈希与有界 head/tail；
-- 成功、错误、取消和截断状态；
-- 已支持结果 block 的类型、大小、哈希与有界 head/tail；
-- Pi entry ID、稳定 fullOutputRef、来源内容哈希或展开入口；不得包含 FullOutputCandidate 或本机路径；
-- 原始与投影大小、省略范围和恢复方式。
-
-含 image/unsupported public block 的 Provider-view message/ToolBatch 整体 opaque 并原样保留；必须 projected 却无法保持完整单元时，才返回 `opaque-content-unrepresentable`。
-
-### 5.3 来源屏障
-
-projected 替代原始批次，或已移除本机路径的 raw/CurrentTurn 含 FullOutputCandidate 时，本扩展等待来源屏障。省略内容必须可恢复，且 fullOutputRef 必须已发布；否则不确认该增强输出并调用 abort，transport 结果另行观测。
+任何投影省略的内容都必须具有经过完整性核验的稳定来源。批次协议不完整、来源不匹配或当前预算无法无损保留 opaque 内容时，本扩展不确认增强输出；具体解析、投影字段和错误由工作上下文优化模块唯一维护。
 
 ## 6. 检查点、来源后缀与后台刷新
 
@@ -126,7 +101,7 @@ Session 记忆协调按以下顺序解析历史上下文：
 5. 若缺少可用检查点、旧检查点在当前历史预算下过大，或 delta 需要被检查点覆盖，则以当前 generation、精确路线前缀、watermark 和 retentionBudgetIdentity 创建或加入必要刷新；刷新完成后重新读取当前 ProviderPayloadProfile 与路线，不沿用旧请求快照；
 6. 刷新结果只在 task completed、assembly、来源和完整 RefreshTarget 全部核验后原子发布，当前 watermark 后的新 entry 仍保留为 delta。
 
-后台刷新在 Agent settled、tree/resume 预热和 delta 预算高水位触发。完整 RefreshTarget 相同才共享；尚未启动的线性后继只有 retentionBudgetIdentity 相同才合并到最新 watermark；运行中的目标不改变，新预算请求重新评估，仍需刷新时创建自己的目标。机会性 refresh 返回 `skipped` 时保留既有检查点与 delta，不发布伪检查点或续租能力。`refresh-required` 使用与 retentionBudgetIdentity 绑定的显式 retention 边界；若仍返回 skipped，则作为契约/策略错误锁存故障，不以重复提交形成无界循环。
+后台刷新在 Agent settled、tree/resume 预热和 delta 预算高水位触发。完整 RefreshTarget 相同才共享；尚未启动的线性后继只有 retentionBudgetIdentity 相同才合并到最新 watermark；运行中的目标不改变，新预算请求重新评估，仍需刷新时创建自己的目标。机会性 refresh 返回 `skipped` 时保留既有检查点与 delta，不发布伪检查点或改变运行能力 proof。`refresh-required` 使用与 retentionBudgetIdentity 绑定的显式 retention 边界；若仍返回 skipped，则作为契约/策略错误锁存故障，不以重复提交形成无界循环。
 
 请求取消只移除自己的等待。没有当前路线或消费者需要的未发布任务可以取消；仍服务后台预热或其它等待者的任务继续运行。ready 代际中的 accepted task 失败、Provider/profile 超时、取消或 assembly 错误使能力失效；stopping 清理取消不产生新故障。请求等待不设置比当前 `MemoryRuntimeProfile` 记忆调用更短的任意期限，慢但在支持边界内成功的刷新必须能够发布。
 
@@ -172,13 +147,13 @@ context
 - 当前任务 Provider、模型和 API 与授权证明一致，并具有已验证的 PayloadProofAdapter；
 - 归一化后的系统、工具 schema 和有序消息与授权输入一致；
 - nonce 存在、未消费且只出现于预期增强消息；
-- 运行代际、实际 leaf、HistoricalRouteKey、CurrentTurnKey、MemoryCheckpoint identity、VerifiedActiveDelta hash 与 OpaqueProviderSegment hash 仍为当前值；
+- 重新读取的 runtime snapshot 仍证明同一受管进程代际和同一能力 proof 有效；实际 leaf、HistoricalRouteKey、CurrentTurnKey、MemoryCheckpoint identity、VerifiedActiveDelta hash 与 OpaqueProviderSegment hash 仍为当前值；
 - ProviderPayloadProfile 的上下文窗口、输出设置、system/tool 开销和适配版本与实际 payload 一致；
 - payload 增强内容哈希与 `context` 决定一致；
 - handler payload 未丢失或改变本扩展发布的有序 messages；
 - 当前请求没有故障锁存。
 
-核对成功原子消费 nonce 并记 verified；时点不一致记 hookRejected、停止自身确认并 abort；constructed 输出未到达 handler 由 runner 记 hookUnobserved。Pi 可继续其它生命周期；最终采用仅由 transport 观测，无法建立则记 unobserved，由用户决定后续。
+核对成功原子消费 nonce 并记 verified；进程/代际失效、能力 proof 变化或 payload/proof 不一致时记 hookRejected，按当前 session 与代际锁存故障、停止自身确认并 abort。constructed 输出未到达 handler 由 runner 记 hookUnobserved。Pi 可继续其它生命周期；最终采用仅由 transport 观测，无法建立则记 unobserved，由用户决定后续。
 
 ## 9. Pi compaction 与 tree hook
 

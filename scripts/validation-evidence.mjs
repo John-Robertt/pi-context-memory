@@ -56,6 +56,8 @@ const DEFINITIONS = {
       ".pi/extensions/pi-context-memory/pi-session-protocol.ts",
       ".pi/extensions/pi-context-memory/provider-payload-proof.ts",
       ".pi/extensions/pi-context-memory/memory-model-configuration.ts",
+      ".pi/extensions/pi-context-memory/memory-runtime-capability.ts",
+      ".pi/extensions/pi-context-memory/memory-runtime-profile.ts",
       ".pi/extensions/pi-context-memory/long-term-memory.ts",
       ".pi/extensions/pi-context-memory/recall-and-provenance.ts",
       ".pi/extensions/pi-context-memory/session-memory-coordination.ts",
@@ -116,6 +118,8 @@ const DEFINITIONS = {
       ".pi/extensions/pi-context-memory/pi-session-protocol.ts",
       ".pi/extensions/pi-context-memory/provider-payload-proof.ts",
       ".pi/extensions/pi-context-memory/memory-model-configuration.ts",
+      ".pi/extensions/pi-context-memory/memory-runtime-capability.ts",
+      ".pi/extensions/pi-context-memory/memory-runtime-profile.ts",
       ".pi/extensions/pi-context-memory/long-term-memory.ts",
       ".pi/extensions/pi-context-memory/recall-and-provenance.ts",
       ".pi/extensions/pi-context-memory/session-memory-coordination.ts",
@@ -192,6 +196,7 @@ const DEFINITIONS = {
       "proofMessageSequenceBound",
       "proofToolSequenceBound",
       "routesPrepareDuringWorkingMemory",
+      "runtimeRevocationAtHookBlocked",
       "sessionIsolation",
       "sessionReplacementLifecycle",
       "sharedFixtureLoaded",
@@ -214,6 +219,8 @@ const DEFINITIONS = {
       ".pi/extensions/pi-context-memory/provider-payload-proof.ts",
       ".pi/extensions/pi-context-memory/long-term-memory.ts",
       ".pi/extensions/pi-context-memory/memory-model-configuration.ts",
+      ".pi/extensions/pi-context-memory/memory-runtime-capability.ts",
+      ".pi/extensions/pi-context-memory/memory-runtime-profile.ts",
       ".pi/extensions/pi-context-memory/session-memory-coordination.ts",
       ".pi/extensions/pi-context-memory/session-working-memory.ts",
       ".pi/extensions/pi-context-memory/working-context-optimization.ts",
@@ -252,6 +259,8 @@ const DEFINITIONS = {
       ".pi/extensions/pi-context-memory/provider-payload-proof.ts",
       ".pi/extensions/pi-context-memory/long-term-memory.ts",
       ".pi/extensions/pi-context-memory/memory-model-configuration.ts",
+      ".pi/extensions/pi-context-memory/memory-runtime-capability.ts",
+      ".pi/extensions/pi-context-memory/memory-runtime-profile.ts",
       ".pi/extensions/pi-context-memory/session-memory-coordination.ts",
       ".pi/extensions/pi-context-memory/session-working-memory.ts",
       ".pi/extensions/pi-context-memory/working-context-optimization.ts",
@@ -270,17 +279,29 @@ const DEFINITIONS = {
   },
   "memory-model-runtime": {
     current: true,
-    expectedScope: "local",
-    evidenceClass: "controlled-runtime",
+    expectedScope: "managed-provider-runtime",
+    evidenceClass: "actual-managed-runtime",
     evidencePath: "validation/evidence/memory-model-runtime.json",
     generatedBy: "scripts/validate-memory-model-runtime.mjs",
     requiredChecks: [
+      "actualCapabilityPublished",
+      "actualExplicitGenerationRecovery",
+      "actualProbeSessionCleaned",
+      "actualProcessExitRevokesCapability",
+      "actualProfileApplied",
+      "actualProviderUsageBound",
+      "actualTaskUsage",
       "adapterProtocolsCovered",
       "apiKeyFormsResolved",
       "apiKeysBoundToSettings",
       "automaticConfigErrorReported",
       "azureFieldRejected",
       "branchUnchanged",
+      "capabilityFailureBlocks",
+      "capabilityErrorsRedacted",
+      "capabilityGatePublished",
+      "capabilityProofDefinesGeneration",
+      "emptyWorkingMemoryOverviewRejected",
       "childExitPublished",
       "childCredentialEnvironmentIsolated",
       "childCredentialOutputRedacted",
@@ -303,8 +324,11 @@ const DEFINITIONS = {
       "emptyConfigurationAccepted",
       "emptyConfigurationDisablesModel",
       "existingConfigPreserved",
+      "explicitCapabilityRecovery",
+      "failedProbeCleanupReported",
       "existingSymlinksPreserved",
       "generatedConfigParsed",
+      "inconsistentCapabilityUsageRejected",
       "interruptedControlOperationCompletes",
       "invalidColdStartCredentialExcluded",
       "invalidColdStartKeepsSourceRuntime",
@@ -327,7 +351,7 @@ const DEFINITIONS = {
       "piCredentialInjectedIntoIsolatedEnvironment",
       "piSessionCredentialsExcluded",
       "preflightPreservesInstance",
-      "providerDefaultsNotOverridden",
+      "runtimeProfileApplied",
       "reviewedConfigurationAdapterSurface",
       "readinessTimeoutPublished",
       "referencedCredentialsRemainExcludedWithDirectKey",
@@ -359,6 +383,8 @@ const DEFINITIONS = {
       ".pi/extensions/pi-context-memory/session-working-memory.ts",
       ".pi/extensions/pi-context-memory/working-context-optimization.ts",
       ".pi/extensions/pi-context-memory/memory-model-configuration.ts",
+      ".pi/extensions/pi-context-memory/memory-runtime-capability.ts",
+      ".pi/extensions/pi-context-memory/memory-runtime-profile.ts",
       "config/openviking.json",
       "pyproject.toml",
       "scripts/check-validation-evidence.mjs",
@@ -647,8 +673,8 @@ export function stableEvidenceMismatches(root, key, evidence) {
       mismatches.push("quality models differ from validation/suite.json");
     }
     if (typeof evidence?.memoryModelCondition?.configFingerprint !== "string"
-      || !Array.isArray(evidence?.memoryModelCondition?.explicitRequestControls)
-      || evidence.memoryModelCondition.explicitRequestControls.length !== 0
+      || JSON.stringify(evidence?.memoryModelCondition?.explicitRequestControls)
+        !== JSON.stringify(["thinking", "temperature", "max_retries", "stream"])
       || evidence.models?.memory !== models.memory
       || evidence.memoryModelCondition.controlledAdapterProbe?.adapter !== "LiteLLM OpenRouter"
       || evidence.memoryModelCondition.controlledAdapterProbe?.model !== models.task
@@ -688,7 +714,7 @@ export function stableEvidenceMismatches(root, key, evidence) {
       mismatches.push("quality arm conditions differ");
     }
     if (!(enhanced?.observations?.workingContextReady > 0)
-      || !(enhanced?.observations?.enhancedProviderRequests > 0)) {
+      || !(enhanced?.observations?.hookVerifiedRequests > 0)) {
       mismatches.push("enhanced quality adoption evidence is missing");
     }
   }

@@ -23,6 +23,11 @@ import {
   readRuntimeState,
   requestOpenVikingRestart,
 } from "../.pi/extensions/pi-context-memory/memory-model-configuration.ts";
+import { MEMORY_RUNTIME_REQUEST_TIMEOUT_MS } from "../.pi/extensions/pi-context-memory/memory-runtime-profile.ts";
+import {
+  memoryCapabilityMatches,
+  memoryRuntimeGenerationIdentity,
+} from "../.pi/extensions/pi-context-memory/memory-runtime-capability.ts";
 import {
   assertImplementationEvidenceUnchanged,
   captureImplementationEvidence,
@@ -32,12 +37,14 @@ import {
   assertValidationPiVersion,
   createIsolatedPiProviderCredential,
   readProjectOpenVikingVersion,
+  readValidationSuite,
 } from "./validation-suite.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 if (process.argv.length !== 2) throw new Error("Usage: node scripts/validate-memory-model-runtime.mjs");
 const piVersion = assertValidationPiVersion(root);
 const expectedOpenVikingVersion = readProjectOpenVikingVersion(root);
+const validationSuite = readValidationSuite(root);
 const adapterContract = JSON.parse(readFileSync(join(root, "config/openviking-adapter-contract.json"), "utf8"));
 if (adapterContract?.schemaVersion !== 1 || !Array.isArray(adapterContract.providers)) {
   throw new Error("OpenViking adapter contract is invalid");
@@ -76,6 +83,16 @@ async function writeMemoryModelConfig(path, setting, includeCredential = true) {
     ? { ...setting, api_key: VALIDATION_API_KEY_REFERENCE }
     : setting;
   await atomicWriteJson(path, { memoryModel: configured });
+}
+
+function supportedMemorySetting(options = {}) {
+  const setting = {
+    provider: validationSuite.models.memoryProvider,
+    model: validationSuite.models.memoryRoute,
+  };
+  if (options.scenario) setting.api_key = `validation-scenario:${options.scenario}`;
+  else if (options.apiKey !== undefined) setting.api_key = options.apiKey;
+  return setting;
 }
 function replaceJson(path, value) {
   const pending = `${path}.pending`;
@@ -172,7 +189,11 @@ import { dirname, join } from "node:path";
 const configPath = process.argv[process.argv.indexOf("--config") + 1];
 const config = JSON.parse(readFileSync(configPath, "utf8"));
 const model = config.vlm?.model ?? "source-recall-only";
-if (model === "final-direct") {
+const credential = process.env[${JSON.stringify(OPENVIKING_MEMORY_API_KEY_ENV)}] ?? "";
+const scenario = credential.startsWith("validation-scenario:")
+  ? credential.slice("validation-scenario:".length)
+  : model;
+if (scenario === "final-direct" || credential === ${JSON.stringify(DIRECT_VALIDATION_API_KEY)}) {
   const credential = process.env[${JSON.stringify(OPENVIKING_MEMORY_API_KEY_ENV)}] ?? "";
   const split = Math.max(1, Math.floor(credential.length / 2));
   process.stderr.write(credential.slice(0, split));
@@ -186,17 +207,81 @@ if (childEnvironmentReport) writeFileSync(childEnvironmentReport, JSON.stringify
   ambientOpenRouterCredentialPresent: Object.hasOwn(process.env, "OPENROUTER_API_KEY"),
   unrelatedProviderCredentialPresent: Object.hasOwn(process.env, ${JSON.stringify(UNRELATED_PROVIDER_API_KEY_ENV)}),
 }));
-if (model === "exit-early") process.exit(17);
+if (scenario === "exit-early") process.exit(17);
 const started = Date.now();
-const server = createServer((request, response) => {
-  if (request.url !== "/health") { response.writeHead(404).end(); return; }
-  const delayed = model === "slow-ready" && Date.now() - started < 500;
-  const unavailable = model.startsWith("never-ready") || delayed;
-  response.writeHead(unavailable ? 503 : 200, { "content-type": "application/json" });
-  response.end(JSON.stringify({ status: unavailable ? "starting" : "ok", healthy: !unavailable, version: ${JSON.stringify(expectedOpenVikingVersion)} }));
+const sessions = new Map();
+function send(response, status, result) {
+  response.writeHead(status, { "content-type": "application/json" });
+  response.end(JSON.stringify(result));
+}
+const server = createServer(async (request, response) => {
+  const url = new URL(request.url, "http://127.0.0.1");
+  if (url.pathname === "/health") {
+    const delayed = scenario === "slow-ready" && Date.now() - started < 500;
+    const unavailable = scenario.startsWith("never-ready") || delayed;
+    send(response, unavailable ? 503 : 200, { status: unavailable ? "starting" : "ok", healthy: !unavailable, version: ${JSON.stringify(expectedOpenVikingVersion)} });
+    return;
+  }
+  const chunks = [];
+  for await (const chunk of request) chunks.push(Buffer.from(chunk));
+  const body = chunks.length > 0 ? JSON.parse(Buffer.concat(chunks).toString("utf8")) : {};
+  if (request.method === "POST" && url.pathname === "/api/v1/sessions") {
+    sessions.set(body.session_id, { messages: [] });
+    send(response, 200, { status: "ok", result: { session_id: body.session_id } });
+    return;
+  }
+  const batch = /^\\/api\\/v1\\/sessions\\/([^/]+)\\/messages\\/batch$/.exec(url.pathname);
+  if (request.method === "POST" && batch) {
+    const session = sessions.get(decodeURIComponent(batch[1]));
+    if (!session) { send(response, 404, { status: "error", error: { message: "missing session" } }); return; }
+    session.messages.push(...body.messages);
+    send(response, 200, { status: "ok", result: { pending_tokens: 100 } });
+    return;
+  }
+  const commit = /^\\/api\\/v1\\/sessions\\/([^/]+)\\/commit$/.exec(url.pathname);
+  if (request.method === "POST" && commit) {
+    const sessionId = decodeURIComponent(commit[1]);
+    if (!sessions.has(sessionId)) { send(response, 404, { status: "error", error: { message: "missing session" } }); return; }
+    send(response, 200, { status: "ok", result: { status: "accepted", task_id: "task-" + sessionId } });
+    return;
+  }
+  const task = /^\\/api\\/v1\\/tasks\\/(.+)$/.exec(url.pathname);
+  if (request.method === "GET" && task) {
+    const taskFails = scenario.startsWith("capability-fail") || scenario === "capability-secret-error";
+    send(response, 200, { status: "ok", result: {
+      status: taskFails ? "failed" : "completed",
+      error: scenario === "capability-secret-error"
+        ? "provider echoed " + credential
+        : taskFails ? "injected capability failure" : null,
+      result: { token_usage: { llm: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 } } },
+    } });
+    return;
+  }
+  const context = /^\\/api\\/v1\\/sessions\\/([^/]+)\\/context$/.exec(url.pathname);
+  if (request.method === "GET" && context) {
+    const session = sessions.get(decodeURIComponent(context[1]));
+    const sourceIds = session?.messages.at(-1)?.source_message_ids ?? [];
+    send(response, 200, { status: "ok", result: {
+      latest_archive_overview: scenario === "empty-overview" ? "" : "Verified PCM-CAPABILITY-V1 Working Memory overview",
+      messages: [{ role: "assistant", content: "Capability probe active history", source_message_ids: sourceIds }],
+      estimatedTokens: 32,
+    } });
+    return;
+  }
+  const deletion = /^\\/api\\/v1\\/sessions\\/([^/]+)$/.exec(url.pathname);
+  if (request.method === "DELETE" && deletion) {
+    if (scenario === "capability-fail-cleanup-fail") {
+      send(response, 500, { status: "error", error: { message: "injected cleanup failure" } });
+      return;
+    }
+    sessions.delete(decodeURIComponent(deletion[1]));
+    send(response, 200, { status: "ok", result: { session_id: decodeURIComponent(deletion[1]) } });
+    return;
+  }
+  send(response, 404, { status: "error", error: { message: "not found" } });
 });
 server.listen(config.server.port, config.server.host);
-if (model.includes("ignore-term")) process.on("SIGTERM", () => undefined);
+if (scenario.includes("ignore-term")) process.on("SIGTERM", () => undefined);
 else process.on("SIGTERM", () => server.close(() => process.exit()));
 for (const signal of ["SIGINT", "SIGHUP"]) process.on(signal, () => server.close(() => process.exit()));
 `, "utf8");
@@ -420,9 +505,20 @@ async function validateConfiguration() {
   }
   const generatedConfigParsed = compiled.length === expectedProviders.length
     && compiled.every((item) => item.config.vlm.provider === item.provider && item.config.vlm.model === item.model);
-  const providerDefaultsNotOverridden = compiled.every((item) =>
-    !["thinking", "temperature", "max_retries", "stream"].some((field) => Object.hasOwn(item.config.vlm, field))
-  );
+  const runtimeProfileApplied = compiled.every((item) => {
+    const vlm = item.config.vlm;
+    return item.profile.provider === item.provider
+      && item.profile.model === item.model
+      && vlm.thinking === item.profile.thinking
+      && vlm.temperature === item.profile.temperature
+      && vlm.stream === item.profile.stream
+      && vlm.max_tokens === item.profile.maxOutputTokens
+      && vlm.timeout === item.profile.requestTimeoutMs / 1_000
+      && vlm.max_retries === item.profile.maxRetries
+      && vlm.max_concurrent === item.profile.maxConcurrency
+      && vlm.backup === undefined
+      && vlm.credentials === undefined;
+  });
   const deterministicSetting = { provider: "volcengine", model: "validation-model", api_key: VALIDATION_API_KEY_REFERENCE };
   const deterministicFingerprint = compiled[0].configFingerprint
     === (await compileOpenVikingConfig(root, deterministicSetting, env)).configFingerprint;
@@ -642,7 +738,7 @@ async function validateConfiguration() {
       schemaObserved,
       litellmCatalogObserved,
       generatedConfigParsed,
-      providerDefaultsNotOverridden,
+      runtimeProfileApplied,
       deterministicFingerprint,
       credentialRotationChangesConfigFingerprint,
       credentialsBoundToInternalEnvironment,
@@ -682,16 +778,20 @@ async function validateLauncherAndCommands() {
   writeJson(missingCredentialBase, baseConfig(await freePort(), join(missingCredentialDir, "data")));
   const missingCredentialEnv = validationEnvironment(missingCredentialDir, missingCredentialBase, fakeServer);
   await writeMemoryModelConfig(missingCredentialEnv.PCR_MEMORY_MODEL_SETTINGS, {
-    provider: "litellm",
-    model: "openrouter/validation/model",
+    provider: validationSuite.models.memoryProvider,
+    model: validationSuite.models.memoryRoute,
   }, false);
   const missingCredentialLauncher = startLauncher(missingCredentialEnv);
   let missingCredentialState;
   try {
-    missingCredentialLauncher.stderr.resume();
-    missingCredentialLauncher.stdout.resume();
+    const missingCredentialOutput = [];
+    missingCredentialLauncher.stderr.on("data", (chunk) => missingCredentialOutput.push(Buffer.from(chunk)));
+    missingCredentialLauncher.stdout.on("data", (chunk) => missingCredentialOutput.push(Buffer.from(chunk)));
     missingCredentialState = await waitFor(async () => {
       const state = await readRuntimeState(root, missingCredentialEnv);
+      if (state?.phase === "failed") {
+        throw new Error(`${state.error ?? "missing-credential launcher failed"}\n${Buffer.concat(missingCredentialOutput).toString("utf8")}`);
+      }
       return state?.ready === true && state.configurationError ? state : undefined;
     }, "OpenRouter credential diagnostic");
   } finally {
@@ -705,12 +805,10 @@ async function validateLauncherAndCommands() {
   const basePath = join(caseDir, "base.json");
   writeJson(basePath, baseConfig(port, join(caseDir, "data")));
   const env = validationEnvironment(caseDir, basePath, fakeServer);
-  await writeMemoryModelConfig(env.PCR_MEMORY_MODEL_SETTINGS, {
-    provider: "openai",
-    model: "initial-model",
-    api_key: VALIDATION_API_KEY_REFERENCE,
-    api_base: "https://example.invalid/v1",
-  });
+  await writeMemoryModelConfig(
+    env.PCR_MEMORY_MODEL_SETTINGS,
+    supportedMemorySetting({ apiKey: VALIDATION_API_KEY_REFERENCE }),
+  );
   const launcher = startLauncher(env);
   const launcherOutput = [];
   launcher.stdout.on("data", (chunk) => launcherOutput.push(Buffer.from(chunk)));
@@ -721,6 +819,23 @@ async function validateLauncherAndCommands() {
       const state = await readRuntimeState(root, env);
       return state?.ready ? state : undefined;
     }, "initial OpenViking readiness");
+    const initialCapabilityBinding = {
+      launchId: initial.launchId,
+      childPid: initial.childPid,
+      settingsFingerprint: initial.activeSettingsFingerprint,
+      configFingerprint: initial.activeConfigFingerprint,
+      profile: initial.activeProfile,
+      profileFingerprint: initial.activeProfileFingerprint,
+    };
+    const capabilityGatePublished = initial.serviceReady === true
+      && initial.requestReady === true
+      && memoryCapabilityMatches(initial.memoryCapability, initialCapabilityBinding);
+    const capabilityProofDefinesGeneration = memoryRuntimeGenerationIdentity(initial.memoryCapability)
+      !== memoryRuntimeGenerationIdentity({ ...initial.memoryCapability, proofId: `${initial.memoryCapability.proofId}-changed` });
+    const inconsistentCapabilityUsageRejected = !memoryCapabilityMatches({
+      ...initial.memoryCapability,
+      usage: { promptTokens: 10, completionTokens: 5, totalTokens: 14 },
+    }, initialCapabilityBinding);
     const generatedRuntimeSource = readFileSync(env.PCR_OPENVIKING_GENERATED_CONFIG, "utf8");
     const initialLauncherInfo = await readLauncherInfo(root, env);
     const childEnvironment = JSON.parse(readFileSync(env.PCR_OPENVIKING_CHILD_ENV_REPORT, "utf8"));
@@ -799,18 +914,68 @@ async function validateLauncherAndCommands() {
     const invalidDesiredConfigPreservesRunningInstance = afterPreflight?.ready === true
       && invalidConfigStatuses.includes("增强记忆 · 初始化中")
       && invalidConfigStatuses.every((status) => status === undefined || status === "增强记忆 · 初始化中");
-    await writeMemoryModelConfig(env.PCR_MEMORY_MODEL_SETTINGS, { provider: "openai", model: "second-model", api_base: "https://example.invalid/v1" });
+    await writeMemoryModelConfig(env.PCR_MEMORY_MODEL_SETTINGS, supportedMemorySetting({ scenario: "second" }));
     const second = await requestOpenVikingRestart(root, env);
     const orderedRestart = second.ready === true
       && second.childPid !== firstChildPid
       && second.configurationError === undefined
       && !processAlive(firstChildPid);
 
-    await writeMemoryModelConfig(env.PCR_MEMORY_MODEL_SETTINGS, {
-      provider: "openai",
-      model: "credential-boundary",
-      api_key: VALIDATION_API_KEY_REFERENCE,
-    });
+    await writeMemoryModelConfig(
+      env.PCR_MEMORY_MODEL_SETTINGS,
+      supportedMemorySetting({ scenario: "capability-fail" }),
+    );
+    const capabilityFailure = await expectFailure(() => requestOpenVikingRestart(root, env));
+    const capabilityFailureState = await readRuntimeState(root, env);
+    const capabilityFailureBlocks = Boolean(capabilityFailure?.includes("capability task failed"))
+      && capabilityFailureState?.serviceReady === true
+      && capabilityFailureState.requestReady === false
+      && capabilityFailureState.memoryCapability === undefined
+      && capabilityFailureState.phase === "failed";
+
+    const echoedCredential = "validation-scenario:capability-secret-error";
+    await writeMemoryModelConfig(
+      env.PCR_MEMORY_MODEL_SETTINGS,
+      supportedMemorySetting({ scenario: "capability-secret-error" }),
+    );
+    const credentialEchoFailure = await expectFailure(() => requestOpenVikingRestart(root, env));
+    const credentialEchoState = await readRuntimeState(root, env);
+    const capabilityErrorsRedacted = Boolean(credentialEchoFailure?.includes("<redacted>"))
+      && !credentialEchoFailure.includes(echoedCredential)
+      && !JSON.stringify(credentialEchoState).includes(echoedCredential);
+
+    await writeMemoryModelConfig(
+      env.PCR_MEMORY_MODEL_SETTINGS,
+      supportedMemorySetting({ scenario: "capability-fail-cleanup-fail" }),
+    );
+    const combinedProbeFailure = await expectFailure(() => requestOpenVikingRestart(root, env));
+    const combinedProbeFailureState = await readRuntimeState(root, env);
+    const failedProbeCleanupReported = Boolean(combinedProbeFailure?.includes("capability task failed")
+      && combinedProbeFailure.includes("cleanup also failed")
+      && combinedProbeFailure.includes("injected cleanup failure"))
+      && combinedProbeFailureState?.requestReady === false
+      && combinedProbeFailureState.memoryCapability === undefined;
+
+    await writeMemoryModelConfig(
+      env.PCR_MEMORY_MODEL_SETTINGS,
+      supportedMemorySetting({ scenario: "empty-overview" }),
+    );
+    const emptyOverviewFailure = await expectFailure(() => requestOpenVikingRestart(root, env));
+    const emptyOverviewState = await readRuntimeState(root, env);
+    const emptyWorkingMemoryOverviewRejected = emptyOverviewFailure?.includes("marker-bearing Working Memory overview") === true
+      && emptyOverviewState?.serviceReady === true
+      && emptyOverviewState.requestReady === false
+      && emptyOverviewState.memoryCapability === undefined;
+
+    await writeMemoryModelConfig(env.PCR_MEMORY_MODEL_SETTINGS, supportedMemorySetting({ scenario: "second" }));
+    const capabilityRecoveryState = await requestOpenVikingRestart(root, env);
+    const explicitCapabilityRecovery = capabilityRecoveryState.requestReady === true
+      && capabilityRecoveryState.memoryCapability?.childPid === capabilityRecoveryState.childPid;
+
+    await writeMemoryModelConfig(
+      env.PCR_MEMORY_MODEL_SETTINGS,
+      supportedMemorySetting({ apiKey: VALIDATION_API_KEY_REFERENCE }),
+    );
     const credentialBoundaryState = await requestOpenVikingRestart(root, env);
     const piWithoutCredentialEnv = { ...env };
     delete piWithoutCredentialEnv[VALIDATION_API_KEY_ENV];
@@ -822,7 +987,7 @@ async function validateLauncherAndCommands() {
     const credentialBoundaryStatuses = credentialBoundaryPiCase.events.filter((event) => event.type === "extension_ui_request"
       && event.method === "setStatus").map((event) => event.statusText);
     const splitCredentialRuntimeAvailable = credentialBoundaryState.ready === true
-      && credentialBoundaryState.activeProvider === "openai"
+      && credentialBoundaryState.activeProvider === validationSuite.models.memoryProvider
       && credentialBoundaryStatuses.includes("增强记忆 · 初始化中")
       && !credentialBoundaryStatuses.includes("增强记忆 · 故障")
       && credentialBoundaryPiCase.events.some((event) => event.type === "extension_ui_request"
@@ -833,6 +998,7 @@ async function validateLauncherAndCommands() {
     const operationDeadlinePublished = wrongInfo.operationTimeoutMs === OPENVIKING_CONFIG_BRIDGE_TIMEOUT_MS
       + (4 * Number(env.PCR_OPENVIKING_STOP_TIMEOUT_MS))
       + Number(env.PCR_OPENVIKING_READINESS_TIMEOUT_MS)
+      + MEMORY_RUNTIME_REQUEST_TIMEOUT_MS
       + 5_000;
     const wrongResponse = await fetch(`${wrongInfo.controlUrl}/restart`, {
       method: "POST",
@@ -840,7 +1006,7 @@ async function validateLauncherAndCommands() {
       body: JSON.stringify({ launchId: "wrong-launch" }),
     });
     const wrongLaunchRejected = wrongResponse.status === 403 && second.ready;
-    await writeMemoryModelConfig(env.PCR_MEMORY_MODEL_SETTINGS, { provider: "openai", model: "slow-ready", api_base: "https://example.invalid/v1" });
+    await writeMemoryModelConfig(env.PCR_MEMORY_MODEL_SETTINGS, supportedMemorySetting({ scenario: "slow-ready" }));
     const interruptedRequest = httpRequest(`${wrongInfo.controlUrl}/restart`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -849,22 +1015,20 @@ async function validateLauncherAndCommands() {
     interruptedRequest.end(JSON.stringify({ launchId: wrongInfo.launchId, operationId: "interrupted-operation" }));
     await waitFor(async () => {
       const state = await readRuntimeState(root, env);
-      return state?.phase === "restarting" && state.targetModel === "slow-ready" && state.operationId === "interrupted-operation" ? state : undefined;
+      return state?.phase === "restarting" && state.operationId === "interrupted-operation" ? state : undefined;
     }, "accepted interrupted restart");
     interruptedRequest.destroy();
     const afterInterruptedControl = await waitFor(async () => {
       const state = await readRuntimeState(root, env);
-      return state?.ready && state.activeModel === "slow-ready" && state.operationId === "interrupted-operation" ? state : undefined;
+      return state?.ready && state.operationId === "interrupted-operation" ? state : undefined;
     }, "interrupted restart completion");
     const interruptedControlOperationCompletes = afterInterruptedControl.childPid !== second.childPid
       && !processAlive(second.childPid);
 
-    await writeMemoryModelConfig(env.PCR_MEMORY_MODEL_SETTINGS, {
-      provider: "openai",
-      model: "command-model",
-      api_key: VALIDATION_API_KEY,
-      api_base: "https://example.invalid/v1",
-    });
+    await writeMemoryModelConfig(
+      env.PCR_MEMORY_MODEL_SETTINGS,
+      supportedMemorySetting({ apiKey: VALIDATION_API_KEY }),
+    );
     const commandConfigBefore = readFileSync(env.PCR_MEMORY_MODEL_SETTINGS, "utf8");
     console.error("[memory-model-runtime] Pi command session A");
     const piCase = await runPiCommandCase(join(caseDir, "pi-a"), env, [
@@ -883,11 +1047,11 @@ async function validateLauncherAndCommands() {
     const piSessionCredentialsExcluded = !JSON.stringify({ piCase, secondPiCase }).includes(VALIDATION_API_KEY);
     const sharedUserConfig = secondPiCase.events.some((event) => event.type === "extension_ui_request"
       && event.method === "notify"
-      && event.message.includes("openai/command-model"));
+      && event.message.includes(`${validationSuite.models.memoryProvider}/${validationSuite.models.memoryRoute}`));
     const configuredAndRunningReportedSeparately = piCase.events.some((event) => event.type === "extension_ui_request"
       && event.method === "notify"
-      && event.message.includes("Configured memory model: openai/command-model")
-      && event.message.includes("Running OpenViking model: openai/slow-ready")
+      && event.message.includes(`Configured memory model: ${validationSuite.models.memoryProvider}/${validationSuite.models.memoryRoute}`)
+      && event.message.includes(`Running OpenViking model: ${validationSuite.models.memoryProvider}/${validationSuite.models.memoryRoute}`)
       && event.message.includes("Extension authorization: 初始化中"));
     await writeMemoryModelConfig(env.PCR_MEMORY_MODEL_SETTINGS, null);
     const nullPiCase = await runPiCommandCase(join(caseDir, "pi-null-config"), env, [
@@ -898,7 +1062,7 @@ async function validateLauncherAndCommands() {
     const nullNotifications = nullPiCase.events.filter((event) => event.type === "extension_ui_request"
       && event.method === "notify");
     const nullConfigurationStateReported = nullNotifications.some((event) => event.message.includes("Configured memory model: not configured")
-      && event.message.includes("Running OpenViking model: openai/command-model")
+      && event.message.includes(`Running OpenViking model: ${validationSuite.models.memoryProvider}/${validationSuite.models.memoryRoute}`)
       && event.message.includes("Configuration: waiting for /restart-viking"))
       && nullNotifications.some((event) => event.message.includes("Configured memory model: not configured")
         && event.message.includes("Running OpenViking model: no VLM loaded")
@@ -915,7 +1079,7 @@ async function validateLauncherAndCommands() {
         || status === "增强记忆 · 故障");
 
     console.error("[memory-model-runtime] restart failure matrix");
-    await writeMemoryModelConfig(env.PCR_MEMORY_MODEL_SETTINGS, { provider: "openai", model: "slow-ready", api_base: "https://example.invalid/v1" });
+    await writeMemoryModelConfig(env.PCR_MEMORY_MODEL_SETTINGS, supportedMemorySetting({ scenario: "slow-ready" }));
     const concurrent = await Promise.allSettled([
       requestOpenVikingRestart(root, env),
       requestOpenVikingRestart(root, env),
@@ -923,9 +1087,9 @@ async function validateLauncherAndCommands() {
     const concurrentRestartSerialized = concurrent.filter((item) => item.status === "fulfilled").length === 1
       && concurrent.filter((item) => item.status === "rejected").length === 1;
 
-    await writeMemoryModelConfig(env.PCR_MEMORY_MODEL_SETTINGS, { provider: "openai", model: "ignore-term", api_base: "https://example.invalid/v1" });
+    await writeMemoryModelConfig(env.PCR_MEMORY_MODEL_SETTINGS, supportedMemorySetting({ scenario: "ignore-term" }));
     await requestOpenVikingRestart(root, env);
-    await writeMemoryModelConfig(env.PCR_MEMORY_MODEL_SETTINGS, { provider: "openai", model: "never-ready-ignore-term", api_base: "https://example.invalid/v1" });
+    await writeMemoryModelConfig(env.PCR_MEMORY_MODEL_SETTINGS, supportedMemorySetting({ scenario: "never-ready-ignore-term" }));
     const failureStartedAt = Date.now();
     const readinessError = await expectFailure(() => requestOpenVikingRestart(root, env));
     const failureDurationMs = Date.now() - failureStartedAt;
@@ -938,11 +1102,11 @@ async function validateLauncherAndCommands() {
       && timedOutState.ready === false
       && timedOutState.childPid === undefined
       && timedOutState.activeModel === undefined
-      && timedOutState.targetModel === "never-ready-ignore-term";
+      && timedOutState.targetModel === validationSuite.models.memoryRoute;
 
-    await writeMemoryModelConfig(env.PCR_MEMORY_MODEL_SETTINGS, { provider: "openai", model: "recovered", api_base: "https://example.invalid/v1" });
+    await writeMemoryModelConfig(env.PCR_MEMORY_MODEL_SETTINGS, supportedMemorySetting({ scenario: "recovered" }));
     const recovered = await requestOpenVikingRestart(root, env);
-    await writeMemoryModelConfig(env.PCR_MEMORY_MODEL_SETTINGS, { provider: "openai", model: "exit-early", api_base: "https://example.invalid/v1" });
+    await writeMemoryModelConfig(env.PCR_MEMORY_MODEL_SETTINGS, supportedMemorySetting({ scenario: "exit-early" }));
     const exitError = await expectFailure(() => requestOpenVikingRestart(root, env));
     const exitState = await readRuntimeState(root, env);
     const childExitPublished = recovered.ready === true
@@ -962,24 +1126,20 @@ async function validateLauncherAndCommands() {
     const sourceOnlyCredentialEnvironmentEmpty = sourceOnlyEnvironment.internalCredentialPresent === false
       && sourceOnlyEnvironment.ambientOpenRouterCredentialPresent === false
       && sourceOnlyEnvironment.unrelatedProviderCredentialPresent === false;
-    await writeMemoryModelConfig(env.PCR_MEMORY_MODEL_SETTINGS, {
-      provider: "openai",
-      model: "final-reference",
-      api_key: SECOND_VALIDATION_API_KEY_REFERENCE,
-      api_base: "https://example.invalid/v1",
-    });
+    await writeMemoryModelConfig(
+      env.PCR_MEMORY_MODEL_SETTINGS,
+      supportedMemorySetting({ apiKey: SECOND_VALIDATION_API_KEY_REFERENCE }),
+    );
     await requestOpenVikingRestart(root, env);
     const rotatedEnvironment = JSON.parse(readFileSync(env.PCR_OPENVIKING_CHILD_ENV_REPORT, "utf8"));
     const rotatedCredentialReferencesExcluded = [VALIDATION_API_KEY_ENV, SECOND_VALIDATION_API_KEY_ENV]
       .every((name) => !rotatedEnvironment.credentialEnvironmentVariablesPresent?.includes(name))
       && rotatedEnvironment.internalCredentialPresent === true
       && rotatedEnvironment.internalCredentialSha256 === createHash("sha256").update(SECOND_VALIDATION_API_KEY).digest("hex");
-    await writeMemoryModelConfig(env.PCR_MEMORY_MODEL_SETTINGS, {
-      provider: "openai",
-      model: "final-direct",
-      api_key: DIRECT_VALIDATION_API_KEY,
-      api_base: "https://example.invalid/v1",
-    });
+    await writeMemoryModelConfig(
+      env.PCR_MEMORY_MODEL_SETTINGS,
+      supportedMemorySetting({ apiKey: DIRECT_VALIDATION_API_KEY }),
+    );
     const finalState = await requestOpenVikingRestart(root, env);
     const directEnvironment = JSON.parse(readFileSync(env.PCR_OPENVIKING_CHILD_ENV_REPORT, "utf8"));
     const referencedCredentialsRemainExcludedWithDirectKey = [VALIDATION_API_KEY_ENV, SECOND_VALIDATION_API_KEY_ENV]
@@ -1007,9 +1167,17 @@ async function validateLauncherAndCommands() {
       checks: {
         concurrentLauncherRejected,
         deadChildReadySuppressed,
+        capabilityGatePublished,
+        capabilityProofDefinesGeneration,
+        inconsistentCapabilityUsageRejected,
         targetPortPreflightPreservesInstance,
         preflightPreservesInstance,
         orderedRestart,
+        capabilityFailureBlocks,
+        capabilityErrorsRedacted,
+        failedProbeCleanupReported,
+        emptyWorkingMemoryOverviewRejected,
+        explicitCapabilityRecovery,
         childCredentialEnvironmentIsolated,
         removedReferenceRemainsExcluded,
         sourceOnlyCredentialEnvironmentEmpty,
@@ -1191,6 +1359,189 @@ async function validateOwnershipBoundaries() {
   }
 }
 
+function findArtifactFile(directory, name) {
+  if (!existsSync(directory)) return undefined;
+  const pending = [directory];
+  while (pending.length > 0) {
+    const current = pending.pop();
+    for (const entry of readdirSync(current, { withFileTypes: true })) {
+      const path = join(current, entry.name);
+      if (entry.isDirectory()) pending.push(path);
+      else if (entry.isFile() && entry.name === name) return path;
+    }
+  }
+  return undefined;
+}
+
+async function validateActualManagedCapability() {
+  const caseDir = join(artifactRoot, "actual-managed-capability");
+  mkdirSync(caseDir, { recursive: true });
+  const port = await freePort();
+  const workspace = join(caseDir, "openviking-data");
+  const basePath = join(caseDir, "base.json");
+  const settingsPath = join(caseDir, "memory-model.jsonc");
+  const runtimeDir = join(caseDir, "runtime");
+  writeJson(basePath, baseConfig(port, workspace));
+
+  const credentialVariable = "PCR_MEMORY_RUNTIME_OPENROUTER_API_KEY";
+  const credential = createIsolatedPiProviderCredential(
+    validationSuite.models.taskProvider,
+    credentialVariable,
+    { cwd: root },
+  );
+  await atomicWriteJson(settingsPath, {
+    memoryModel: {
+      provider: validationSuite.models.memoryProvider,
+      model: validationSuite.models.memoryRoute,
+      api_key: credential.reference,
+    },
+  });
+  const realServer = process.platform === "win32"
+    ? join(root, ".venv/Scripts/openviking-server.exe")
+    : join(root, ".venv/bin/openviking-server");
+  const env = {
+    ...process.env,
+    ...credential.environment,
+    PCR_MEMORY_MODEL_SETTINGS: settingsPath,
+    PCR_OPENVIKING_BASE_CONFIG: basePath,
+    PCR_OPENVIKING_RUNTIME_DIR: runtimeDir,
+    PCR_OPENVIKING_SERVER: realServer,
+    PCR_OPENVIKING_CHILD_STDIO: "ignore",
+  };
+  const managedLauncher = startLauncher(env);
+  const stdout = [];
+  const stderr = [];
+  managedLauncher.stdout.on("data", (chunk) => stdout.push(Buffer.from(chunk)));
+  managedLauncher.stderr.on("data", (chunk) => stderr.push(Buffer.from(chunk)));
+  let firstState;
+  let recoveredState;
+  try {
+    firstState = await waitFor(async () => {
+      const state = await readRuntimeState(root, env);
+      if (state?.phase === "failed") throw new Error(state.error ?? "Actual managed OpenViking capability failed");
+      return state?.requestReady ? state : undefined;
+    }, "actual managed memory capability", MEMORY_RUNTIME_REQUEST_TIMEOUT_MS + 60_000);
+    const firstBinding = {
+      launchId: firstState.launchId,
+      childPid: firstState.childPid,
+      settingsFingerprint: firstState.activeSettingsFingerprint,
+      configFingerprint: firstState.activeConfigFingerprint,
+      profile: firstState.activeProfile,
+      profileFingerprint: firstState.activeProfileFingerprint,
+    };
+    const actualCapabilityPublished = memoryCapabilityMatches(firstState.memoryCapability, firstBinding)
+      && firstState.activeProvider === validationSuite.models.memoryProvider
+      && firstState.activeModel === validationSuite.models.memoryRoute;
+    const generatedConfig = JSON.parse(readFileSync(join(runtimeDir, "openviking.json"), "utf8"));
+    const actualProfileApplied = generatedConfig.vlm?.thinking === firstState.activeProfile.thinking
+      && generatedConfig.vlm?.temperature === firstState.activeProfile.temperature
+      && generatedConfig.vlm?.stream === firstState.activeProfile.stream
+      && generatedConfig.vlm?.max_tokens === firstState.activeProfile.maxOutputTokens
+      && generatedConfig.vlm?.timeout === firstState.activeProfile.requestTimeoutMs / 1_000
+      && generatedConfig.vlm?.max_retries === firstState.activeProfile.maxRetries
+      && generatedConfig.vlm?.max_concurrent === firstState.activeProfile.maxConcurrency
+      && generatedConfig.vlm?.backup === undefined
+      && generatedConfig.vlm?.credentials === undefined;
+
+    const taskFile = findArtifactFile(workspace, `${firstState.memoryCapability.taskId}.json`);
+    const task = taskFile ? JSON.parse(readFileSync(taskFile, "utf8")) : undefined;
+    const actualTaskUsage = task?.status === "completed"
+      && task?.task_type === "session_commit"
+      && task?.result?.token_usage?.llm?.prompt_tokens === firstState.memoryCapability.usage.promptTokens
+      && task?.result?.token_usage?.llm?.completion_tokens === firstState.memoryCapability.usage.completionTokens
+      && task?.result?.token_usage?.llm?.total_tokens === firstState.memoryCapability.usage.totalTokens;
+    const probeSessionId = task?.resource_id;
+    const sessionResponse = typeof probeSessionId === "string"
+      ? await fetch(`http://127.0.0.1:${port}/api/v1/sessions/${encodeURIComponent(probeSessionId)}`)
+      : undefined;
+    const sessionBody = sessionResponse ? await sessionResponse.json() : undefined;
+    const actualProbeSessionCleaned = sessionBody?.status === "error";
+
+    const usageDatabase = join(workspace, "_system/usage_audit/usage_audit.sqlite3");
+    const usageResult = spawnSync(pythonCommand, [
+      "-c",
+      "import json, sqlite3, sys; c=sqlite3.connect(sys.argv[1]); c.row_factory=sqlite3.Row; print(json.dumps([dict(r) for r in c.execute(\"SELECT source, token_type, provider, model_name, token_count FROM usage_token_hourly WHERE source='vlm'\")]))",
+      usageDatabase,
+    ], { encoding: "utf8" });
+    const usageRows = usageResult.status === 0 ? JSON.parse(usageResult.stdout) : [];
+    const actualProviderUsageBound = usageRows.some((row) => row.provider === validationSuite.models.memoryProvider
+      && row.model_name === validationSuite.models.memoryRoute
+      && row.token_type === "input"
+      && row.token_count > 0)
+      && usageRows.some((row) => row.provider === validationSuite.models.memoryProvider
+        && row.model_name === validationSuite.models.memoryRoute
+        && row.token_type === "output"
+        && row.token_count > 0)
+      && usageRows.every((row) => row.provider === validationSuite.models.memoryProvider
+        && row.model_name === validationSuite.models.memoryRoute);
+
+    const firstChildPid = firstState.childPid;
+    process.kill(firstChildPid, "SIGTERM");
+    const interruptedState = await waitFor(async () => {
+      const state = await readRuntimeState(root, env);
+      return state?.phase === "failed" && !state.requestReady ? state : undefined;
+    }, "actual capability revocation after process exit", 30_000);
+    const actualProcessExitRevokesCapability = interruptedState.serviceReady === false
+      && interruptedState.memoryCapability === undefined
+      && !processAlive(firstChildPid);
+
+    recoveredState = await requestOpenVikingRestart(root, env);
+    const recoveredBinding = {
+      launchId: recoveredState.launchId,
+      childPid: recoveredState.childPid,
+      settingsFingerprint: recoveredState.activeSettingsFingerprint,
+      configFingerprint: recoveredState.activeConfigFingerprint,
+      profile: recoveredState.activeProfile,
+      profileFingerprint: recoveredState.activeProfileFingerprint,
+    };
+    const actualExplicitGenerationRecovery = recoveredState.childPid !== firstChildPid
+      && recoveredState.memoryCapability?.proofId !== firstState.memoryCapability.proofId
+      && memoryCapabilityMatches(recoveredState.memoryCapability, recoveredBinding);
+
+    const checks = {
+      actualCapabilityPublished,
+      actualProfileApplied,
+      actualTaskUsage,
+      actualProbeSessionCleaned,
+      actualProviderUsageBound,
+      actualProcessExitRevokesCapability,
+      actualExplicitGenerationRecovery,
+    };
+    const artifact = {
+      models: {
+        provider: validationSuite.models.memoryProvider,
+        model: validationSuite.models.memoryRoute,
+        api: firstState.activeProfile.api,
+      },
+      profileFingerprint: firstState.activeProfileFingerprint,
+      first: {
+        launchId: firstState.launchId,
+        childPid: firstState.childPid,
+        proofId: firstState.memoryCapability.proofId,
+        taskId: firstState.memoryCapability.taskId,
+        usage: firstState.memoryCapability.usage,
+        assemblyHash: firstState.memoryCapability.assemblyHash,
+      },
+      recovered: {
+        launchId: recoveredState.launchId,
+        childPid: recoveredState.childPid,
+        proofId: recoveredState.memoryCapability.proofId,
+        taskId: recoveredState.memoryCapability.taskId,
+        usage: recoveredState.memoryCapability.usage,
+        assemblyHash: recoveredState.memoryCapability.assemblyHash,
+      },
+      usageRows,
+      checks,
+    };
+    writeJson(join(caseDir, "actual-runtime.json"), artifact);
+    return { checks, artifact };
+  } finally {
+    await stopLauncher(managedLauncher).catch(() => undefined);
+    const output = Buffer.concat([...stdout, ...stderr]).toString("utf8");
+    writeFileSync(join(caseDir, "launcher.log"), output.replaceAll(credential.environment[credentialVariable], "<redacted>"), { mode: 0o600 });
+  }
+}
+
 const startedAt = new Date().toISOString();
 console.error("[memory-model-runtime] configuration");
 const configuration = await validateConfiguration();
@@ -1198,13 +1549,15 @@ console.error("[memory-model-runtime] launcher and Pi commands");
 const launcher = await validateLauncherAndCommands();
 console.error("[memory-model-runtime] ownership boundaries");
 const ownership = await validateOwnershipBoundaries();
-const checks = { ...configuration.checks, ...launcher.checks, ...ownership.checks };
+console.error("[memory-model-runtime] actual managed capability");
+const actual = await validateActualManagedCapability();
+const checks = { ...configuration.checks, ...launcher.checks, ...ownership.checks, ...actual.checks };
 const passed = Object.values(checks).every(Boolean);
 const completedAt = new Date().toISOString();
 const rawEvidence = {
   schemaVersion: STABLE_EVIDENCE_SCHEMA_VERSION,
   generatedBy: "scripts/validate-memory-model-runtime.mjs",
-  scope: "local",
+  scope: "managed-provider-runtime",
   runId,
   startedAt,
   completedAt,
@@ -1215,12 +1568,13 @@ const rawEvidence = {
   vlmSchemaSha256: configuration.capabilities.vlmSchemaSha256,
   adapterContractSha256: configuration.capabilities.adapterContractSha256,
   implementation,
+  actual: actual.artifact,
   passed,
   checks,
   limitations: [
-    "The local scope uses a protocol-compatible OpenViking process double and makes no external Provider requests.",
-    "Working Memory protocol and automatic Pi context adoption have separate local evidence; the paired quality runner records the selected real memory adapter semantics.",
-    "One fixed paired task-quality sample exists; general task quality and complete API-cost attribution remain outside this local runner.",
+    "The controlled process double covers deterministic protocol, ownership, failure, and recovery branches; the managed-provider arm proves the production probe against the suite-selected real memory route.",
+    "Checkpoint refresh remains outside this capability-gate delivery.",
+    "General task quality and complete API-cost attribution remain later product stages.",
   ],
 };
 assertImplementationEvidenceUnchanged(root, "memory-model-runtime", implementation);
@@ -1237,6 +1591,7 @@ replaceJson(evidencePath, {
   vlmSchemaSha256: rawEvidence.vlmSchemaSha256,
   adapterContractSha256: rawEvidence.adapterContractSha256,
   implementation,
+  actual: rawEvidence.actual,
   passed,
   checks,
   limitations: rawEvidence.limitations,

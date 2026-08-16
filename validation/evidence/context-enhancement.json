@@ -2,9 +2,9 @@
   "schemaVersion": 2,
   "generatedBy": "scripts/validate-context-enhancement.mjs",
   "scope": "local",
-  "runId": "context-enhancement-2026-08-15T21-00-06-732Z",
-  "startedAt": "2026-08-15T21:00:06.743Z",
-  "completedAt": "2026-08-15T21:00:15.207Z",
+  "runId": "context-enhancement-2026-08-16T04-08-13-548Z",
+  "startedAt": "2026-08-16T04:08:13.558Z",
+  "completedAt": "2026-08-16T04:08:22.832Z",
   "piVersion": "0.84.2",
   "nodeVersion": "24.15.0",
   "piProtocolProfile": "pi-provider-protocol-v1",
@@ -17,11 +17,11 @@
     "name": "bounded-context-route-continuity"
   },
   "implementation": {
-    "sourceManifestSha256": "f6d252f1c317fb3aa7b1752fa21bcb86141e7e523fa073c90de98abc178974ca",
+    "sourceManifestSha256": "d978784c1991f0ca3686d4c3713e3806096155fdac93c2d4fe4962a27ab5073f",
     "files": [
       {
         "path": ".pi/extensions/pi-context-memory/index.ts",
-        "sha256": "6c4b6c4a64e7a2b2e354e23882f7759b697c3abfd656503d293c3bff86de7c82"
+        "sha256": "294bbc93efb44e7e125fe6344cc4ebbb17977442d1044fa6c06c70372f757e85"
       },
       {
         "path": ".pi/extensions/pi-context-memory/long-term-memory.ts",
@@ -29,11 +29,19 @@
       },
       {
         "path": ".pi/extensions/pi-context-memory/memory-model-configuration.ts",
-        "sha256": "b2c752817d11894e06aa5150d1a98e3052de9559a308f51cd9468a5ccd3a0d9d"
+        "sha256": "5b2df81612f5d7b1bd7efd4d08c7badaa4a41569cab784c41e3573d3ac510d8c"
+      },
+      {
+        "path": ".pi/extensions/pi-context-memory/memory-runtime-capability.ts",
+        "sha256": "8d77b15f5239fd5081e243005916d490ed8d824c4f992f6979b18ade931267e0"
+      },
+      {
+        "path": ".pi/extensions/pi-context-memory/memory-runtime-profile.ts",
+        "sha256": "802a1df5ba9e1d459e2f97a836d772e8eca39527e3bb2ead9e89585b1241f452"
       },
       {
         "path": ".pi/extensions/pi-context-memory/openviking-protocol.ts",
-        "sha256": "ca435ae48adf4e7d3f0051e0b3e89bb018095ce0493dcc647efc1e9f0a9b5a08"
+        "sha256": "af2d47062ac74385c6fe3f9892255f199753c58d36eaf2f1404adbbe05083a7b"
       },
       {
         "path": ".pi/extensions/pi-context-memory/pi-session-protocol.ts",
@@ -41,7 +49,7 @@
       },
       {
         "path": ".pi/extensions/pi-context-memory/provider-payload-proof.ts",
-        "sha256": "254a012c081d193f8c8296afdeeac723fd0d7324449c4597e0cd26ec1b12fa01"
+        "sha256": "61b979899e398ba717e51454964bb64eba465059b542a5e5802914bc5e89fc6d"
       },
       {
         "path": ".pi/extensions/pi-context-memory/session-memory-coordination.ts",
@@ -77,11 +85,11 @@
       },
       {
         "path": "scripts/validate-context-enhancement.mjs",
-        "sha256": "73ffb13c366b492bf2ee3a2d89528c29d5cf568508de5cfdb07a822b84c8138c"
+        "sha256": "91093fd3f14606da88f18ef40c5ded7af8d47088ab0ae91489f4981094e688f1"
       },
       {
         "path": "scripts/validation-evidence.mjs",
-        "sha256": "c769b4ee116bba775961c0b7ce48571a4df3c52061d51cf95d6e0285f5a221ae"
+        "sha256": "e29e88a7f8349a878bbdd54946d8293f0b52728b11088a00e4df88a756566e1f"
       },
       {
         "path": "scripts/validation-suite.mjs",
@@ -92,7 +100,7 @@
         "sha256": "8aed19f4611f47d8d000b89e6901727cd213282849e6faf5a5d1a4adda724694"
       }
     ],
-    "specificationManifestSha256": "4a3f4a11ef0d2567a971c8790ca3e3b153229145e4c1df0260a9c36e6bdb999a",
+    "specificationManifestSha256": "9c8f0f7df54fc31e008b93775f4b02488ce5f502757b229add5eec36798766c7",
     "specificationFiles": [
       {
         "path": "config/toolchain.json",
@@ -100,11 +108,11 @@
       },
       {
         "path": "docs/validation/README.md",
-        "sha256": "fcb69766fc4b3de4fef7ffc2731ff6fd2b7897c9f67047eeb0a417ad8f4ee40a"
+        "sha256": "9fb53547a6bb0b6d720d44e095b81e3fd99dc47ce350c33faf2d58469440b52e"
       },
       {
         "path": "docs/validation/context-enhancement-state.md",
-        "sha256": "c74d995db95d0faa261647ccd44b7ace9fbe4c00fd54729a530b82c865d76068"
+        "sha256": "82bb5313921a8f5e8060012b92570876b75352db3aa7a83a9eb32e60848f3cda"
       },
       {
         "path": "pyproject.toml",
@@ -115,7 +123,7 @@
         "sha256": "2f34c5cec5f73f972887aaeb0ad7decf734500911f7ea0412061d33deb3d139b"
       }
     ],
-    "gitCommit": "58e68da7474569e78aea01ba4e6cf7ec06074491",
+    "gitCommit": "d200dbd9eadc7aec7ea585d4a823abb3a8f2e2f5",
     "workingTreeDirty": true
   },
   "passed": true,
@@ -170,6 +178,7 @@
     "hookOutcomeAccounting": true,
     "transportObservedIndependently": true,
     "inFlightContextWaitAdopted": true,
+    "runtimeRevocationAtHookBlocked": true,
     "desiredConfigDoesNotDisableRuntime": true,
     "providerPayloadCurrentTurn": true,
     "piCurrentTurnRaw": true,
@@ -191,16 +200,16 @@
   },
   "details": {
     "routes": {
-      "common": "e66c0ce817ce31dc0d8a88503c3c30eebc3c084c19b44ef4bdd79ae1bcda32e5",
-      "branchA": "96bcb75bd5a7b75364a5827406e42b8a331dcd318b1756a4ca7a6cc32d787732",
-      "branchB": "07c9147aa076597200316e01f7619dc2449d521162aee7abf551427cd6b0d0c1",
-      "afterCompaction": "b747d3467dbefb1cf08202a9c7fd8185ec3e33133524be9a57b95f84994ebaa0"
+      "common": "ba4ca08286fc040ea72465e939553cc7e9594be46e42d5ddc9de195e20d23cbb",
+      "branchA": "ba2b608ac345587e98c4ff268087a98773f7eaaa7f4c728db6a940f2657b70cc",
+      "branchB": "072e254c2645d6d149a5830e5033d8f9820df575f2f2a9cd35b986747d442a8c",
+      "afterCompaction": "8eeedfe8a21bdc33575aa5f1a21ece498a34e02ebe0cff8225062a1f41036edf"
     },
     "openViking": {
-      "sessionsCreated": 28,
-      "sessionsDeleted": 28,
+      "sessionsCreated": 30,
+      "sessionsDeleted": 30,
       "tasks": 15,
-      "requests": 1068
+      "requests": 1003
     },
     "context": {
       "branchAChars": 1111,
@@ -209,16 +218,16 @@
       "branchBEstimatedTokens": 349
     },
     "pi": {
-      "providerRequests": 35,
-      "contextAllowed": 29,
-      "contextBlocked": 4,
+      "providerRequests": 33,
+      "contextAllowed": 28,
+      "contextBlocked": 6,
       "hookOutcomes": {
-        "verified": 29,
-        "rejected": 0,
+        "verified": 27,
+        "rejected": 1,
         "no-constructed-output": 0
       },
       "transport": {
-        "adopted": 29,
+        "adopted": 27,
         "changed": 0,
         "unobserved": 0
       },
@@ -241,10 +250,10 @@
           "rawToolBatches": 0,
           "projectedToolBatches": 1,
           "projectedSourceEntryIds": [
-            "35719a8a",
-            "c2ae5c75",
-            "aa43321d",
-            "83f2de1f"
+            "048a3eba",
+            "c8e723b4",
+            "db10279a",
+            "e7cad057"
           ],
           "providerMessageTokenUpperBound": 9006,
           "providerMessageTokenBudget": 24228
@@ -286,7 +295,7 @@
           "compaction": 3,
           "starts": 10,
           "shutdowns": 5,
-          "providerRequests": 29
+          "providerRequests": 28
         }
       }
     }

@@ -2,16 +2,16 @@
   "schemaVersion": 2,
   "generatedBy": "scripts/validate-source-archive.mjs",
   "scope": "local",
-  "runId": "source-archive-2026-08-15T20-59-42-700Z",
-  "recordedAt": "2026-08-15T20:59:43.370Z",
+  "runId": "source-archive-2026-08-16T04-10-10-237Z",
+  "recordedAt": "2026-08-16T04:10:10.915Z",
   "piVersion": "0.84.2",
   "nodeVersion": "24.15.0",
   "implementation": {
-    "sourceManifestSha256": "bc13c176f09e6b3ea59435564ee14ff2af7585d901f5a7fe46b59f0f0f338c47",
+    "sourceManifestSha256": "4570e9fae5a74299e4b0415ba31ba80c454aa70137b1374ac1ea14a6d315923d",
     "files": [
       {
         "path": ".pi/extensions/pi-context-memory/index.ts",
-        "sha256": "6c4b6c4a64e7a2b2e354e23882f7759b697c3abfd656503d293c3bff86de7c82"
+        "sha256": "294bbc93efb44e7e125fe6344cc4ebbb17977442d1044fa6c06c70372f757e85"
       },
       {
         "path": ".pi/extensions/pi-context-memory/long-term-memory.ts",
@@ -19,11 +19,19 @@
       },
       {
         "path": ".pi/extensions/pi-context-memory/memory-model-configuration.ts",
-        "sha256": "b2c752817d11894e06aa5150d1a98e3052de9559a308f51cd9468a5ccd3a0d9d"
+        "sha256": "5b2df81612f5d7b1bd7efd4d08c7badaa4a41569cab784c41e3573d3ac510d8c"
+      },
+      {
+        "path": ".pi/extensions/pi-context-memory/memory-runtime-capability.ts",
+        "sha256": "8d77b15f5239fd5081e243005916d490ed8d824c4f992f6979b18ade931267e0"
+      },
+      {
+        "path": ".pi/extensions/pi-context-memory/memory-runtime-profile.ts",
+        "sha256": "802a1df5ba9e1d459e2f97a836d772e8eca39527e3bb2ead9e89585b1241f452"
       },
       {
         "path": ".pi/extensions/pi-context-memory/openviking-protocol.ts",
-        "sha256": "ca435ae48adf4e7d3f0051e0b3e89bb018095ce0493dcc647efc1e9f0a9b5a08"
+        "sha256": "af2d47062ac74385c6fe3f9892255f199753c58d36eaf2f1404adbbe05083a7b"
       },
       {
         "path": ".pi/extensions/pi-context-memory/pi-session-protocol.ts",
@@ -31,7 +39,7 @@
       },
       {
         "path": ".pi/extensions/pi-context-memory/provider-payload-proof.ts",
-        "sha256": "254a012c081d193f8c8296afdeeac723fd0d7324449c4597e0cd26ec1b12fa01"
+        "sha256": "61b979899e398ba717e51454964bb64eba465059b542a5e5802914bc5e89fc6d"
       },
       {
         "path": ".pi/extensions/pi-context-memory/recall-and-provenance.ts",
@@ -71,14 +79,14 @@
       },
       {
         "path": "scripts/validation-evidence.mjs",
-        "sha256": "c769b4ee116bba775961c0b7ce48571a4df3c52061d51cf95d6e0285f5a221ae"
+        "sha256": "e29e88a7f8349a878bbdd54946d8293f0b52728b11088a00e4df88a756566e1f"
       },
       {
         "path": "scripts/validation-suite.mjs",
         "sha256": "2765892ccbc87857965e22ff8a2163bc0bf4d089fe04bc913c1ce5d78f3e58f5"
       }
     ],
-    "specificationManifestSha256": "c48f608347a3b53e98be199445d555e9041971a20001469691aaa988816a716a",
+    "specificationManifestSha256": "ef6ce90e6b0ea35159628ecef6f67987f8f26dd3a868a366df8fa5e1ab8fdf8c",
     "specificationFiles": [
       {
         "path": "config/toolchain.json",
@@ -86,7 +94,7 @@
       },
       {
         "path": "docs/validation/README.md",
-        "sha256": "fcb69766fc4b3de4fef7ffc2731ff6fd2b7897c9f67047eeb0a417ad8f4ee40a"
+        "sha256": "9fb53547a6bb0b6d720d44e095b81e3fd99dc47ce350c33faf2d58469440b52e"
       },
       {
         "path": "docs/validation/source-archive.md",
@@ -97,7 +105,7 @@
         "sha256": "2f34c5cec5f73f972887aaeb0ad7decf734500911f7ea0412061d33deb3d139b"
       }
     ],
-    "gitCommit": "58e68da7474569e78aea01ba4e6cf7ec06074491",
+    "gitCommit": "d200dbd9eadc7aec7ea585d4a823abb3a8f2e2f5",
     "workingTreeDirty": true
   },
   "passed": true,
