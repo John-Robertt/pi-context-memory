@@ -2,9 +2,9 @@
   "schemaVersion": 2,
   "generatedBy": "scripts/validate-context-enhancement.mjs",
   "scope": "local",
-  "runId": "context-enhancement-2026-08-16T06-07-50-534Z",
-  "startedAt": "2026-08-16T06:07:50.547Z",
-  "completedAt": "2026-08-16T06:08:03.088Z",
+  "runId": "context-enhancement-2026-08-16T07-21-19-421Z",
+  "startedAt": "2026-08-16T07:21:19.432Z",
+  "completedAt": "2026-08-16T07:21:35.636Z",
   "piVersion": "0.84.2",
   "nodeVersion": "24.15.0",
   "piProtocolProfile": "pi-provider-protocol-v1",
@@ -17,11 +17,11 @@
     "name": "bounded-context-route-continuity"
   },
   "implementation": {
-    "sourceManifestSha256": "320d3a5f395f9cdc3e2ce4483d1eb895f30dfdbb6891bd5f89278914899b98eb",
+    "sourceManifestSha256": "2f0f6045cd558a3dd71cbe058a13108b686a53d81acebcf6a43b352b8cf92503",
     "files": [
       {
         "path": ".pi/extensions/pi-context-memory/index.ts",
-        "sha256": "877d471c12c3a188d0bf73fa80e9b49a18a7edcd60390bcd7dff6bc62266fe51"
+        "sha256": "01055909b9d80c9bb2a310c7831b449eee492fab45e0b7cbef97d18f8e8a1ddb"
       },
       {
         "path": ".pi/extensions/pi-context-memory/long-term-memory.ts",
@@ -42,6 +42,10 @@
       {
         "path": ".pi/extensions/pi-context-memory/openviking-protocol.ts",
         "sha256": "af2d47062ac74385c6fe3f9892255f199753c58d36eaf2f1404adbbe05083a7b"
+      },
+      {
+        "path": ".pi/extensions/pi-context-memory/pi-footer-adapter.ts",
+        "sha256": "ba9e1e713325f51733aed689eb63f9f9da1bdf513be7a9db43d9d6b0b94367f1"
       },
       {
         "path": ".pi/extensions/pi-context-memory/pi-session-protocol.ts",
@@ -85,11 +89,11 @@
       },
       {
         "path": "scripts/validate-context-enhancement.mjs",
-        "sha256": "c3f47d591b36070691438b2c58118e44cb73c71cac2ab920aaf9371d6c139e6d"
+        "sha256": "560a82b7efc95e502b05218c73e203c6f89e4882d36b9c8fb77f2492f930708e"
       },
       {
         "path": "scripts/validation-evidence.mjs",
-        "sha256": "748b89d5d25bd7d6d16b19882de4e58b9046b50c5997932acad4390c5b29b668"
+        "sha256": "3b88004f8be1d57be56cff3afd9e21594048102cb7bc7ae814a847fb7afa44e7"
       },
       {
         "path": "scripts/validation-suite.mjs",
@@ -97,10 +101,10 @@
       },
       {
         "path": "validation/fixtures/context-enhancement-long-task.json",
-        "sha256": "8aed19f4611f47d8d000b89e6901727cd213282849e6faf5a5d1a4adda724694"
+        "sha256": "c1234ea47dd3f1f673bc2acc304f61ca2d899cf318351d0603699205885087a3"
       }
     ],
-    "specificationManifestSha256": "9ea911fcf02aab2ed45621b71ce96a3ed329ded42d70d7b292be870eb9218c36",
+    "specificationManifestSha256": "4cc633c506f6975b0bbeb587b2347978cfb2efb061140d97309375812b47af5f",
     "specificationFiles": [
       {
         "path": "config/toolchain.json",
@@ -112,7 +116,7 @@
       },
       {
         "path": "docs/validation/context-enhancement-state.md",
-        "sha256": "dfc3f2ed054bf78ac6946b9182b9fc93871fd59b2681bb43b15ece5e095f6699"
+        "sha256": "3168b4510da1d2b4255fa027848f0ab86ab4c74aee5f54423dd0c8b48ad73c9a"
       },
       {
         "path": "pyproject.toml",
@@ -123,7 +127,7 @@
         "sha256": "2f34c5cec5f73f972887aaeb0ad7decf734500911f7ea0412061d33deb3d139b"
       }
     ],
-    "gitCommit": "9d973c0c5c5ff46fa0d5d0eb8c537721fb3c3b5a",
+    "gitCommit": "6c8cd721bd613f38cc67e40dcb26907ac74368fb",
     "workingTreeDirty": true
   },
   "passed": true,
@@ -143,6 +147,7 @@
     "contextBounded": true,
     "sourceIdsPreserved": true,
     "compactionBoundary": true,
+    "summaryContaminationIsolated": true,
     "currentTurnPreserved": true,
     "requestRouteMutationRejected": true,
     "currentTurnProjected": true,
@@ -184,6 +189,7 @@
     "inFlightContextWaitAdopted": true,
     "runtimeRevocationAtHookBlocked": true,
     "desiredConfigDoesNotDisableRuntime": true,
+    "footerAdapterLifecycle": true,
     "providerPayloadCurrentTurn": true,
     "piCurrentTurnRaw": true,
     "piCurrentTurnProjected": true,
@@ -204,16 +210,16 @@
   },
   "details": {
     "routes": {
-      "common": "720696b0cb9f6d911b5bd6216b850f4a049885ba650fe756bdbc09d8772020fd",
-      "branchA": "fa89881425b255a2a72e88cca53506462b47cbfc959a3909327319e02d1a6cf3",
-      "branchB": "00b9ef5c086bcaed098c662da2373770909f8bee287988c832a05e63f8198929",
-      "afterCompaction": "26eab55292ad5fb44919654c5982faab156a925fd1029dc7d5aced58c0f95bb8"
+      "common": "a28eefad5d18c2488a70f05b6982163bf892a832c5e54d289e0691650b2bbd0f",
+      "branchA": "ec3fbaf9f43c2d82becff55dcfea23de8739aaf0de8dbd497efd2e39920c1625",
+      "branchB": "2e4b28fd882f51bc71d2699c2dc87871c13dd4e60e73a302d3646ae717083224",
+      "afterCompaction": "96ba8664cb59e931c13b853450d6879a40144becbf2692a16ecdb1b4ebe7bf93"
     },
     "openViking": {
-      "sessionsCreated": 36,
-      "sessionsDeleted": 36,
-      "tasks": 54,
-      "requests": 1387
+      "sessionsCreated": 32,
+      "sessionsDeleted": 32,
+      "tasks": 51,
+      "requests": 1631
     },
     "context": {
       "branchAChars": 1116,
@@ -221,17 +227,27 @@
       "compactedChars": 804,
       "branchBEstimatedTokens": 277
     },
+    "summaryContamination": {
+      "authorityHits": [
+        "PCR_SUMMARY_CONTAMINATION_BRANCH",
+        "PCR_SUMMARY_CONTAMINATION_COMPACTION",
+        "PCR_SUMMARY_CONTAMINATION_RETAINED_TAIL"
+      ],
+      "memoryProjectionHits": [],
+      "openVikingAppendHits": [],
+      "workingContextHits": []
+    },
     "pi": {
-      "providerRequests": 36,
-      "contextAllowed": 31,
+      "providerRequests": 30,
+      "contextAllowed": 30,
       "contextBlocked": 2,
       "hookOutcomes": {
-        "verified": 30,
+        "verified": 29,
         "rejected": 1,
         "no-constructed-output": 0
       },
       "transport": {
-        "adopted": 30,
+        "adopted": 29,
         "changed": 0,
         "unobserved": 0
       },
@@ -254,10 +270,10 @@
           "rawToolBatches": 0,
           "projectedToolBatches": 1,
           "projectedSourceEntryIds": [
-            "f07aa901",
-            "ebf9b284",
-            "0a42c3ca",
-            "da7d89c9"
+            "b9c2746f",
+            "9c4bc733",
+            "3c2dcd34",
+            "1a14396e"
           ],
           "providerMessageTokenUpperBound": 9766,
           "providerMessageTokenBudget": 24228
@@ -277,29 +293,42 @@
           "增强记忆 · 故障"
         ]
       },
+      "footer": {
+        "installed": true,
+        "uninstalled": true,
+        "model": true,
+        "usage": true,
+        "context": true,
+        "branch": true,
+        "marker": true,
+        "authorizationIndependent": true
+      },
       "lifecycle": {
         "treeRoundTrip": true,
-        "treeSummaryChoices": true,
+        "treeSummarySuppression": true,
+        "treeHostMismatchDiagnosed": true,
+        "treeHandlerOrderObserved": true,
         "treeCancellationState": true,
         "rootNavigation": true,
         "treeProviderAdoption": true,
         "replacements": true,
         "replacementProviderAdoption": true,
         "reload": true,
-        "compactionReasons": true,
-        "overflowRetryAuthorized": true,
-        "compactionCancellationState": true,
-        "compactionProviderAdoption": true,
+        "compactionSuppression": true,
+        "overflowRetrySuppressed": true,
+        "compactionContinuationAdopted": true,
         "backgroundRefreshFailureRetainsAuthorization": true,
         "archiveRecovery": true,
         "providerStateConsistent": true,
         "memoryStatusLifecycle": true,
         "eventCounts": {
-          "tree": 6,
-          "compaction": 3,
+          "tree": 8,
+          "compactionRequests": 4,
+          "compactionEntries": 0,
+          "hostBehaviorUnverified": 1,
           "starts": 10,
           "shutdowns": 5,
-          "providerRequests": 31
+          "providerRequests": 30
         }
       }
     }

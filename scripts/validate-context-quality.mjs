@@ -53,6 +53,11 @@ if (suite.diagnostics.pairedQualityRepetitions !== 1) {
 }
 const { task: taskModel, memory: memoryModel } = readValidationModels(root);
 const fixture = JSON.parse(readFileSync(fixturePath, "utf8"));
+const SUMMARY_CONTAMINATION_SENTINELS = [
+  "PCR_SUMMARY_CONTAMINATION_BRANCH",
+  "PCR_SUMMARY_CONTAMINATION_COMPACTION",
+  "PCR_SUMMARY_CONTAMINATION_RETAINED_TAIL",
+];
 const implementation = captureImplementationEvidence(root, "context-quality");
 const startedAt = new Date().toISOString();
 mkdirSync(artifactRoot, { recursive: true });
@@ -511,6 +516,32 @@ async function runArm(name, model, openViking) {
     const assistantEntry = [...requestEntries].reverse().find((entry) =>
       entry.type === "message" && entry.message?.role === "assistant");
     assert(assistantEntry, `${name} request did not persist an assistant result`);
+    let hostCompatibility = null;
+    if (name === "enhanced") {
+      const observationOffset = readObservations(observationLog).length;
+      const providerPayloadsBefore = readObservations(conditionLog)
+        .filter((record) => record.type === "provider-payload").length;
+      const branchSummariesBefore = readObservations(sessionPath).filter((entry) => entry.type === "branch_summary").length;
+      await client.send("prompt", { message: "/quality-fill" });
+      const compactCancelled = await client.send("compact")
+        .then(() => false, (error) => String(error?.message ?? error).includes("cancelled"));
+      await client.send("prompt", { message: "/quality-tree a0000002" });
+      const compatibilityObservations = readObservations(observationLog).slice(observationOffset);
+      const providerPayloadsAfter = readObservations(conditionLog)
+        .filter((record) => record.type === "provider-payload").length;
+      const branchSummariesAfter = readObservations(sessionPath).filter((entry) => entry.type === "branch_summary").length;
+      hostCompatibility = {
+        compactionSuppressed: compactCancelled
+          && compatibilityObservations.some((event) => event.type === "session_before_compact" && event.decision === "cancel")
+          && !compatibilityObservations.some((event) => event.type === "session_compact"),
+        treeSummarySuppressed: compatibilityObservations.some((event) => event.type === "session_tree"
+          && event.requestedDecision === "empty-summary"
+          && event.summaryEntryId === undefined
+          && event.hostBehavior === "observed")
+          && branchSummariesAfter === branchSummariesBefore,
+        summaryProviderRequests: providerPayloadsAfter - providerPayloadsBefore,
+      };
+    }
     const stats = await client.send("get_session_stats");
     const { sessionFile: _sessionFile, sessionId: _sessionId, ...qualityStats } = stats.data;
     const text = assistantEntryText(assistantEntry);
@@ -525,13 +556,18 @@ async function runArm(name, model, openViking) {
         && event.hookOutcome === "verified"
         && event.contextAuthorization === "allowed")
       : null;
-    const condition = readObservations(conditionLog).at(-1);
+    const conditionRecords = readObservations(conditionLog);
+    const condition = conditionRecords.find((record) => record.type === "before-agent");
+    const providerPayloadObservations = conditionRecords.filter((record) => record.type === "provider-payload");
+    const authoritySummaryContaminationHits = SUMMARY_CONTAMINATION_SENTINELS.filter((sentinel) =>
+      readFileSync(sessionPath, "utf8").includes(sentinel));
     return {
       text,
       textSha256: sha256(text),
       checker: checker(text),
       hookVerified,
       model: state.model ? `${state.model.provider}/${state.model.id}` : undefined,
+      hostCompatibility,
       condition,
       stats: qualityStats,
       requestResult,
@@ -540,6 +576,9 @@ async function runArm(name, model, openViking) {
           && event.outcome === "accepted"
           && event.hasWorkingMemory === true).length,
         hookVerifiedRequests: observations.filter((event) => event.type === "before_provider_request" && event.hookOutcome === "verified").length,
+        providerPayloads: providerPayloadObservations.length,
+        authoritySummaryContaminationHits,
+        summaryContaminationHits: providerPayloadObservations.flatMap((record) => record.summaryContaminationHits ?? []),
       },
     };
   } catch (error) {
@@ -625,8 +664,10 @@ writeFileSync(observerPath, [
   "import { appendFileSync } from \"node:fs\";",
   "export default function qualityObserver(pi) {",
   "  pi.on(\"session_start\", () => pi.setActiveTools([]));",
+  "  pi.registerCommand(\"quality-tree\", { description: \"Run current-host tree suppression probe\", handler: async (args, ctx) => { await ctx.navigateTree(args.trim(), { summarize: true }); } });",
+  "  pi.registerCommand(\"quality-fill\", { description: \"Create compaction pressure without a Provider request\", handler: async () => { for (let index = 0; index < 6; index += 1) pi.sendMessage({ customType: \"quality-neutral-fill\", content: \"controlled neutral compaction filler \".repeat(1000), display: false }); } });",
   "  pi.on(\"before_agent_start\", (event, ctx) => {",
-  "    const record = {",
+  "    const record = { type: \"before-agent\",",
   "      model: ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined,",
   "      modelHash: createHash(\"sha256\").update(JSON.stringify(ctx.model ?? null)).digest(\"hex\"),",
   "      thinking: ctx.thinkingLevel,",
@@ -637,6 +678,12 @@ writeFileSync(observerPath, [
   "      ambientOpenRouterCredentialPresent: Object.hasOwn(process.env, \"OPENROUTER_API_KEY\"),",
   "      systemPromptHash: createHash(\"sha256\").update(event.systemPrompt).digest(\"hex\"),",
   "    };",
+  "    appendFileSync(process.env.PCR_QUALITY_ARM_OBSERVATION, `${JSON.stringify(record)}\\n`, \"utf8\");",
+  "  });",
+  "  pi.on(\"before_provider_request\", (event) => {",
+  `    const sentinels = ${JSON.stringify(SUMMARY_CONTAMINATION_SENTINELS)};`,
+  "    const serialized = JSON.stringify(event.payload);",
+  "    const record = { type: \"provider-payload\", payloadHash: createHash(\"sha256\").update(serialized).digest(\"hex\"), summaryContaminationHits: sentinels.filter((sentinel) => serialized.includes(sentinel)) };",
   "    appendFileSync(process.env.PCR_QUALITY_ARM_OBSERVATION, `${JSON.stringify(record)}\\n`, \"utf8\");",
   "  });",
   "}",
@@ -757,11 +804,22 @@ try {
     actualCheckpointRequiredWait: actualCheckpointFlow.requiredWait,
     actualCheckpointRequestParallel: actualCheckpointFlow.requestContinuedBeforeRefresh,
     actualCheckpointBackgroundAccepted: actualCheckpointFlow.backgroundAccepted,
+    actualHostCompatibility: enhanced.hostCompatibility?.compactionSuppressed === true
+      && enhanced.hostCompatibility?.treeSummarySuppressed === true
+      && enhanced.hostCompatibility?.summaryProviderRequests === 0,
     memoryUsageAttributed: memoryTokenUsage.length === 2
       && memoryTokenUsage.some((row) => row.token_type === "input" && row.token_count > 0)
       && memoryTokenUsage.some((row) => row.token_type === "output" && row.token_count > 0)
       && memoryTotalTokens > 0,
     sameTaskModel: native.model === taskModel && enhanced.model === taskModel,
+    summaryContaminationIsolated: JSON.stringify(native.observations.authoritySummaryContaminationHits)
+      === JSON.stringify(SUMMARY_CONTAMINATION_SENTINELS)
+      && JSON.stringify(enhanced.observations.authoritySummaryContaminationHits)
+        === JSON.stringify(SUMMARY_CONTAMINATION_SENTINELS)
+      && JSON.stringify(native.observations.summaryContaminationHits)
+        === JSON.stringify(["PCR_SUMMARY_CONTAMINATION_COMPACTION"])
+      && enhanced.observations.providerPayloads > 0
+      && enhanced.observations.summaryContaminationHits.length === 0,
     controlledMemoryAdapterSemanticsObserved: memoryRequestSemantics?.model === taskModel
       && memoryRequestSemantics.apiKeyForwarded === true
       && memoryRequestSemantics.reasoningForwarded === false

@@ -6,7 +6,7 @@
 
 来源、OpenViking Session 和记忆模型能力由长时记忆模块拥有；运行与路线决定由 Session 记忆协调拥有；有界消息构造由工作上下文优化拥有；排序与来源展开由召回模块拥有；OpenViking 子进程由项目启动器拥有。
 
-实现入口位于 [`.pi/extensions/pi-context-memory/index.ts`](../../.pi/extensions/pi-context-memory/index.ts)。跨模块流程见 [`../system/context-enhancement.md`](../system/context-enhancement.md)、[`../system/memory-model-runtime.md`](../system/memory-model-runtime.md)、[`../system/source-archiving.md`](../system/source-archiving.md) 和 [`../system/source-recall.md`](../system/source-recall.md)。
+实现入口位于 [`.pi/extensions/pi-context-memory/index.ts`](../../.pi/extensions/pi-context-memory/index.ts)；[`pi-footer-adapter.ts`](../../.pi/extensions/pi-context-memory/pi-footer-adapter.ts) 只负责从 Pi 公开 session/context/footer 数据形成可渲染的增强 footer 快照，并管理交互 footer 的安装与释放。跨模块流程见 [`../system/context-enhancement.md`](../system/context-enhancement.md)、[`../system/memory-model-runtime.md`](../system/memory-model-runtime.md)、[`../system/source-archiving.md`](../system/source-archiving.md) 和 [`../system/source-recall.md`](../system/source-recall.md)。
 
 ## 2. 输入与规范化边界
 

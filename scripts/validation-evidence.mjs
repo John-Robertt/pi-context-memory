@@ -10,6 +10,11 @@ import {
 } from "./validation-suite.mjs";
 
 export const STABLE_EVIDENCE_SCHEMA_VERSION = 2;
+const SUMMARY_CONTAMINATION_SENTINELS = [
+  "PCR_SUMMARY_CONTAMINATION_BRANCH",
+  "PCR_SUMMARY_CONTAMINATION_COMPACTION",
+  "PCR_SUMMARY_CONTAMINATION_RETAINED_TAIL",
+];
 const DEFINITIONS = {
   "source-archive": {
     current: true,
@@ -163,6 +168,7 @@ const DEFINITIONS = {
       "currentTurnRawPreserved",
       "currentTurnSourceBarrierBlocks",
       "desiredConfigDoesNotDisableRuntime",
+      "footerAdapterLifecycle",
       "hookOutcomeAccounting",
       "hookTransportStateConsistent",
       "hookVerifiedAtExtension",
@@ -209,6 +215,7 @@ const DEFINITIONS = {
       "slowWorkingMemoryCompletesWithinDeadline",
       "sourceIdsPreserved",
       "spoofedMarkerCannotAuthorize",
+      "summaryContaminationIsolated",
       "transportObservedIndependently",
       "treeLifecycle",
       "workingContextResponseNormalized",
@@ -218,6 +225,7 @@ const DEFINITIONS = {
     ],
     files: [
       ".pi/extensions/pi-context-memory/index.ts",
+      ".pi/extensions/pi-context-memory/pi-footer-adapter.ts",
       ".pi/extensions/pi-context-memory/openviking-protocol.ts",
       ".pi/extensions/pi-context-memory/pi-session-protocol.ts",
       ".pi/extensions/pi-context-memory/provider-payload-proof.ts",
@@ -246,6 +254,7 @@ const DEFINITIONS = {
       "actualCheckpointBackgroundAccepted",
       "actualCheckpointRequestParallel",
       "actualCheckpointRequiredWait",
+      "actualHostCompatibility",
       "credentialRoutedThroughInternalEnvironment",
       "taskPiCredentialEnvironmentExcluded",
       "enhancedContextHookVerified",
@@ -258,9 +267,11 @@ const DEFINITIONS = {
       "pairedConditions",
       "realWorkingMemoryReady",
       "sameTaskModel",
+      "summaryContaminationIsolated",
     ],
     files: [
       ".pi/extensions/pi-context-memory/index.ts",
+      ".pi/extensions/pi-context-memory/pi-footer-adapter.ts",
       ".pi/extensions/pi-context-memory/openviking-protocol.ts",
       ".pi/extensions/pi-context-memory/pi-session-protocol.ts",
       ".pi/extensions/pi-context-memory/provider-payload-proof.ts",
@@ -629,17 +640,18 @@ export function stableEvidenceMismatches(root, key, evidence) {
     const lifecycle = evidence?.details?.pi?.lifecycle;
     const requiredLifecycle = [
       "treeRoundTrip",
-      "treeSummaryChoices",
+      "treeSummarySuppression",
+      "treeHostMismatchDiagnosed",
+      "treeHandlerOrderObserved",
       "treeCancellationState",
       "rootNavigation",
       "treeProviderAdoption",
       "replacements",
       "replacementProviderAdoption",
       "reload",
-      "compactionReasons",
-      "overflowRetryAuthorized",
-      "compactionCancellationState",
-      "compactionProviderAdoption",
+      "compactionSuppression",
+      "overflowRetrySuppressed",
+      "compactionContinuationAdopted",
       "backgroundRefreshFailureRetainsAuthorization",
       "providerStateConsistent",
       "memoryStatusLifecycle",
@@ -647,11 +659,27 @@ export function stableEvidenceMismatches(root, key, evidence) {
     if (!lifecycle || requiredLifecycle.some((name) => lifecycle[name] !== true)) {
       mismatches.push("context lifecycle evidence is incomplete");
     }
-    if (!(lifecycle?.eventCounts?.tree >= 6)
-      || !(lifecycle?.eventCounts?.compaction >= 3)
+    if (!(lifecycle?.eventCounts?.tree >= 8)
+      || !(lifecycle?.eventCounts?.compactionRequests >= 3)
+      || lifecycle?.eventCounts?.compactionEntries !== 0
+      || !(lifecycle?.eventCounts?.hostBehaviorUnverified >= 1)
       || !(lifecycle?.eventCounts?.starts >= 5)
       || !(lifecycle?.eventCounts?.providerRequests >= 1)) {
       mismatches.push("context lifecycle event counts are incomplete");
+    }
+    const footer = evidence?.details?.pi?.footer;
+    const requiredFooter = [
+      "installed", "uninstalled", "model", "usage", "context", "branch", "marker", "authorizationIndependent",
+    ];
+    if (!footer || requiredFooter.some((name) => footer[name] !== true)) {
+      mismatches.push("context footer evidence is incomplete");
+    }
+    const contamination = evidence?.details?.summaryContamination;
+    if (JSON.stringify(contamination?.authorityHits) !== JSON.stringify(SUMMARY_CONTAMINATION_SENTINELS)
+      || !Array.isArray(contamination?.memoryProjectionHits) || contamination.memoryProjectionHits.length !== 0
+      || !Array.isArray(contamination?.openVikingAppendHits) || contamination.openVikingAppendHits.length !== 0
+      || !Array.isArray(contamination?.workingContextHits) || contamination.workingContextHits.length !== 0) {
+      mismatches.push("context summary contamination evidence is incomplete");
     }
   }
   if (key === "context-quality") {
@@ -723,6 +751,24 @@ export function stableEvidenceMismatches(root, key, evidence) {
     if (!(enhanced?.observations?.workingContextReady > 0)
       || !(enhanced?.observations?.hookVerifiedRequests > 0)) {
       mismatches.push("enhanced quality adoption evidence is missing");
+    }
+    const hostCompatibility = enhanced?.hostCompatibility;
+    if (hostCompatibility?.compactionSuppressed !== true
+      || hostCompatibility?.treeSummarySuppressed !== true
+      || hostCompatibility?.summaryProviderRequests !== 0) {
+      mismatches.push("actual host compatibility evidence is incomplete");
+    }
+    if (JSON.stringify(native?.observations?.authoritySummaryContaminationHits)
+        !== JSON.stringify(SUMMARY_CONTAMINATION_SENTINELS)
+      || JSON.stringify(enhanced?.observations?.authoritySummaryContaminationHits)
+        !== JSON.stringify(SUMMARY_CONTAMINATION_SENTINELS)
+      || JSON.stringify(native?.observations?.summaryContaminationHits)
+        !== JSON.stringify(["PCR_SUMMARY_CONTAMINATION_COMPACTION"])
+      || !(native?.observations?.providerPayloads > 0)
+      || !(enhanced?.observations?.providerPayloads > 0)
+      || !Array.isArray(enhanced?.observations?.summaryContaminationHits)
+      || enhanced.observations.summaryContaminationHits.length !== 0) {
+      mismatches.push("actual summary contamination evidence is incomplete");
     }
   }
   if (key === "source-recall") {

@@ -71,6 +71,7 @@ import {
   type PiProtocolProfile,
   type SourceEntry,
 } from "./pi-session-protocol.ts";
+import { installEnhancedFooter } from "./pi-footer-adapter.ts";
 
 /** 当前 suite 所选 PiProtocolProfile；行为由 scripts/validate-source-archive.mjs 的探针固定。 */
 const PI_PROTOCOL_PROFILE: PiProtocolProfile = {
@@ -442,6 +443,14 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
   let renderedMemoryUiState: MemoryUiState | undefined;
   let contextAuthorizationOutcome: "pending" | "allowed" | "blocked" = "pending";
   let pendingAssemblyProof: PendingRequestProof | undefined;
+  let pendingCompactionDecision: { reason: "manual" | "threshold" | "overflow"; branchLeafId: string | null } | undefined;
+  let pendingTreeDecision: {
+    targetId: string;
+    oldLeafId: string | null;
+    userWantsSummary: boolean;
+    decision: "unchanged" | "empty-summary";
+  } | undefined;
+  let footerInstalled = false;
   let shuttingDown = false;
   let archiveStopped = false;
   let memoryModelWatchEpoch = 0;
@@ -1117,6 +1126,8 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
   });
   pi.on("session_start", (event, ctx) => {
     writeRecord("session_start", { reason: event.reason, previousSessionFile: event.previousSessionFile, mode: ctx.mode, ...branchSnapshot(ctx) });
+    footerInstalled = installEnhancedFooter(ctx, (snapshot) => writeRecord("footer_rendered", { snapshot }));
+    writeRecord("footer_adapter", { action: footerInstalled ? "installed" : "not-installed", mode: ctx.mode });
     maybeFail("session_start");
     scheduleArchive(ctx, "session_start");
   });
@@ -1614,8 +1625,10 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
   });
 
   pi.on("session_before_compact", (event, ctx) => {
+    pendingCompactionDecision = { reason: event.reason, branchLeafId: ctx.sessionManager.getLeafId() };
     writeRecord("session_before_compact", {
       reason: event.reason,
+      decision: "cancel",
       willRetry: event.willRetry,
       firstKeptEntryId: event.preparation.firstKeptEntryId,
       tokensBefore: event.preparation.tokensBefore,
@@ -1623,9 +1636,19 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
       ...branchSnapshot(ctx),
     });
     maybeFail("session_before_compact");
+    return { cancel: true };
   });
 
   pi.on("session_compact", (event, ctx) => {
+    writeRecord("host_behavior_unverified", {
+      boundary: "compaction",
+      requestedDecision: pendingCompactionDecision ? "cancel" : "unobserved",
+      requestedReason: pendingCompactionDecision?.reason,
+      actualReason: event.reason,
+      actualEntryId: event.compactionEntry.id,
+    });
+    pendingCompactionDecision = undefined;
+    if (ctx.hasUI) ctx.ui.notify("增强记忆请求取消 Pi compaction，但宿主仍生成了 compaction entry。", "warning");
     contextAuthorizationOutcome = "pending";
     retireUnobservedProof("lifecycle reset");
     setAuthorization("初始化中");
@@ -1643,18 +1666,40 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
   });
 
   pi.on("session_before_tree", (event, ctx) => {
+    const decision = event.preparation.userWantsSummary ? "empty-summary" : "unchanged";
+    pendingTreeDecision = {
+      targetId: event.preparation.targetId,
+      oldLeafId: event.preparation.oldLeafId,
+      userWantsSummary: event.preparation.userWantsSummary,
+      decision,
+    };
     writeRecord("session_before_tree", {
       targetId: event.preparation.targetId,
       oldLeafId: event.preparation.oldLeafId,
       commonAncestorId: event.preparation.commonAncestorId,
       userWantsSummary: event.preparation.userWantsSummary,
+      decision,
       summarizedEntryIds: event.preparation.entriesToSummarize.map((entry) => entry.id),
       ...branchSnapshot(ctx),
     });
     maybeFail("session_before_tree");
+    if (decision === "empty-summary") return { summary: { summary: "" } };
   });
 
   pi.on("session_tree", (event, ctx) => {
+    const treeDecision = pendingTreeDecision;
+    const summarySuppressionViolated = treeDecision?.decision === "empty-summary" && event.summaryEntry !== undefined;
+    if (summarySuppressionViolated) {
+      writeRecord("host_behavior_unverified", {
+        boundary: "tree-summary",
+        requestedDecision: treeDecision.decision,
+        targetId: treeDecision.targetId,
+        actualSummaryEntryId: event.summaryEntry?.id,
+        actualFromExtension: event.fromExtension,
+      });
+      if (ctx.hasUI) ctx.ui.notify("增强记忆请求无摘要 tree 导航，但宿主仍生成了 branch summary。", "warning");
+    }
+    pendingTreeDecision = undefined;
     contextAuthorizationOutcome = "pending";
     retireUnobservedProof("lifecycle reset");
     setAuthorization("初始化中");
@@ -1663,6 +1708,8 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
       oldLeafId: event.oldLeafId,
       summaryEntryId: event.summaryEntry?.id,
       fromExtension: event.fromExtension,
+      requestedDecision: treeDecision?.decision,
+      hostBehavior: summarySuppressionViolated ? "unverified" : "observed",
       ...branchSnapshot(ctx),
     });
     maybeFail("session_tree");
@@ -1688,6 +1735,13 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
     retireUnobservedProof("lifecycle reset");
     setAuthorization("初始化中");
     if (ctx.hasUI) ctx.ui.setStatus("pi-context-memory", undefined);
+    if (footerInstalled && ctx.mode === "tui") {
+      ctx.ui.setFooter(undefined);
+      footerInstalled = false;
+      writeRecord("footer_adapter", { action: "uninstalled", mode: ctx.mode });
+    }
+    pendingCompactionDecision = undefined;
+    pendingTreeDecision = undefined;
     writeRecord("session_shutdown", { reason: event.reason, targetSessionFile: event.targetSessionFile, ...branchSnapshot(ctx) });
     maybeFail("session_shutdown");
     scheduleArchive(ctx, "session_shutdown");

@@ -2,8 +2,8 @@
   "schemaVersion": 2,
   "generatedBy": "scripts/validate-source-recall.mjs",
   "scope": "local",
-  "runId": "source-recall-2026-08-16T06-08-30-530Z",
-  "recordedAt": "2026-08-16T06:08:49.607Z",
+  "runId": "source-recall-2026-08-16T07-18-05-456Z",
+  "recordedAt": "2026-08-16T07:18:28.668Z",
   "piVersion": "0.84.2",
   "nodeVersion": "24.15.0",
   "openVikingVersion": "0.4.13",
@@ -13,7 +13,7 @@
     "effective": {
       "defaultAccount": "pi-context-memory",
       "defaultUser": "pi-context-memory",
-      "storageWorkspace": ".artifacts/source-recall/source-recall-2026-08-16T06-08-30-530Z/openviking-data",
+      "storageWorkspace": ".artifacts/source-recall/source-recall-2026-08-16T07-18-05-456Z/openviking-data",
       "embedding": {
         "dense": {
           "cache_dir": "./.cache/openviking/models",
@@ -40,22 +40,22 @@
       "watchSchedulerEnabled": false,
       "server": {
         "host": "127.0.0.1",
-        "port": 62078,
+        "port": 51867,
         "agent_evolution": {
           "enabled": false
         }
       }
     },
-    "effectiveSha256": "c950ebe74486d870c5a64c8628d974554c907f344afb6f730f97c1868c035563",
+    "effectiveSha256": "188c1ad6cbffe4c9fcc0a7d74004e86eeb19db18e283f8b974275b6606e1e170",
     "controlledByRunner": true,
     "denseEmbeddingProvider": "local"
   },
   "implementation": {
-    "sourceManifestSha256": "1a1156251ec17df986ba4065ac9b8af1e45c05505ef60aa7671e85fe9de129f6",
+    "sourceManifestSha256": "7e612ddf878256209480421f33ad5baf35d65690f828916898de305216760fc2",
     "files": [
       {
         "path": ".pi/extensions/pi-context-memory/index.ts",
-        "sha256": "877d471c12c3a188d0bf73fa80e9b49a18a7edcd60390bcd7dff6bc62266fe51"
+        "sha256": "01055909b9d80c9bb2a310c7831b449eee492fab45e0b7cbef97d18f8e8a1ddb"
       },
       {
         "path": ".pi/extensions/pi-context-memory/long-term-memory.ts",
@@ -131,7 +131,7 @@
       },
       {
         "path": "scripts/validation-evidence.mjs",
-        "sha256": "748b89d5d25bd7d6d16b19882de4e58b9046b50c5997932acad4390c5b29b668"
+        "sha256": "3b88004f8be1d57be56cff3afd9e21594048102cb7bc7ae814a847fb7afa44e7"
       },
       {
         "path": "scripts/validation-suite.mjs",
@@ -165,7 +165,7 @@
         "sha256": "2f34c5cec5f73f972887aaeb0ad7decf734500911f7ea0412061d33deb3d139b"
       }
     ],
-    "gitCommit": "9d973c0c5c5ff46fa0d5d0eb8c537721fb3c3b5a",
+    "gitCommit": "6c8cd721bd613f38cc67e40dcb26907ac74368fb",
     "workingTreeDirty": true
   },
   "passed": true,

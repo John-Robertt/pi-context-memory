@@ -65,6 +65,11 @@ const artifactRoot = join(root, ".artifacts/context-enhancement", runId);
 const fixturePath = join(root, "validation/fixtures/context-enhancement-long-task.json");
 const evidencePath = join(root, "validation/evidence/context-enhancement.json");
 const fixture = JSON.parse(readFileSync(fixturePath, "utf8"));
+const SUMMARY_CONTAMINATION_SENTINELS = [
+  "PCR_SUMMARY_CONTAMINATION_BRANCH",
+  "PCR_SUMMARY_CONTAMINATION_COMPACTION",
+  "PCR_SUMMARY_CONTAMINATION_RETAINED_TAIL",
+];
 mkdirSync(artifactRoot, { recursive: true });
 const implementation = captureImplementationEvidence(root, "context-enhancement");
 const startedAt = new Date().toISOString();
@@ -571,6 +576,7 @@ async function runPiAdoptionCase(openViking) {
   const settingsTargetPath = join(settingsTargetDir, "memory-model.jsonc");
   const providerPath = join(caseDir, "local-provider.ts");
   const lifecycleControlPath = join(caseDir, "lifecycle-control.ts");
+  const handlerOrderLog = join(caseDir, "handler-order.jsonl");
   const runtimeRevocationPath = join(caseDir, "runtime-revocation.ts");
   mkdirSync(home, { recursive: true });
   mkdirSync(agentDir, { recursive: true });
@@ -666,25 +672,24 @@ async function runPiAdoptionCase(openViking) {
   });
 }\n`, "utf8");
   writeFileSync(lifecycleControlPath, [
+    "import { appendFileSync } from \"node:fs\";",
     "export default function lifecycleControl(pi) {",
     "  let cancelNextTree = false;",
-    "  let cancelNextCompact = false;",
-    "  pi.on(\"session_before_compact\", () => {",
-    "    if (!cancelNextCompact) return;",
-    "    cancelNextCompact = false;",
-    "    return { cancel: true };",
-    "  });",
-    "  pi.on(\"session_before_tree\", () => {",
-    "    if (!cancelNextTree) return;",
-    "    cancelNextTree = false;",
-    "    return { cancel: true };",
+    "  let exposeNativeSummary = false;",
+    "  const record = (event, data = {}) => appendFileSync(process.env.PCR_HANDLER_ORDER_LOG, `${JSON.stringify({ event, handler: \"lifecycle-control\", ...data })}\\n`, \"utf8\");",
+    "  pi.on(\"session_before_compact\", (event) => { record(\"session_before_compact\", { reason: event.reason }); });",
+    "  pi.on(\"session_before_tree\", (event) => {",
+    "    record(\"session_before_tree\", { userWantsSummary: event.preparation.userWantsSummary });",
+    "    if (cancelNextTree) { cancelNextTree = false; return { cancel: true }; }",
+    "    if (exposeNativeSummary) { exposeNativeSummary = false; return { customInstructions: \"controlled later handler requires native summary\" }; }",
     "  });",
     "  pi.registerCommand(\"validation-tree\", {",
     "    description: \"Navigate the validation session tree\",",
     "    handler: async (args, ctx) => {",
-    "      const [targetId, mode] = args.trim().split(/\\s+/);", // generated extension receives /\s+/
-    "      if (!targetId || ![\"plain\", \"summary\"].includes(mode)) throw new Error(\"Usage: /validation-tree <entry-id> <plain|summary>\");",
-    "      await ctx.navigateTree(targetId, { summarize: mode === \"summary\" });",
+    "      const [targetId, mode] = args.trim().split(/\\s+/);",
+    "      if (!targetId || ![\"plain\", \"summary\", \"native-summary\"].includes(mode)) throw new Error(\"Usage: /validation-tree <entry-id> <plain|summary|native-summary>\");",
+    "      exposeNativeSummary = mode === \"native-summary\";",
+    "      await ctx.navigateTree(targetId, { summarize: mode !== \"plain\" });",
     "    },",
     "  });",
     "  pi.registerCommand(\"validation-cancel-tree\", {",
@@ -693,10 +698,6 @@ async function runPiAdoptionCase(openViking) {
     "      cancelNextTree = true;",
     "      await ctx.navigateTree(args.trim(), { summarize: false });",
     "    },",
-    "  });",
-    "  pi.registerCommand(\"validation-cancel-compact\", {",
-    "    description: \"Cancel the next validation compaction\",",
-    "    handler: async () => { cancelNextCompact = true; },",
     "  });",
     "  pi.registerCommand(\"validation-reload\", {",
     "    description: \"Reload the validation runtime\",",
@@ -748,6 +749,7 @@ async function runPiAdoptionCase(openViking) {
       PCR_CHECKPOINT_COMMIT_PENDING_TOKENS: "1",
       PCR_OBSERVATION_LOG: observationLog,
       PCR_ARCHIVE_DIR: archiveRoot,
+      PCR_HANDLER_ORDER_LOG: handlerOrderLog,
     },
     stdio: ["pipe", "pipe", "pipe"],
   });
@@ -869,15 +871,6 @@ async function runPiAdoptionCase(openViking) {
         .update(JSON.stringify(payload))
         .digest("hex") === event.payloadHash));
 
-    const waitForCompactionProjection = async (observationOffset) => {
-      const state = (await client.send("get_state")).data;
-      const entriesResponse = await client.send("get_entries");
-      const refresh = await waitForWorkingContextAfter(observationOffset, {
-        ...state,
-        leafId: entriesResponse.data.leafId,
-      });
-      return refresh.outcome === "accepted" || refresh.outcome === "skipped";
-    };
     const stableRuntimeRun = await promptAndSettle("sixth desired configuration remains active prompt");
     await promptAndSettle("seventh lifecycle baseline prompt");
     const backendFailureOffset = readObservations(observationLog).length;
@@ -959,13 +952,23 @@ async function runPiAdoptionCase(openViking) {
     const plainAState = await waitForCurrentWorkingContext(plainAOffset);
     const plainARun = await promptAndSettle("tree route A adoption probe");
     const summaryBOffset = readObservations(observationLog).length;
+    const summaryProviderOffset = provider.state.payloads.length;
     const summaryToB = await runTreeNavigation(branchBLeafId, "summary");
+    const summaryProviderRequests = provider.state.payloads.length - summaryProviderOffset;
     const summaryBState = await waitForCurrentWorkingContext(summaryBOffset);
-    const summaryBRun = await promptAndSettle("tree summarized route B adoption probe");
+    const summaryBRun = await promptAndSettle("tree summary-suppressed route B adoption probe");
     const returnAOffset = readObservations(observationLog).length;
     const returnToA = await runTreeNavigation(originalLeafId, "plain");
     const returnAState = await waitForCurrentWorkingContext(returnAOffset);
     const returnARun = await promptAndSettle("tree route A return adoption probe");
+    const nativeSummaryOffset = readObservations(observationLog).length;
+    const nativeSummaryProviderOffset = provider.state.payloads.length;
+    const nativeSummaryToB = await runTreeNavigation(branchBLeafId, "native-summary");
+    const nativeSummaryProviderRequests = provider.state.payloads.length - nativeSummaryProviderOffset;
+    const nativeSummaryObservations = readObservations(observationLog).slice(nativeSummaryOffset);
+    const afterNativeSummaryOffset = readObservations(observationLog).length;
+    await runTreeNavigation(originalLeafId, "plain");
+    await waitForCurrentWorkingContext(afterNativeSummaryOffset);
     const treeCountBeforeCancellation = readObservations(observationLog).filter((event) => event.type === "session_tree").length;
     const statusBeforeCancellation = client.events.filter((event) => event.type === "extension_ui_request" && event.method === "setStatus").at(-1)?.statusText;
     await client.send("prompt", { message: `/validation-cancel-tree ${branchBLeafId}` });
@@ -1012,62 +1015,63 @@ async function runPiAdoptionCase(openViking) {
     const reloadedLeafId = (await client.send("get_entries")).data.leafId;
     await waitForWorkingContextAfter(reloadStartedAfter, { ...reloadedState, leafId: reloadedLeafId });
     const reloadRun = await promptAndSettle("post-reload adoption prompt");
-    const compactCountBeforeCancellation = readObservations(observationLog).filter((event) => event.type === "session_compact").length;
-    const compactStatusBeforeCancellation = client.events.filter((event) => event.type === "extension_ui_request" && event.method === "setStatus").at(-1)?.statusText;
-    await client.send("prompt", { message: "/validation-cancel-compact" });
-    const compactCancelled = await client.send("compact").then(() => false, (error) => String(error?.message ?? error).includes("cancelled"));
-    await sleep(50);
-    const canceledCompactStatusStable = compactCancelled && enhancementStatuses.has(compactStatusBeforeCancellation)
-      && client.events.filter((event) => event.type === "extension_ui_request" && event.method === "setStatus").at(-1)?.statusText === compactStatusBeforeCancellation
-      && readObservations(observationLog).filter((event) => event.type === "session_compact").length === compactCountBeforeCancellation;
+    const compactionEntriesBefore = (await client.send("get_entries")).data.entries
+      .filter((entry) => entry.type === "compaction").length;
+    const compactStatusBeforeSuppression = client.events
+      .filter((event) => event.type === "extension_ui_request" && event.method === "setStatus").at(-1)?.statusText;
 
     const manualObservationOffset = readObservations(observationLog).length;
-    const manualBefore = readObservations(observationLog).filter((event) => event.type === "session_compact" && event.reason === "manual").length;
-    await client.send("compact");
-    await waitFor(
-      () => readObservations(observationLog).filter((event) => event.type === "session_compact" && event.reason === "manual").length > manualBefore,
-      "manual compaction lifecycle",
-    );
-    const manualProjectionMatches = await waitForCompactionProjection(manualObservationOffset);
-    const manualReadyState = await waitForCurrentWorkingContext(manualObservationOffset);
-    const manualAdoptionRun = await promptAndSettle("manual compaction enhanced adoption probe");
+    const manualProviderOffset = provider.state.payloads.length;
+    const manualCancelled = await client.send("compact")
+      .then(() => false, (error) => String(error?.message ?? error).includes("cancelled"));
+    const manualObservations = readObservations(observationLog).slice(manualObservationOffset);
+    const manualSuppressed = manualCancelled
+      && provider.state.payloads.length === manualProviderOffset
+      && manualObservations.some((event) => event.type === "session_before_compact" && event.reason === "manual" && event.decision === "cancel")
+      && !manualObservations.some((event) => event.type === "session_compact")
+      && client.events.filter((event) => event.type === "extension_ui_request" && event.method === "setStatus").at(-1)?.statusText === compactStatusBeforeSuppression;
+    const manualState = (await client.send("get_state")).data;
+    const manualLeafId = (await client.send("get_entries")).data.leafId;
+    const manualAdoptionRun = await promptAndSettle("manual compaction suppression continuation probe");
 
     const thresholdObservationOffset = readObservations(observationLog).length;
-    const thresholdBefore = readObservations(observationLog).filter((event) => event.type === "session_compact" && event.reason === "threshold").length;
     provider.state.promptTokens = 16_000;
-    await promptAndSettle("threshold compaction prompt");
+    const thresholdRun = await promptAndSettle("threshold compaction suppression prompt");
     provider.state.promptTokens = 32;
-    await waitFor(
-      () => readObservations(observationLog).filter((event) => event.type === "session_compact" && event.reason === "threshold").length > thresholdBefore,
-      "threshold compaction lifecycle",
-    );
-    const thresholdProjectionMatches = await waitForCompactionProjection(thresholdObservationOffset);
-    const thresholdReadyState = await waitForCurrentWorkingContext(thresholdObservationOffset);
-    const thresholdAdoptionRun = await promptAndSettle("threshold compaction enhanced adoption probe");
+    const thresholdObservations = readObservations(observationLog).slice(thresholdObservationOffset);
+    const thresholdSuppressed = thresholdObservations.some((event) =>
+      event.type === "session_before_compact" && event.reason === "threshold" && event.decision === "cancel")
+      && !thresholdObservations.some((event) => event.type === "session_compact")
+      && thresholdRun.payloads.length === 1;
+    const thresholdState = (await client.send("get_state")).data;
+    const thresholdLeafId = (await client.send("get_entries")).data.leafId;
+    const thresholdAdoptionRun = await promptAndSettle("threshold compaction suppression continuation probe");
+
     await promptAndSettle("overflow preparation one");
     await promptAndSettle("overflow preparation two");
     const overflowObservationOffset = readObservations(observationLog).length;
-    const overflowBefore = readObservations(observationLog).filter((event) => event.type === "session_compact" && event.reason === "overflow").length;
-    const overflowPayloadOffset = provider.state.payloads.length;
     provider.state.rejectEnhancedOverflow = true;
-    await promptAndSettle("overflow recovery prompt");
-    await waitFor(
-      () => readObservations(observationLog).filter((event) => event.type === "session_compact" && event.reason === "overflow").length > overflowBefore,
-      "overflow compaction lifecycle",
-    );
-    const overflowProjectionMatches = await waitForCompactionProjection(overflowObservationOffset);
-    const overflowPayloads = provider.state.payloads.slice(overflowPayloadOffset);
-    const overflowVerifiedRequests = readObservations(observationLog)
-      .slice(overflowObservationOffset)
-      .filter((event) => event.type === "before_provider_request" && event.hookOutcome === "verified");
-    const overflowTransportHashes = new Set(overflowPayloads.map((payload) => createHash("sha256")
-      .update(JSON.stringify(payload))
-      .digest("hex")));
-    const overflowRetryAuthorized = overflowVerifiedRequests.length >= 2
-      && overflowVerifiedRequests.every((event) => overflowTransportHashes.has(event.payloadHash));
+    const overflowRun = await promptAndSettle("overflow compaction suppression prompt");
     provider.state.rejectEnhancedOverflow = false;
-    const overflowReadyState = await waitForCurrentWorkingContext(overflowObservationOffset);
-    const overflowAdoptionRun = await promptAndSettle("overflow compaction enhanced adoption probe");
+    const overflowObservations = readObservations(observationLog).slice(overflowObservationOffset);
+    const overflowVerifiedRequests = overflowObservations
+      .filter((event) => event.type === "before_provider_request" && event.hookOutcome === "verified");
+    const overflowSuppressed = overflowObservations.some((event) =>
+      event.type === "session_before_compact"
+      && event.reason === "overflow"
+      && event.willRetry === true
+      && event.decision === "cancel")
+      && !overflowObservations.some((event) => event.type === "session_compact")
+      && overflowRun.payloads.length === 1
+      && overflowVerifiedRequests.length === 1;
+    const overflowState = (await client.send("get_state")).data;
+    const overflowLeafId = (await client.send("get_entries")).data.leafId;
+    const overflowAdoptionRun = await promptAndSettle("overflow compaction suppression continuation probe");
+    const compactionEntriesAfter = (await client.send("get_entries")).data.entries
+      .filter((entry) => entry.type === "compaction").length;
+    const handlerOrder = existsSync(handlerOrderLog)
+      ? readFileSync(handlerOrderLog, "utf8").trim().split("\n").filter(Boolean).map((line) => JSON.parse(line))
+      : [];
 
     openViking.state.contextResponseDelayMs = 120;
     await promptAndSettle("in-flight route preparation prompt");
@@ -1084,6 +1088,7 @@ async function runPiAdoptionCase(openViking) {
     const observations = readObservations(observationLog);
     const treeEvents = observations.filter((event) => event.type === "session_tree");
     const compactionEvents = observations.filter((event) => event.type === "session_compact");
+    const compactionRequests = observations.filter((event) => event.type === "session_before_compact");
     const sessionStarts = observations.filter((event) => event.type === "session_start");
     const sessionShutdowns = observations.filter((event) => event.type === "session_shutdown");
     const lifecycleProviderRequests = observations.filter((event) => event.type === "before_provider_request");
@@ -1138,9 +1143,22 @@ async function runPiAdoptionCase(openViking) {
     const lifecycle = {
       treeRoundTrip: plainToBranchPoint.newLeafId === branchPointId
         && plainToA.newLeafId === originalLeafId
-        && summaryToB.summaryEntryId
+        && summaryToB.newLeafId === branchBLeafId
         && returnToA.newLeafId === originalLeafId,
-      treeSummaryChoices: plainToA.summaryEntryId === undefined && Boolean(summaryToB.summaryEntryId),
+      treeSummarySuppression: plainToA.summaryEntryId === undefined
+        && summaryToB.summaryEntryId === undefined
+        && summaryProviderRequests === 0
+        && observations.some((event) => event.type === "session_tree"
+          && event.requestedDecision === "empty-summary"
+          && event.hostBehavior === "observed"),
+      treeHostMismatchDiagnosed: Boolean(nativeSummaryToB.summaryEntryId)
+        && nativeSummaryProviderRequests === 1
+        && nativeSummaryObservations.some((event) => event.type === "host_behavior_unverified"
+          && event.boundary === "tree-summary")
+        && nativeSummaryObservations.some((event) => event.type === "session_tree"
+          && event.hostBehavior === "unverified"),
+      treeHandlerOrderObserved: handlerOrder.some((event) => event.event === "session_before_tree")
+        && !handlerOrder.some((event) => event.event === "session_before_compact"),
       treeCancellationState: canceledTreeStatusStable,
       rootNavigation: rootNavigation.newLeafId === userEntries[0].parentId
         && rootRun.observations.some((event) => event.type === "context_allowed")
@@ -1162,16 +1180,17 @@ async function runPiAdoptionCase(openViking) {
       reload: sessionStarts.some((event) => event.reason === "reload")
         && sessionShutdowns.some((event) => event.reason === "reload")
         && requestAdoptedFor(reloadRun, { ...reloadedState, leafId: reloadedLeafId }),
-      compactionReasons: ["manual", "threshold", "overflow"].every((reason) => compactionEvents.some((event) => event.reason === reason))
-        && compactionEvents.some((event) => event.reason === "overflow" && event.willRetry === true)
-        && manualProjectionMatches
-        && thresholdProjectionMatches
-        && overflowProjectionMatches,
-      overflowRetryAuthorized,
-      compactionCancellationState: canceledCompactStatusStable,
-      compactionProviderAdoption: requestAdoptedFor(manualAdoptionRun, manualReadyState)
-        && requestAdoptedFor(thresholdAdoptionRun, thresholdReadyState)
-        && requestAdoptedFor(overflowAdoptionRun, overflowReadyState),
+      compactionSuppression: manualSuppressed
+        && thresholdSuppressed
+        && overflowSuppressed
+        && ["manual", "threshold", "overflow"].every((reason) =>
+          compactionRequests.some((event) => event.reason === reason && event.decision === "cancel"))
+        && compactionEvents.length === 0
+        && compactionEntriesAfter === compactionEntriesBefore,
+      overflowRetrySuppressed: overflowSuppressed,
+      compactionContinuationAdopted: requestAdoptedFor(manualAdoptionRun, { ...manualState, leafId: manualLeafId })
+        && requestAdoptedFor(thresholdAdoptionRun, { ...thresholdState, leafId: thresholdLeafId })
+        && requestAdoptedFor(overflowAdoptionRun, { ...overflowState, leafId: overflowLeafId }),
       backgroundRefreshFailureRetainsAuthorization: backendNativeRun.observations.some((event) =>
         event.type === "before_provider_request"
         && event.hookOutcome === "verified"
@@ -1190,7 +1209,9 @@ async function runPiAdoptionCase(openViking) {
       memoryStatusLifecycle,
       eventCounts: {
         tree: treeEvents.length,
-        compaction: compactionEvents.length,
+        compactionRequests: compactionRequests.length,
+        compactionEntries: compactionEvents.length,
+        hostBehaviorUnverified: observations.filter((event) => event.type === "host_behavior_unverified").length,
         starts: sessionStarts.length,
         shutdowns: sessionShutdowns.length,
         providerRequests: lifecycleProviderRequests.length,
@@ -1255,6 +1276,175 @@ async function runPiAdoptionCase(openViking) {
     writeJson(join(caseDir, "provider-payloads.json"), provider.state.payloads);
     writeJson(join(caseDir, "provider-received-at.json"), provider.state.receivedAt);
     writeFileSync(join(caseDir, "pi-stderr.log"), Buffer.concat(stderr));
+    if (existsSync(observationLog)) writeFileSync(join(caseDir, "observations-copy.jsonl"), readFileSync(observationLog));
+  }
+}
+
+async function runPiFooterCase(openViking) {
+  const caseDir = join(artifactRoot, "pi-footer");
+  const home = join(caseDir, "home");
+  const agentDir = join(caseDir, "pi-agent");
+  const runtimeDir = join(caseDir, "runtime");
+  const sessionDir = join(caseDir, "session");
+  const observationLog = join(caseDir, "observations.jsonl");
+  const settingsPath = join(caseDir, "memory-model.jsonc");
+  const settingsTargetDir = join(caseDir, "memory-model-target");
+  const settingsTargetPath = join(settingsTargetDir, "memory-model.jsonc");
+  const providerPath = join(caseDir, "local-provider.ts");
+  mkdirSync(home, { recursive: true });
+  mkdirSync(agentDir, { recursive: true });
+  mkdirSync(runtimeDir, { recursive: true });
+  mkdirSync(sessionDir, { recursive: true });
+  mkdirSync(settingsTargetDir, { recursive: true });
+  const memorySetting = {
+    provider: suite.models.memoryProvider,
+    model: suite.models.memoryRoute,
+    api_key: "local-validation",
+  };
+  const settingsFingerprint = createHash("sha256")
+    .update(JSON.stringify(Object.fromEntries(Object.entries(memorySetting).sort(([left], [right]) => left.localeCompare(right)))))
+    .digest("hex");
+  const compiledMemoryConfig = await compileOpenVikingConfig(root, memorySetting, { ...process.env, HOME: home });
+  writeFileSync(settingsTargetPath, `${JSON.stringify({ memoryModel: memorySetting })}\n`, "utf8");
+  symlinkSync(settingsTargetPath, settingsPath);
+  const launchId = `context-footer-${process.pid}`;
+  writeJson(join(runtimeDir, "launcher.lock"), {
+    schemaVersion: OPENVIKING_RUNTIME_SCHEMA_VERSION,
+    launchId,
+    launcherPid: process.pid,
+  });
+  writeJson(join(runtimeDir, "launcher.json"), {
+    schemaVersion: OPENVIKING_RUNTIME_SCHEMA_VERSION,
+    launchId,
+    launcherPid: process.pid,
+    controlUrl: "http://127.0.0.1:1",
+    operationTimeoutMs: 30_000,
+  });
+  writeJson(join(runtimeDir, "state.json"), {
+    schemaVersion: OPENVIKING_RUNTIME_SCHEMA_VERSION,
+    launchId,
+    launcherPid: process.pid,
+    childPid: process.pid,
+    phase: "ready",
+    ready: true,
+    serviceReady: true,
+    requestReady: true,
+    activeProvider: memorySetting.provider,
+    activeModel: memorySetting.model,
+    activeSettingsFingerprint: settingsFingerprint,
+    activeConfigFingerprint: compiledMemoryConfig.configFingerprint,
+    activeProfile: compiledMemoryConfig.profile,
+    activeProfileFingerprint: compiledMemoryConfig.profileFingerprint,
+    memoryCapability: controlledCapabilityProof(launchId, settingsFingerprint, compiledMemoryConfig),
+    targetProvider: memorySetting.provider,
+    targetModel: memorySetting.model,
+    targetSettingsFingerprint: settingsFingerprint,
+    targetConfigFingerprint: compiledMemoryConfig.configFingerprint,
+    targetProfileFingerprint: compiledMemoryConfig.profileFingerprint,
+  });
+  const provider = await startLocalProvider();
+  writeFileSync(providerPath, `export default function localProvider(pi) {
+  pi.registerProvider("context-footer-validation", {
+    name: "Context Footer Validation",
+    baseUrl: ${JSON.stringify(provider.baseUrl)},
+    apiKey: "local-validation",
+    api: "openai-completions",
+    models: [{ id: "local", name: "Local", reasoning: false, input: ["text"], cost: { input: 1000, output: 2000, cacheRead: 0, cacheWrite: 0 }, contextWindow: 16384, maxTokens: 256 }],
+  });
+}\n`, "utf8");
+  const expectPath = spawnSync("which", ["expect"], { encoding: "utf8" }).stdout.trim();
+  assert(expectPath, "Interactive footer validation requires an expect-compatible PTY driver");
+  const tclWord = (value) => `{${value.replaceAll("\\", "\\\\").replaceAll("}", "\\}")}}`;
+  const piArgs = [
+    "pi", "--approve",
+    "--session-dir", sessionDir,
+    "--model", "context-footer-validation/local",
+    "--thinking", "off",
+    "--no-context-files", "--no-skills", "--no-prompt-templates", "--no-extensions", "--no-tools",
+    "--extension", join(root, ".pi/extensions/pi-context-memory/index.ts"),
+    "--extension", providerPath,
+  ];
+  const expectProgram = [
+    "set timeout 30",
+    `spawn -noecho ${piArgs.map(tclWord).join(" ")}`,
+    "expect -re {context-footer-validation}",
+    "send -- \"interactive footer task response probe\\r\"",
+    "expect -re {local response}",
+    "send -- \"\\004\"",
+    "expect eof",
+  ].join("\n");
+  const child = spawn(expectPath, ["-c", expectProgram], {
+    cwd: root,
+    detached: true,
+    env: {
+      ...process.env,
+      TERM: "xterm-256color",
+      HOME: home,
+      PI_CODING_AGENT_DIR: agentDir,
+      PI_SKIP_VERSION_CHECK: "1",
+      PCR_MEMORY_MODEL_SETTINGS: settingsPath,
+      PCR_OPENVIKING_RUNTIME_DIR: runtimeDir,
+      PCR_OPENVIKING_URL: openViking.baseUrl,
+      PCR_CHECKPOINT_COMMIT_PENDING_TOKENS: "1",
+      PCR_OBSERVATION_LOG: observationLog,
+      PCR_ARCHIVE_DIR: join(caseDir, "archive"),
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const output = [];
+  child.stdout.on("data", (chunk) => output.push(Buffer.from(chunk)));
+  child.stderr.on("data", (chunk) => output.push(Buffer.from(chunk)));
+  try {
+    await waitFor(
+      () => readObservations(observationLog).some((event) => event.type === "footer_rendered"),
+      "interactive footer installation",
+      30_000,
+    );
+    await waitFor(
+      () => readObservations(observationLog).some((event) => event.type === "agent_settled"),
+      "interactive footer task settlement",
+      30_000,
+    );
+    const rendered = await waitFor(
+      () => readObservations(observationLog)
+        .filter((event) => event.type === "footer_rendered")
+        .findLast((event) => event.snapshot?.usage?.input > 0 && event.snapshot?.context?.tokens !== null),
+      "interactive footer usage refresh",
+      30_000,
+    );
+    await waitFor(
+      () => readObservations(observationLog).some((event) => event.type === "footer_adapter" && event.action === "uninstalled"),
+      "interactive footer uninstall",
+      30_000,
+    );
+    const expectedBranchResult = spawnSync("git", ["branch", "--show-current"], { cwd: root, encoding: "utf8" });
+    assert(expectedBranchResult.status === 0, `Cannot read validation Git branch: ${expectedBranchResult.stderr}`);
+    const expectedGitBranch = expectedBranchResult.stdout.trim() || "detached";
+    const observations = readObservations(observationLog);
+    return {
+      installed: observations.some((event) => event.type === "footer_adapter" && event.action === "installed" && event.mode === "tui"),
+      uninstalled: observations.some((event) => event.type === "footer_adapter" && event.action === "uninstalled" && event.mode === "tui"),
+      model: rendered.snapshot.model === "local" && rendered.snapshot.provider === "context-footer-validation",
+      usage: rendered.snapshot.usage.input === provider.state.promptTokens
+        && rendered.snapshot.usage.output > 0
+        && rendered.snapshot.usage.cost > 0,
+      context: rendered.snapshot.context.contextWindow === 16_384
+        && rendered.snapshot.context.tokens >= provider.state.promptTokens
+        && rendered.snapshot.context.percent > 0,
+      branch: rendered.snapshot.gitBranch === expectedGitBranch,
+      marker: Buffer.concat(output).toString("utf8").includes("(增强)"),
+      authorizationIndependent: observations.some((event) => event.type === "before_provider_request"
+        && event.hookOutcome === "verified" && event.contextAuthorization === "allowed"),
+    };
+  } finally {
+    try {
+      await waitForExit(child, 2_000);
+    } catch {
+      if (child.pid) process.kill(-child.pid, "SIGTERM");
+      await waitForExit(child);
+    }
+    await provider.close();
+    writeFileSync(join(caseDir, "tui-output.log"), Buffer.concat(output));
     if (existsSync(observationLog)) writeFileSync(join(caseDir, "observations-copy.jsonl"), readFileSync(observationLog));
   }
 }
@@ -1966,6 +2156,24 @@ try {
     && retainedTailProjections.some((projection) => projection.kind === "control-boundary")
     && compactionBoundaryHasNoText
     && retainedTailTextExcluded;
+  const summaryContamination = {
+    authorityHits: SUMMARY_CONTAMINATION_SENTINELS.filter((sentinel) =>
+      JSON.stringify(fixture.entries).includes(sentinel)),
+    memoryProjectionHits: SUMMARY_CONTAMINATION_SENTINELS.filter((sentinel) =>
+      JSON.stringify({ compactedProjections, branchBProjections }).includes(sentinel)),
+    openVikingAppendHits: SUMMARY_CONTAMINATION_SENTINELS.filter((sentinel) =>
+      JSON.stringify({
+        compactedBatches: openViking.state.sessions.get(preparedCompacted.openVikingSessionId).batches,
+        branchBBatches: openViking.state.sessions.get(preparedB.openVikingSessionId).batches,
+      }).includes(sentinel)),
+    workingContextHits: SUMMARY_CONTAMINATION_SENTINELS.filter((sentinel) =>
+      JSON.stringify({ compacted: preparedCompacted.content, branchB: preparedB.content }).includes(sentinel)),
+  };
+  checks.summaryContaminationIsolated = JSON.stringify(summaryContamination.authorityHits)
+      === JSON.stringify(SUMMARY_CONTAMINATION_SENTINELS)
+    && summaryContamination.memoryProjectionHits.length === 0
+    && summaryContamination.openVikingAppendHits.length === 0
+    && summaryContamination.workingContextHits.length === 0;
 
   const currentTurn = [
     { role: "user", content: "old prompt", timestamp: 1 },
@@ -2747,6 +2955,7 @@ try {
   ].every((entry) => protocol.has(entry)) && commitProtocolFailClosed;
   const piAdoption = await runPiAdoptionCase(openViking);
   const piCurrentTurn = await runPiCurrentTurnCase(openViking);
+  const piFooter = await runPiFooterCase(openViking);
   const authorizationBlock = await runAuthorizationBlockCase();
   checks.hookVerifiedAtExtension = piAdoption.hookVerifiedAndTransportAdopted;
   checks.spoofedMarkerCannotAuthorize = piAdoption.spoofedMarkerCannotAuthorize;
@@ -2757,6 +2966,7 @@ try {
   checks.inFlightContextWaitAdopted = piAdoption.inFlightContextWaitAdopted;
   checks.runtimeRevocationAtHookBlocked = piAdoption.runtimeRevocationAtHookBlocked;
   checks.desiredConfigDoesNotDisableRuntime = piAdoption.desiredConfigDoesNotDisableRuntime;
+  checks.footerAdapterLifecycle = Object.values(piFooter).every(Boolean);
   checks.providerPayloadCurrentTurn = piAdoption.currentTurnOnly;
   checks.piCurrentTurnRaw = piCurrentTurn.raw;
   checks.piCurrentTurnProjected = piCurrentTurn.projected;
@@ -2767,17 +2977,18 @@ try {
   checks.piModifiedCurrentTurnSourceBlocked = piCurrentTurn.sourceMutationBlocked;
   checks.localProviderOnly = piAdoption.providerRequests > 5 && openViking.state.providerRequests === 0;
   checks.treeLifecycle = piAdoption.lifecycle.treeRoundTrip
-    && piAdoption.lifecycle.treeSummaryChoices
+    && piAdoption.lifecycle.treeSummarySuppression
+    && piAdoption.lifecycle.treeHostMismatchDiagnosed
+    && piAdoption.lifecycle.treeHandlerOrderObserved
     && piAdoption.lifecycle.treeCancellationState
     && piAdoption.lifecycle.rootNavigation
     && piAdoption.lifecycle.treeProviderAdoption;
   checks.sessionReplacementLifecycle = piAdoption.lifecycle.replacements
     && piAdoption.lifecycle.replacementProviderAdoption
     && piAdoption.lifecycle.reload;
-  checks.compactionLifecycle = piAdoption.lifecycle.compactionReasons
-    && piAdoption.lifecycle.overflowRetryAuthorized
-    && piAdoption.lifecycle.compactionCancellationState
-    && piAdoption.lifecycle.compactionProviderAdoption;
+  checks.compactionLifecycle = piAdoption.lifecycle.compactionSuppression
+    && piAdoption.lifecycle.overflowRetrySuppressed
+    && piAdoption.lifecycle.compactionContinuationAdopted;
   checks.backgroundRefreshFailureRetainsAuthorization = piAdoption.lifecycle.backgroundRefreshFailureRetainsAuthorization;
   checks.archiveFailureLatchesUntilNewGeneration = piAdoption.lifecycle.archiveRecovery;
   checks.hookTransportStateConsistent = piAdoption.lifecycle.providerStateConsistent;
@@ -2806,6 +3017,7 @@ try {
     compactedChars: preparedCompacted.content.length,
     branchBEstimatedTokens: preparedB.estimatedTokens,
   };
+  details.summaryContamination = summaryContamination;
   details.pi = {
     providerRequests: piAdoption.providerRequests,
     contextAllowed: piAdoption.observations.filter((event) => event.type === "context_allowed").length,
@@ -2817,6 +3029,7 @@ try {
     transport: piAdoption.transportPartitions,
     currentTurnBudget: piCurrentTurn,
     authorizationBlock,
+    footer: piFooter,
     lifecycle: piAdoption.lifecycle,
   };
 

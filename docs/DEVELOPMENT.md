@@ -25,6 +25,8 @@
 - Session 记忆协调按 generation、精确路线前缀、watermark 与 `retentionBudgetIdentity` 管理不可拆 `RefreshTarget`，选择兼容 checkpoint 并从 Pi 权威来源形成 `VerifiedActiveDelta`；相同目标共享，未启动的同预算线性后继收敛，运行目标、分支、预算和迟到结果保持隔离；
 - 工作上下文优化不执行 OpenViking IO，只消费已核验 checkpoint+delta；可用组合立即构造，delta 超过当前预算时返回唯一 `checkpoint-refresh-required`，必要 refresh 完成后重算路线与 Provider profile；
 - Provider 基线与记忆投影双边界：`pi-session-protocol.ts` 复用 Pi 的 `buildContextEntries`/`sessionEntryToContextMessages`/`convertToLlm` 建立基线，并从结构证据产生 `MessageSource`、`ControlBoundary` 与 `OpaqueProviderSegment`；
+- Pi 集成在 manual/threshold/overflow `session_before_compact` 返回 `{ cancel: true }`，在用户选择 summary 的 `session_before_tree` 返回空 summary；实际 entry 与本 handler 请求不一致时只记录 `host-behavior-unverified`，不修改其它 handler；
+- 交互 TUI 安装独立 `pi-footer-adapter.ts`，从 Pi 公开 session usage、`getContextUsage()` 与 footer data 显示模型、累计 usage、费用、Git branch 和 `(增强)`，shutdown 时恢复宿主 footer；显示与授权、预算和 compaction 配置隔离；
 - 当前任务 Provider、模型、API、base URL/compat、payload adapter、context window、输出上限、system prompt 和 active tools 形成版本化 `ProviderPayloadProfile`；同一 profile 同时约束增强历史与 CurrentTurn，进入授权证明，并在 hook 对实际 wire 的唯一 system/developer instruction、tools 和输出字段重新核对；
 - 当前 user prompt 后的 assistant/tool messages 按 Provider 基线解析为不可拆 `ToolBatch`；call/result ID 在全回合唯一，event taskContent/完成状态与 Pi 权威来源一致时才可 projected；预算内批次保持 raw，超预算时按最旧批次优先形成保持调用/结果协议外壳的确定性 projected 批次，opaque、协议不完整或来源不匹配内容 fail-closed；
 - 来源归档与召回索引以 `MessageSource` 的完整 taskContent、完成状态与两个哈希为准；OpenViking append 对单条派生索引投影限为 32 KiB、单批 JSON 限为 256 KiB，省略时显式保留原始字节数、taskContentHash 和权威来源展开入口，不冒充原文；`fullOutputRef` 在 blob 完整写入后原子发布进同一来源记录，每次请求来源屏障都重验 blob 大小与 SHA-256；权威 entry 明示 locator 的请求在 allow 前完成该来源屏障并精确脱敏，opaque 单元无法发布稳定引用时 fail-closed；
@@ -39,14 +41,12 @@
 - [`validation/evidence/source-archive.json`](../validation/evidence/source-archive.json)：Provider 基线、完整 ToolBatch、孤立/重复/不完整/opaque 与 summary 边界、来源隔离、branch 过滤、toolResult/Bash locator 脱敏、完整输出原子发布与有界恢复、复制超时单一错误出口和归档格式重建；
 - [`validation/evidence/source-recall.json`](../validation/evidence/source-recall.json)：来源索引、当前路线过滤、taskContent 展开和权威核对；
 - [`validation/evidence/memory-model-runtime.json`](../validation/evidence/memory-model-runtime.json)：配置与凭据隔离、显式 `MemoryRuntimeProfile` 映射、进程所有权和三态诊断；当前 suite 记忆坐标在真实受管 OpenViking 上完成隔离 Session append、commit、task 终态、来源核验 assembly 与清理，实际 task/usage 绑定 profile、Provider、模型、配置、launch ID 和 child PID；进程退出撤销能力，显式重启以新子进程和 proof 恢复；
-- [`validation/evidence/context-enhancement.json`](../validation/evidence/context-enhancement.json)：`allow | refresh-required | block`、checkpoint+delta 直接构造、完全相同 RefreshTarget 共享、同预算线性收敛、慢 accepted refresh 并行、必要等待、机会性刷新失败保留授权、skipped 保留旧 checkpoint+delta、budget shrink、取消、超时、分支/代际/迟到结果隔离、完整 request route 时点拒绝、原子发布和 OpenViking append 字节上限；同时覆盖 opaque 历史阻断、Provider proof、hook/transport 分账、必要来源故障锁存与新代际恢复、overflow 重试及 Pi tree/session/compaction 生命周期，并以隔离本地实际 Pi 回合验证 raw/projected CurrentTurn、来源恢复和最终 Provider 输入有界。
+- [`validation/evidence/context-enhancement.json`](../validation/evidence/context-enhancement.json)：`allow | refresh-required | block`、checkpoint+delta、RefreshTarget 并发/预算/迟到隔离、Provider proof、hook/transport 分账、CurrentTurn raw/projected、来源故障与新代恢复；真实 Pi 基准组合中 manual/threshold/overflow 均由本 handler 取消且无 compaction entry，tree 空 summary 无请求/entry，后续受控 handler 恢复 native summary 时形成 `host-behavior-unverified`；真实交互 TUI 完成 footer 安装、任务响应刷新和卸载；权威 fixture 中的三类污染哨兵按记忆投影、受控 OpenViking append 与 assembly 分阶段保持隔离；
 
-[`validation/evidence/context-quality.json`](../validation/evidence/context-quality.json) 是通过的 actual paired diagnostic：真实受管 OpenViking 和当前记忆模型完成必要 refresh 等待、MemoryCheckpoint 原子发布，以及兼容 checkpoint+delta 在下一次后台 accepted refresh 完成前继续授权；实际 OpenRouter 任务模型采用 hook-verified 增强请求并返回与 native arm 相同的 checker-valid 答案，增强 arm 任务输入显著小于 native arm，记忆模型用量另行归集。该结果证明当前样本的检查点机制、采用、质量和任务输入收缩，不证明完整账单成本优势或复杂长任务可靠性。
+[`validation/evidence/context-quality.json`](../validation/evidence/context-quality.json) 是通过的 actual paired diagnostic：真实受管 OpenViking 和当前记忆模型完成必要 refresh、MemoryCheckpoint 发布与后台刷新并行；当前实际任务 Provider/模型采用 hook-verified 增强请求，native/enhanced 返回相同 checker-valid 答案，增强任务输入显著更小。增强 arm 同时在真实 Pi 中证明 manual compaction 取消、tree 空 summary 无请求/entry，且 compaction/branch/retained-tail 污染哨兵未进入任务 Provider payload。该结果只证明当前单一 fixture，不证明复杂长任务可靠性或完整账单成本优势。
 
 现有 evidence 尚未证明：
 
-- `(增强)` footer 语义成立；
-- compaction/tree handler 返回、实际宿主结果和兼容性结论由真实 Pi 组合分别证明，已有 summary 文本不污染本扩展记忆；
 - 三类真实复杂长任务分别达到 suite policy 的 `eligibleTarget` 且全部完成；
 - 包含能力探针、Working Memory、召回、重试和恢复的完整 API 账单成本优势。
 
@@ -54,29 +54,28 @@
 
 ## 5. 当前主导约束
 
-当前主导约束是 **本扩展已能独立维持有界增强上下文，但 compaction/tree 的实际宿主结果与 summary 污染隔离，以及 `(增强)` footer 对任务 Provider 用量、费用和 branch 的显示语义，尚未在同一真实 Pi 组合中闭合**。
+当前主导约束是 **宿主兼容性、污染隔离和增强 footer 的纵向前置条件已经闭合，但复杂长任务仍只有单一配对诊断，尚未形成三类可重复 fixture、独立 checker 和达到 `eligibleTarget` 的实际可靠性证据**。
 
-MemoryCheckpoint、VerifiedActiveDelta、RefreshTarget、当前回合投影、运行代际和 Provider hook 时点证明已经分别通过受控链路与真实受管 OpenViking；实际配对样本也证明当前增强上下文被任务 Provider 采用并保持答案质量。复杂长任务会反复经历 compaction、tree、fork、clone、resume 和 reload；若宿主或后续扩展仍生成或重新注入 summary，本扩展不能把自己的 handler 返回误报为宿主结果，也不能让 summary 文本进入来源、记忆模型或增强历史。
+当前实际样本已经同时覆盖受管 OpenViking、当前任务/记忆 Provider、增强采用、任务质量、manual compaction 取消、tree 无摘要和污染隔离；真实交互 TUI 也闭合 footer 显示。它不能替代多轮工具压力、路线/事实更新和长时间连续任务中的重复运行，内部竞态或路线错误仍可能只在长任务中出现。
 
-宿主上下文换代兼容性与 footer 采用共同构成开始三类真实复杂长任务可靠性计数前的交互宿主纵向前置条件：前者保证路线与事实可信，后者保证用户看到的增强身份、任务用量和 branch 状态可核对；完整成本继续后置。
+复杂长任务可靠性是成本实验的前置条件；完整成本继续后置。
 
 ## 6. 当前交付边界
 
-**目标**：在 suite 固定的真实 Pi/扩展组合和当前任务 Provider/模型上，同时闭合 compaction/tree 的实际宿主结果、summary 污染隔离与 `(增强)` footer 采用；各结论可独立复核，且不越权控制宿主或其它扩展。
+**目标**：以 suite 固定坐标建立并执行三类真实复杂长任务验证，使每类达到 `eligibleTarget`，最终 checker、增强采用、路线/来源和宿主责任边界均可独立复核。
 
 **需要完成**：
 
-- 真实 Pi 分别触发 manual、threshold、overflow compaction，以及选择/不选择 summary 的 tree 导航；
-- 单独记录本 handler 的 `{ cancel: true }`/空 summary 返回、后续 handler 顺序、实际 summary Provider 请求数和新 entry；
-- 在既有 compaction/branch summary 与 retained tail 中放入污染哨兵，证明其文本不进入来源归档、OpenViking append/assembly、召回索引或本扩展增强 Provider payload；
-- tree 往返、fork、clone、resume 和 reload 后只采用实际当前 leaf，兼容性结论只绑定被测组合；
-- 宿主结果与 handler 返回不一致时形成 `host-behavior-unverified` 诊断，不修改 Pi、其它扩展或加载顺序；
-- 在交互宿主中观测 footer adapter 的安装、刷新与卸载：保留模型、最近任务 Provider usage、尾部估算、费用和实际 branch，以 `(增强)` 标识本扩展构造；显示不参与预算或授权，不修改持久化 compaction setting，扩展未加载时不声明 footer 行为。
+- 为 `tool-output-pressure`、`route-and-fact-update` 与 `continuous-long-task` 分别建立版本化初始仓库、用户 turn/操作序列、最终产物和独立 checker；
+- resolved run manifest 固定当前 Provider/模型、扩展组合、工具、权限、节奏、期限、`eligibleTarget`、`maxAttempts` 和停止规则；
+- 每个 attempt 使用隔离工作区、Pi session、OpenViking 运行代际和证据目录，完整保留 completed/failed/blocked 分类；
+- checker 只读取最终工作区、公开产物、Pi 权威 session 和测试结果，协议 checker 独立核对采用、路线、来源、ToolBatch、summary 污染与宿主边界；
+- 首个 failed 立即停止对应可靠性结论，不以补跑成功替换失败。
 
-**完成条件**：每种 compaction/tree 事件都能从 handler、transport 和 Pi session entry 三方独立重算，summary 污染计数为零且当前路线任务结果正确；footer 的模型、usage/尾部估算、费用、branch 与 `(增强)` 标识能从实际任务响应和宿主状态复核，安装或显示变化不改变授权、compaction 配置或无扩展基线；所有结论只绑定被测组合。
+**完成条件**：三类 fixture 各自达到 suite 的 `eligibleTarget`，所有 eligible attempt 的最终 checker 与协议 checker 均通过，`completionReliability == 100%`，且 run manifest、attempt 清单、停止原因和原始 artifact 索引完整。
 
-三类复杂任务可靠性和完整成本实验不进入本次交付；宿主兼容性与 footer 闭环后重新识别下一主导约束。
+完整账单成本实验不进入本次交付；可靠性与一般质量成立后重新识别成本归集约束。
 
 ## 7. 唯一下一执行入口
 
-1. 以 [`system/context-enhancement.md`](system/context-enhancement.md) §9–10 和 [`validation/context-enhancement-state.md`](validation/context-enhancement-state.md) §6–8 为边界，在同一真实 Pi 与当前任务 Provider 组合中建立 compaction/tree handler、summary transport/session、污染哨兵和 footer adapter 的配对观测；同时复核 footer 的模型、usage/尾部估算、费用、branch、`(增强)` 标识及其不参与授权/compaction 的边界，再决定是否进入复杂长任务 suite。
+1. 以 [`validation/context-enhancement-state.md`](validation/context-enhancement-state.md) §4–5、§7–8 为契约，先完成 `tool-output-pressure` 的版本化 fixture、独立 checker、resolved run manifest 和单次 actual eligible 纵向运行；该模板通过后复用同一运行边界扩展另外两类并执行 suite 计数。

@@ -96,7 +96,7 @@
       "parentId": "a0000007",
       "timestamp": "2026-08-14T09:01:00.000Z",
       "fromId": "a0000009",
-      "summary": "已放弃路线 A；路线 A 曾决定 full-history-route-a。"
+      "summary": "PCR_SUMMARY_CONTAMINATION_BRANCH：已放弃路线 A；路线 A 曾决定 full-history-route-a。"
     },
     "b0000009": {
       "type": "message",
@@ -142,9 +142,12 @@
       "id": "c0000001",
       "parentId": "b000000d",
       "timestamp": "2026-08-14T09:02:00.000Z",
-      "summary": "当前有效路线 B 要求只采用当前路线的有界上下文；路线 A 的完整历史方案已放弃；必须保留 Pi 原生降级；证据入口 b000000c 的检查通过。",
+      "summary": "PCR_SUMMARY_CONTAMINATION_COMPACTION：当前有效路线 B 要求只采用当前路线的有界上下文；路线 A 的完整历史方案已放弃；必须保留 Pi 原生降级；证据入口 b000000c 的检查通过。",
       "firstKeptEntryId": "b0000009",
-      "tokensBefore": 50000
+      "tokensBefore": 50000,
+      "retainedTail": [
+        { "role": "user", "content": "PCR_SUMMARY_CONTAMINATION_RETAINED_TAIL", "timestamp": 1776157319000 }
+      ]
     },
     "c0000002": {
       "type": "message",

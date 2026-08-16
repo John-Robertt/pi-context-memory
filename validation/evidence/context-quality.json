@@ -2,9 +2,9 @@
   "schemaVersion": 2,
   "generatedBy": "scripts/validate-context-quality.mjs",
   "scope": "real-provider-quality",
-  "runId": "context-quality-2026-08-16T06-10-34-208Z",
-  "startedAt": "2026-08-16T06:10:34.221Z",
-  "completedAt": "2026-08-16T06:11:11.570Z",
+  "runId": "context-quality-2026-08-16T07-18-40-390Z",
+  "startedAt": "2026-08-16T07:18:40.401Z",
+  "completedAt": "2026-08-16T07:19:19.854Z",
   "piVersion": "0.84.2",
   "nodeVersion": "24.15.0",
   "openVikingVersion": "0.4.13",
@@ -26,28 +26,28 @@
         "token_type": "input",
         "provider": "litellm",
         "model_name": "openrouter/openai/gpt-5.6-luna",
-        "token_count": 13273
+        "token_count": 13281
       },
       {
         "source": "vlm",
         "token_type": "output",
         "provider": "litellm",
         "model_name": "openrouter/openai/gpt-5.6-luna",
-        "token_count": 2320
+        "token_count": 2367
       }
     ],
-    "memoryTotalTokens": 15593
+    "memoryTotalTokens": 15648
   },
   "actualCheckpointFlow": {
     "requiredWait": true,
     "requestContinuedBeforeRefresh": true,
     "backgroundAccepted": true,
-    "firstCheckpointIdentity": "ad41b09436a5afdb14c4e5f9b945bf438fcae025938f61ffeb7f743904c98bf4",
-    "nextCheckpointIdentity": "297013ab942e1000c8e0a45e465c375027888840289e55b48bb2d96c0f5029d6"
+    "firstCheckpointIdentity": "87e9c62c45f2055fc31a7245250dbf800f926c0cff26dab306aa4199889d3c12",
+    "nextCheckpointIdentity": "e332c5db88ad10d1cc7f9653b3c59f5d04ec664b62397d19e65258c0572b1bdc"
   },
   "memoryModelCondition": {
     "credentialSource": "pi-auth",
-    "configFingerprint": "7bbce118ea5619b7ae339f718787bebb3387d20cfe7072e730e49e7706b1fef3",
+    "configFingerprint": "f21d3fb72adc8ed74db7adb567ed6ecc4b111349a036e141875c31b826429442",
     "explicitRequestControls": [
       "thinking",
       "temperature",
@@ -68,7 +68,7 @@
   "fixture": {
     "path": "validation/fixtures/context-enhancement-long-task.json",
     "name": "bounded-context-route-continuity",
-    "sha256": "8aed19f4611f47d8d000b89e6901727cd213282849e6faf5a5d1a4adda724694"
+    "sha256": "c1234ea47dd3f1f673bc2acc304f61ca2d899cf318351d0603699205885087a3"
   },
   "execution": {
     "order": [
@@ -78,11 +78,11 @@
     "repetitions": 1
   },
   "implementation": {
-    "sourceManifestSha256": "d0ce14b6ba4e1e24126465b88625ce4156b62de2de1ffdaaeb2c8b6259c39deb",
+    "sourceManifestSha256": "987bb655a1275b3fa76aa504ac44287f4086859304ebe194cf8b226325dc7082",
     "files": [
       {
         "path": ".pi/extensions/pi-context-memory/index.ts",
-        "sha256": "877d471c12c3a188d0bf73fa80e9b49a18a7edcd60390bcd7dff6bc62266fe51"
+        "sha256": "01055909b9d80c9bb2a310c7831b449eee492fab45e0b7cbef97d18f8e8a1ddb"
       },
       {
         "path": ".pi/extensions/pi-context-memory/long-term-memory.ts",
@@ -103,6 +103,10 @@
       {
         "path": ".pi/extensions/pi-context-memory/openviking-protocol.ts",
         "sha256": "af2d47062ac74385c6fe3f9892255f199753c58d36eaf2f1404adbbe05083a7b"
+      },
+      {
+        "path": ".pi/extensions/pi-context-memory/pi-footer-adapter.ts",
+        "sha256": "ba9e1e713325f51733aed689eb63f9f9da1bdf513be7a9db43d9d6b0b94367f1"
       },
       {
         "path": ".pi/extensions/pi-context-memory/pi-session-protocol.ts",
@@ -158,11 +162,11 @@
       },
       {
         "path": "scripts/validate-context-quality.mjs",
-        "sha256": "e3aad6fb3ce159f93b1718f3027441f3157866372fa0826132a4e19b8c4e4fb1"
+        "sha256": "5c80c3c540c4a3a23c870b043a246af815153502b45430b1e3f9c8887f6f87bf"
       },
       {
         "path": "scripts/validation-evidence.mjs",
-        "sha256": "748b89d5d25bd7d6d16b19882de4e58b9046b50c5997932acad4390c5b29b668"
+        "sha256": "3b88004f8be1d57be56cff3afd9e21594048102cb7bc7ae814a847fb7afa44e7"
       },
       {
         "path": "scripts/validation-suite.mjs",
@@ -174,10 +178,10 @@
       },
       {
         "path": "validation/fixtures/context-enhancement-long-task.json",
-        "sha256": "8aed19f4611f47d8d000b89e6901727cd213282849e6faf5a5d1a4adda724694"
+        "sha256": "c1234ea47dd3f1f673bc2acc304f61ca2d899cf318351d0603699205885087a3"
       }
     ],
-    "specificationManifestSha256": "f80d8c9bdc6c5e2c208524368ae137a5a60c083462ded3965c35341eba9e0cbc",
+    "specificationManifestSha256": "30bb87fc5e90ff27c2f6a279d49ffe2ee4a2f6f71e5b1d105480ebf7a2773929",
     "specificationFiles": [
       {
         "path": ".python-version",
@@ -193,14 +197,14 @@
       },
       {
         "path": "docs/validation/context-enhancement-state.md",
-        "sha256": "dfc3f2ed054bf78ac6946b9182b9fc93871fd59b2681bb43b15ece5e095f6699"
+        "sha256": "3168b4510da1d2b4255fa027848f0ab86ab4c74aee5f54423dd0c8b48ad73c9a"
       },
       {
         "path": "validation/suite.json",
         "sha256": "2f34c5cec5f73f972887aaeb0ad7decf734500911f7ea0412061d33deb3d139b"
       }
     ],
-    "gitCommit": "9d973c0c5c5ff46fa0d5d0eb8c537721fb3c3b5a",
+    "gitCommit": "6c8cd721bd613f38cc67e40dcb26907ac74368fb",
     "workingTreeDirty": true
   },
   "passed": true,
@@ -216,8 +220,10 @@
     "actualCheckpointRequiredWait": true,
     "actualCheckpointRequestParallel": true,
     "actualCheckpointBackgroundAccepted": true,
+    "actualHostCompatibility": true,
     "memoryUsageAttributed": true,
     "sameTaskModel": true,
+    "summaryContaminationIsolated": true,
     "controlledMemoryAdapterSemanticsObserved": true,
     "pairedConditions": true
   },
@@ -233,7 +239,9 @@
       },
       "hookVerified": null,
       "model": "openrouter/openai/gpt-5.6-luna",
+      "hostCompatibility": null,
       "condition": {
+        "type": "before-agent",
         "model": "openrouter/openai/gpt-5.6-luna",
         "modelHash": "8842f244899f1aa2150331506184ca7c2005b30beae16664985d56b05fd19377",
         "thinking": "off",
@@ -253,39 +261,48 @@
         "tokens": {
           "input": 3,
           "output": 21,
-          "cacheRead": 0,
-          "cacheWrite": 22941,
-          "total": 22965
+          "cacheRead": 22951,
+          "cacheWrite": 0,
+          "total": 22975
         },
-        "cost": 0.002880525,
+        "cost": 0.00024241,
         "contextUsage": {
-          "tokens": 22965,
+          "tokens": 22975,
           "contextWindow": 1050000,
-          "percent": 2.1871428571428573
+          "percent": 2.188095238095238
         }
       },
       "requestResult": {
-        "entryId": "90827530",
+        "entryId": "edca472f",
         "stopReason": "stop",
         "usage": {
           "input": 3,
           "output": 21,
-          "cacheRead": 0,
-          "cacheWrite": 22941,
+          "cacheRead": 22951,
+          "cacheWrite": 0,
           "reasoning": 0,
-          "totalTokens": 22965,
+          "totalTokens": 22975,
           "cost": {
             "input": 3.0000000000000004e-7,
             "output": 0.0000126,
-            "cacheRead": 0,
-            "cacheWrite": 0.002867625,
-            "total": 0.002880525
+            "cacheRead": 0.00022951000000000002,
+            "cacheWrite": 0,
+            "total": 0.00024241
           }
         }
       },
       "observations": {
         "workingContextReady": 0,
-        "hookVerifiedRequests": 0
+        "hookVerifiedRequests": 0,
+        "providerPayloads": 1,
+        "authoritySummaryContaminationHits": [
+          "PCR_SUMMARY_CONTAMINATION_BRANCH",
+          "PCR_SUMMARY_CONTAMINATION_COMPACTION",
+          "PCR_SUMMARY_CONTAMINATION_RETAINED_TAIL"
+        ],
+        "summaryContaminationHits": [
+          "PCR_SUMMARY_CONTAMINATION_COMPACTION"
+        ]
       }
     },
     "enhanced": {
@@ -299,7 +316,13 @@
       },
       "hookVerified": true,
       "model": "openrouter/openai/gpt-5.6-luna",
+      "hostCompatibility": {
+        "compactionSuppressed": true,
+        "treeSummarySuppressed": true,
+        "summaryProviderRequests": 0
+      },
       "condition": {
+        "type": "before-agent",
         "model": "openrouter/openai/gpt-5.6-luna",
         "modelHash": "8842f244899f1aa2150331506184ca7c2005b30beae16664985d56b05fd19377",
         "thinking": "off",
@@ -320,38 +343,45 @@
           "input": 3,
           "output": 21,
           "cacheRead": 0,
-          "cacheWrite": 1711,
-          "total": 1735
+          "cacheWrite": 1736,
+          "total": 1760
         },
-        "cost": 0.000226775,
+        "cost": 0.00022989999999999998,
         "contextUsage": {
-          "tokens": 1735,
+          "tokens": 9,
           "contextWindow": 1050000,
-          "percent": 0.16523809523809524
+          "percent": 0.0008571428571428571
         }
       },
       "requestResult": {
-        "entryId": "c2f970cb",
+        "entryId": "92c64293",
         "stopReason": "stop",
         "usage": {
           "input": 3,
           "output": 21,
           "cacheRead": 0,
-          "cacheWrite": 1711,
+          "cacheWrite": 1736,
           "reasoning": 0,
-          "totalTokens": 1735,
+          "totalTokens": 1760,
           "cost": {
             "input": 3.0000000000000004e-7,
             "output": 0.0000126,
             "cacheRead": 0,
-            "cacheWrite": 0.000213875,
-            "total": 0.000226775
+            "cacheWrite": 0.000217,
+            "total": 0.00022989999999999998
           }
         }
       },
       "observations": {
         "workingContextReady": 1,
-        "hookVerifiedRequests": 1
+        "hookVerifiedRequests": 1,
+        "providerPayloads": 1,
+        "authoritySummaryContaminationHits": [
+          "PCR_SUMMARY_CONTAMINATION_BRANCH",
+          "PCR_SUMMARY_CONTAMINATION_COMPACTION",
+          "PCR_SUMMARY_CONTAMINATION_RETAINED_TAIL"
+        ],
+        "summaryContaminationHits": []
       }
     }
   },

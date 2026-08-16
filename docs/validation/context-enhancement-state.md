@@ -123,7 +123,7 @@ run manifest、每个已执行 attempt 和停止原因都进入 evidence：
 - projected ToolBatch 等待权威 entry 与来源屏障，失败时本扩展返回 block 诊断；
 - ProviderPayloadProfile 预算覆盖上下文窗口、system prompt、tool schema、framing、transport margin、current turn 和实际输出上限；改变模型、API、system 或 tools 始终使旧请求 profile 失效，并只在历史可用空间或 estimator 变化时改变 retentionBudgetIdentity；
 - 必要 refresh pending 时缩小任务历史预算，旧 RefreshTarget 不直接完成新请求；旧结果只作为候选 checkpoint 由新预算重算：过大时创建新 retentionBudgetIdentity 目标，新目标检查点可容纳时发送，当前身份的最小合法检查点仍超限时一次性 `context-budget`，不重复刷新；
-- Pi footer 显示最近任务 Provider usage/尾部估算并以 `(增强)` 标识，保留模型、累计 usage、费用与 branch；显示值和记忆模型窗口不影响授权，扩展不修改持久化 compaction setting；
+- 真实交互 TUI 中安装 footer adapter，任务响应后按 Pi session usage 与 `getContextUsage()` 刷新，显示模型、累计 usage、费用、实际 Git branch 和 `(增强)`，session shutdown 时恢复宿主 footer；RPC/JSON/print 不安装组件。显示值和记忆模型窗口不影响授权，扩展不修改持久化 compaction setting；
 - 相同输入形成相同上下文哈希；
 - session、session file、完整 request route fingerprint、HistoricalRouteKey、MemoryCheckpoint identity、VerifiedActiveDelta hash、ProviderPayloadProfile、完整 Provider 消息序列、规范化内容和运行代际形成唯一采用身份；
 - 分支、迟到结果、替换 session 和 reload 保持隔离；
@@ -134,9 +134,9 @@ run manifest、每个已执行 attempt 和停止原因都进入 evidence：
 - 用户文本不能伪造增强证明；nonce 只能在本 handler 时点消费一次；
 - foreign customType 按 Pi Provider 基线处理，无需额外注册；其它扩展及其 handler 顺序保持不变；
 - compaction/tree handler 的返回值、调用顺序、实际 summary Provider 请求和新 entry 分别记录；
-- suite 所选且已通过探针的 `PiProtocolProfile` 基准组合中，返回 `{ cancel: true }` 或空 summary 后实际结果符合探针；后加载受控 handler 改变结果时记录 `host-behavior-unverified`，不归因为本扩展控制失败，也不自动处理其它 handler；
+- suite 所选 `PiProtocolProfile` 的基准组合中，manual/threshold/overflow 均由本 handler `{ cancel: true }` 短路且不产生 summary 请求、compaction entry 或后续 handler 调用；选择 summary 的 tree 导航采用空 summary 且不产生请求或 entry。后加载受控 tree handler 移除空 summary 后，真实 native summary 请求与 entry 必须出现，同时本扩展记录 `host-behavior-unverified`，不自动处理其它 handler；
 - 未通过行为探针的宿主不被声明为已抑制 summary，扩展只给出兼容性诊断；
-- 已有 compaction/branch summary 污染哨兵不进入 VLM 或任务 Provider payload；
+- 权威 session 中同时存在 compaction summary、branch summary 与 retained tail 三类哨兵；本 runner 分阶段证明它们不进入记忆投影、OpenViking append/assembly，actual paired runner 证明当前 Pi 基线只暴露的 compaction 正对照不进入本扩展增强任务 Provider payload；来源归档排除 summary 正文及召回只消费已核验 `MessageSource` 分别由 source archive/source recall evidence 约束；
 - shutdown 清理有界且不污染后续 session。
 
 ## 7. 真实 Provider 请求与任务质量
@@ -152,7 +152,8 @@ run manifest、每个已执行 attempt 和停止原因都进入 evidence：
 - OpenViking 中断、能力 proof/进程身份失效和用户修复分别记录本扩展 block/新代际行为与 transport 实际请求数；空闲期记忆 Provider 请求数保持为零；不从内部状态推断零请求；
 - 真实 Pi session 的 text/image/mixed、user/assistant/tool/bash/custom 与 Pi 基线一致；foreign custom text 不因 customType 丢失，mixed/image 整单元 opaque，当前未知 role 按 Pi drop；thinking 等 raw 协议按 Pi 保留但不进长期记忆，private metadata/locator 不泄漏；
 - fullOutputRef 在临时文件删除后仍可恢复；image/未来 Pi 可见 opaque 预算内原样保留，超预算只形成本扩展能力诊断；
-- compaction/tree handler 返回、实际宿主结果、增强 footer 与 summary 污染隔离分别由真实 Pi session 证明。
+- 当前实际任务 Provider/模型的增强 arm 在同一真实 Pi session 中证明 compaction 取消、选择 summary 的 tree 无摘要完成、summary Provider 请求为零，且三类污染哨兵未进入最终任务 payload；
+- 真实交互 Pi TUI 使用协议兼容本地任务 Provider 证明 footer 安装、任务响应后的模型/usage/费用/context/branch 刷新、`(增强)` 标识及 shutdown 卸载；该检查只证明宿主显示适配，不扩大任务 Provider 支持结论。
 
 任一检查点只有替身证据或没有实际发生时，真实 suite 为 failed/inconclusive，不能开始可靠性计数。真实 runner 同时采集：
 

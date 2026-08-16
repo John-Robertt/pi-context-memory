@@ -2,8 +2,8 @@
   "schemaVersion": 2,
   "generatedBy": "scripts/validate-memory-model-runtime.mjs",
   "scope": "managed-provider-runtime",
-  "runId": "memory-model-runtime-2026-08-16T06-08-59-472Z",
-  "recordedAt": "2026-08-16T06:10:28.423Z",
+  "runId": "memory-model-runtime-2026-08-16T07-18-40-722Z",
+  "recordedAt": "2026-08-16T07:20:11.929Z",
   "piVersion": "0.84.2",
   "nodeVersion": "24.15.0",
   "platform": "darwin",
@@ -11,11 +11,11 @@
   "vlmSchemaSha256": "ae867bbe4e9067170c18feb29db53c2e683dcabfef90a0f8a819bc92477acaae",
   "adapterContractSha256": "1f0e49f8d18851891f73e6a5f4fa3704406c3ea690089b113484cd5c36e8262e",
   "implementation": {
-    "sourceManifestSha256": "7ef9f1737b552b39d5c643757f23ee123b799b62a361d2eb921243f803e8c8c9",
+    "sourceManifestSha256": "9a69cf1cf5dde91ae747a5251bc9f53482ded0ad82cde12eecb4f0e704502a4d",
     "files": [
       {
         "path": ".pi/extensions/pi-context-memory/index.ts",
-        "sha256": "877d471c12c3a188d0bf73fa80e9b49a18a7edcd60390bcd7dff6bc62266fe51"
+        "sha256": "01055909b9d80c9bb2a310c7831b449eee492fab45e0b7cbef97d18f8e8a1ddb"
       },
       {
         "path": ".pi/extensions/pi-context-memory/memory-model-configuration.ts",
@@ -95,7 +95,7 @@
       },
       {
         "path": "scripts/validation-evidence.mjs",
-        "sha256": "748b89d5d25bd7d6d16b19882de4e58b9046b50c5997932acad4390c5b29b668"
+        "sha256": "3b88004f8be1d57be56cff3afd9e21594048102cb7bc7ae814a847fb7afa44e7"
       },
       {
         "path": "scripts/validation-suite.mjs",
@@ -129,7 +129,7 @@
         "sha256": "2f34c5cec5f73f972887aaeb0ad7decf734500911f7ea0412061d33deb3d139b"
       }
     ],
-    "gitCommit": "9d973c0c5c5ff46fa0d5d0eb8c537721fb3c3b5a",
+    "gitCommit": "6c8cd721bd613f38cc67e40dcb26907ac74368fb",
     "workingTreeDirty": true
   },
   "actual": {
@@ -140,28 +140,28 @@
     },
     "profileFingerprint": "a96f7ed50cb6d0543e03019dadfc672ffae95f1481277728428974b05235d045",
     "first": {
-      "launchId": "ab006142-926d-43df-a187-cb690a625455",
-      "childPid": 42824,
-      "proofId": "48a56847-c182-4fc4-8eeb-3c32b76f2cd0",
-      "taskId": "adfe3d2d-d343-4212-bdf2-45de06730153",
+      "launchId": "8cdfb4ce-fe14-4122-a4bc-954bfab65ccb",
+      "childPid": 51170,
+      "proofId": "c2f0e082-8b0f-4cc0-b372-b53d62d9cf9c",
+      "taskId": "c48c48c5-ab61-4098-bc64-b03c83a96bca",
       "usage": {
         "promptTokens": 599,
-        "completionTokens": 251,
-        "totalTokens": 850
+        "completionTokens": 336,
+        "totalTokens": 935
       },
-      "assemblyHash": "01cc53c5e27ae2cf63126b87ff830504375e9362dd2b2719d9bfc84d0bbfd874"
+      "assemblyHash": "5679f1595bdd20a3b146069fc54e9b251ca46105a5ee3d8bc0f8fa263cf38ff5"
     },
     "recovered": {
-      "launchId": "ab006142-926d-43df-a187-cb690a625455",
-      "childPid": 42831,
-      "proofId": "a7a7a96b-2897-49e4-bfe7-ee3b78ffae61",
-      "taskId": "05f8566f-6e21-40ef-a32d-9c67733e43ef",
+      "launchId": "8cdfb4ce-fe14-4122-a4bc-954bfab65ccb",
+      "childPid": 51175,
+      "proofId": "e1d44e67-75c9-4072-9984-c43df1a04a6f",
+      "taskId": "d84cf415-5010-40be-9faf-547a862d6f8e",
       "usage": {
         "promptTokens": 599,
-        "completionTokens": 376,
-        "totalTokens": 975
+        "completionTokens": 330,
+        "totalTokens": 929
       },
-      "assemblyHash": "455f3d99ba4af5cf462c104bf4a45ea5350d421c53b7080f92e3a1692e0a8464"
+      "assemblyHash": "cf4bfbe2033c3177f18917c9b94762aef3aa4723942cfca2e00190b1a2f41cd7"
     },
     "usageRows": [
       {
@@ -176,7 +176,7 @@
         "token_type": "output",
         "provider": "litellm",
         "model_name": "openrouter/openai/gpt-5.6-luna",
-        "token_count": 251
+        "token_count": 336
       }
     ],
     "checks": {
