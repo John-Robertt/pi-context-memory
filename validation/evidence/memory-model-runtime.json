@@ -2,24 +2,23 @@
   "schemaVersion": 2,
   "generatedBy": "scripts/validate-memory-model-runtime.mjs",
   "scope": "managed-provider-runtime",
-  "runId": "memory-model-runtime-2026-08-16T07-18-40-722Z",
-  "recordedAt": "2026-08-16T07:20:11.929Z",
+  "runId": "memory-model-runtime-2026-08-16T09-40-20-287Z",
+  "recordedAt": "2026-08-16T09:41:36.373Z",
   "piVersion": "0.84.2",
   "nodeVersion": "24.15.0",
   "platform": "darwin",
   "openVikingVersion": "0.4.13",
   "vlmSchemaSha256": "ae867bbe4e9067170c18feb29db53c2e683dcabfef90a0f8a819bc92477acaae",
-  "adapterContractSha256": "1f0e49f8d18851891f73e6a5f4fa3704406c3ea690089b113484cd5c36e8262e",
   "implementation": {
-    "sourceManifestSha256": "9a69cf1cf5dde91ae747a5251bc9f53482ded0ad82cde12eecb4f0e704502a4d",
+    "sourceManifestSha256": "c165ce1d2d718af84e3444990797cef0867f37bb7c5f4a46217f30480444e495",
     "files": [
       {
         "path": ".pi/extensions/pi-context-memory/index.ts",
-        "sha256": "01055909b9d80c9bb2a310c7831b449eee492fab45e0b7cbef97d18f8e8a1ddb"
+        "sha256": "a24c8dd076769531e1b076b7362fdee19f52ccc5b002d67a892c70f1b43840c2"
       },
       {
         "path": ".pi/extensions/pi-context-memory/memory-model-configuration.ts",
-        "sha256": "5b2df81612f5d7b1bd7efd4d08c7badaa4a41569cab784c41e3573d3ac510d8c"
+        "sha256": "d824998c26de99ef743181c9f57d4a94fc6f434126e6c2d0f31e1e61e0b4b3f9"
       },
       {
         "path": ".pi/extensions/pi-context-memory/memory-runtime-capability.ts",
@@ -38,10 +37,6 @@
         "sha256": "9cf2c0716b50870928ba5290c52dd8b426b01da8de86f833e68f327603e2401e"
       },
       {
-        "path": ".pi/extensions/pi-context-memory/provider-payload-proof.ts",
-        "sha256": "61b979899e398ba717e51454964bb64eba465059b542a5e5802914bc5e89fc6d"
-      },
-      {
         "path": ".pi/extensions/pi-context-memory/session-memory-coordination.ts",
         "sha256": "92ce78e24dc1387a67245462ba098fc820f83512d84e11724e26d82c71cab1b1"
       },
@@ -51,11 +46,7 @@
       },
       {
         "path": ".pi/extensions/pi-context-memory/working-context-optimization.ts",
-        "sha256": "d13457dfd9f93775f2ed37b19bf62064a54df82ea8e4d72a95a960ff831aedf1"
-      },
-      {
-        "path": "config/openviking-adapter-contract.json",
-        "sha256": "a66331136c045734d10d9c790dc137358de7deb59c2da41b62f9b95eb970c00a"
+        "sha256": "bb616131030ee3ba86cf3ffd5380c23108f6a4614585a7d11b6c62c421cf7b89"
       },
       {
         "path": "config/openviking.json",
@@ -79,7 +70,7 @@
       },
       {
         "path": "scripts/openviking-config.py",
-        "sha256": "50ae858774e582a20d347d3347178db1da2ea2d2c534418b8b1487308a7099a2"
+        "sha256": "c710e5deaa19696afd1cac9141d65b0adc593903670f08975c72bb59414ddda0"
       },
       {
         "path": "scripts/start-openviking.mjs",
@@ -87,15 +78,11 @@
       },
       {
         "path": "scripts/validate-memory-model-runtime.mjs",
-        "sha256": "4bd8186a91b3f4de17be76f67047fa768b0768f159758f249163b4c8e9374094"
-      },
-      {
-        "path": "scripts/validate-openviking-vlm-adapters.py",
-        "sha256": "f5565e925d34dc202bcd52f3dfa6daa22fbf822c8aad617fea5a642ba538757f"
+        "sha256": "8eb594187edb5aecd21131e026d732f7de5f9542a91ade80b7de4748810578af"
       },
       {
         "path": "scripts/validation-evidence.mjs",
-        "sha256": "3b88004f8be1d57be56cff3afd9e21594048102cb7bc7ae814a847fb7afa44e7"
+        "sha256": "a2f10f022c64711900307f7655f596738acd25af88ec5217b123751d21bea5a9"
       },
       {
         "path": "scripts/validation-suite.mjs",
@@ -106,7 +93,7 @@
         "sha256": "910184bff539fd56b4b7f8fc2ee46439f3113c7394c1538d60ef3a5e3c78f094"
       }
     ],
-    "specificationManifestSha256": "69cc6effb5da7cee4669b691484e418f46b1bbc89b35d7427fb627e11a5ca4fa",
+    "specificationManifestSha256": "d480e1180791cb1ac44ac701529cd73e2ef1129ee5c7c0c12feaa14f26f57063",
     "specificationFiles": [
       {
         "path": ".python-version",
@@ -118,18 +105,18 @@
       },
       {
         "path": "docs/validation/README.md",
-        "sha256": "9fb53547a6bb0b6d720d44e095b81e3fd99dc47ce350c33faf2d58469440b52e"
+        "sha256": "8ff6df885f45c340d591ad46e76ea641ef383e6b8147c21de568d3c06270bfb7"
       },
       {
         "path": "docs/validation/memory-model-runtime.md",
-        "sha256": "f9a506dea2c5a25c2b6f9037a870d0d6fb47cfcf35424f3fa1be6852ac3c10a9"
+        "sha256": "8e3ce3da7025b9619d2af74a4c89ed401596493e4b995894422607a57af1d163"
       },
       {
         "path": "validation/suite.json",
         "sha256": "2f34c5cec5f73f972887aaeb0ad7decf734500911f7ea0412061d33deb3d139b"
       }
     ],
-    "gitCommit": "6c8cd721bd613f38cc67e40dcb26907ac74368fb",
+    "gitCommit": "7ea7f63b38d72726180ea4501dbd62e9c5170617",
     "workingTreeDirty": true
   },
   "actual": {
@@ -140,28 +127,28 @@
     },
     "profileFingerprint": "a96f7ed50cb6d0543e03019dadfc672ffae95f1481277728428974b05235d045",
     "first": {
-      "launchId": "8cdfb4ce-fe14-4122-a4bc-954bfab65ccb",
-      "childPid": 51170,
-      "proofId": "c2f0e082-8b0f-4cc0-b372-b53d62d9cf9c",
-      "taskId": "c48c48c5-ab61-4098-bc64-b03c83a96bca",
+      "launchId": "876468c8-2850-4431-8338-6b5df8eab39b",
+      "childPid": 57601,
+      "proofId": "8b06b34d-5eec-47ba-9c39-c9f6b1f9a3ce",
+      "taskId": "57bbd91e-be85-4100-87b2-f16a9d3d8498",
       "usage": {
         "promptTokens": 599,
-        "completionTokens": 336,
-        "totalTokens": 935
+        "completionTokens": 370,
+        "totalTokens": 969
       },
-      "assemblyHash": "5679f1595bdd20a3b146069fc54e9b251ca46105a5ee3d8bc0f8fa263cf38ff5"
+      "assemblyHash": "fa222f956439c5a3520091c8731547f9d68ce20f9327670e73dcd6e64ef2c227"
     },
     "recovered": {
-      "launchId": "8cdfb4ce-fe14-4122-a4bc-954bfab65ccb",
-      "childPid": 51175,
-      "proofId": "e1d44e67-75c9-4072-9984-c43df1a04a6f",
-      "taskId": "d84cf415-5010-40be-9faf-547a862d6f8e",
+      "launchId": "876468c8-2850-4431-8338-6b5df8eab39b",
+      "childPid": 57676,
+      "proofId": "e588ee37-92cc-4e87-9e9c-bbf618994b59",
+      "taskId": "25519aa3-ba48-4398-a8e1-cdb95e807aa0",
       "usage": {
         "promptTokens": 599,
-        "completionTokens": 330,
-        "totalTokens": 929
+        "completionTokens": 355,
+        "totalTokens": 954
       },
-      "assemblyHash": "cf4bfbe2033c3177f18917c9b94762aef3aa4723942cfca2e00190b1a2f41cd7"
+      "assemblyHash": "3b7dc2e74339baab3343bb880168406d4d71e97e9b5b1a496173e8171e7d2cf6"
     },
     "usageRows": [
       {
@@ -176,7 +163,7 @@
         "token_type": "output",
         "provider": "litellm",
         "model_name": "openrouter/openai/gpt-5.6-luna",
-        "token_count": 336
+        "token_count": 370
       }
     ],
     "checks": {
@@ -191,30 +178,21 @@
   },
   "passed": true,
   "checks": {
-    "adapterProtocolsCovered": true,
-    "reviewedConfigurationAdapterSurface": true,
-    "unreviewedProviderRejected": true,
     "schemaObserved": true,
-    "litellmCatalogObserved": true,
-    "generatedConfigParsed": true,
+    "openVikingAcceptsArbitraryProvider": true,
+    "missingCredentialRejectedByOpenViking": true,
     "runtimeProfileApplied": true,
     "deterministicFingerprint": true,
     "credentialRotationChangesConfigFingerprint": true,
     "credentialsBoundToInternalEnvironment": true,
     "generatedConfigExcludesCredentialValues": true,
     "apiKeyFormsResolved": true,
-    "apiKeysBoundToSettings": true,
     "codexNativeCredentialConfigurationPreserved": true,
     "credentialDiagnosticsRedacted": true,
     "piCredentialInjectedIntoIsolatedEnvironment": true,
     "missingReferencedCredentialRejected": true,
-    "openRouterApiKeyRequired": true,
-    "unknownFieldRejected": true,
-    "missingCredentialRejected": true,
-    "azureFieldRejected": true,
     "userConfigPath": true,
-    "commentedTemplateCreated": true,
-    "litellmCatalogDocumented": true,
+    "genericTemplateCreated": true,
     "jsoncConfigurationParsed": true,
     "emptyConfigurationAccepted": true,
     "invalidConfigDiagnosed": true,
@@ -247,9 +225,8 @@
     "operationDeadlineCoversFailureCleanup": true,
     "wrongLaunchRejected": true,
     "interruptedControlOperationCompletes": true,
-    "automaticConfigErrorReported": true,
+    "desiredProviderNotPrejudged": true,
     "invalidDesiredConfigPreservesRunningInstance": true,
-    "openRouterLauncherCredentialRequired": true,
     "splitCredentialRuntimeAvailable": true,
     "commandNoProviderRequests": true,
     "taskModelUnchanged": true,

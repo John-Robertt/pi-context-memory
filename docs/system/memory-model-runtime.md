@@ -6,12 +6,12 @@
 
 ## 2. 配置权威与数据边界
 
-默认用户级 `~/.pi/pi-context-memory.jsonc` 是记忆模型目标的唯一权威来源；受控部署或验证可用 `PCR_MEMORY_MODEL_SETTINGS` 覆盖路径。根结构只包含可为空的 `memoryModel`；非空值是扩展明确支持的最小配置面：
+默认用户级 `~/.pi/pi-context-memory.jsonc` 是记忆模型目标的唯一权威来源；受控部署或验证可用 `PCR_MEMORY_MODEL_SETTINGS` 覆盖路径。根结构只包含可为空的 `memoryModel`；非空值是扩展稳定的最小配置面：
 
-- `provider`：扩展能够转换并由 OpenViking 配置入口验证的 Provider；
-- `model`：对应 Provider 接受的模型 ID 或路由表达式；
-- `api_key`：当前来源的可选直接凭据或 `$NAME` / `${NAME}` 环境引用；
-- 该 Provider 当前必要且无法推导的连接字段。
+- `provider`：交给锁定 OpenViking 解释的非空 Provider 字符串；
+- `model`：对应的模型 ID 或路由表达式；
+- `api_key`：可选直接凭据或 `$NAME` / `${NAME}` 环境引用；
+- `api_base`、`api_version`：锁定 `VLMConfig` schema 已公开的可选连接字段。
 
 `memoryModel: null` 表示没有可运行记忆模型。扩展启用时，该状态不能发布任务请求能力。
 
@@ -21,7 +21,7 @@ Launcher 按 [`../contracts/openviking-adapter.md`](../contracts/openviking-adap
 
 ## 3. 用户配置与内部运行 profile
 
-用户配置只选择记忆 Provider、模型、凭据引用和 OpenViking 该 Provider 公开且经适配器审查的必要连接字段。扩展按 [`../contracts/openviking-adapter.md`](../contracts/openviking-adapter.md) 接受配置字段，并为当前精确目标生成版本化 `MemoryRuntimeProfile` 和 OpenViking 配置。
+用户配置只选择上述五个 schema 字段。扩展不枚举 Provider 或维护 Provider 专用凭据规则；[`../contracts/openviking-adapter.md`](../contracts/openviking-adapter.md) 定义 schema、凭据隔离和上游构造边界。配置桥为当前精确目标生成版本化 `MemoryRuntimeProfile` 和 OpenViking 配置。
 
 ```text
 MemoryRuntimeProfile = {
@@ -35,7 +35,7 @@ MemoryRuntimeProfile = {
 
 每个字段都有当前运行责任：thinking、temperature、stream、maxOutput、timeout、retry 与 concurrency 显式进入受审查的 OpenViking VLM 配置边界；实际 task usage 再核对 Provider、模型和模型调用。profile 不承诺 OpenViking 未公开的最终 wire 字段，也不含凭据、存储路径、任务模型预算、来源 retention 或 Provider fallback；历史输入与检查点 retention 由长时记忆模块的独立有界策略负责。retry 只能重试同一 Provider/模型/API。
 
-配置桥接受当前契约中的 OpenViking schema 字段和凭据形态；每个精确 Provider、模型和连接配置都必须在当前受管子进程上产生 accepted task、匹配 usage 与 marker-bearing Working Memory，才为该进程发布能力证明。schema 或探针失败时保持未授权。
+配置桥读取锁定 `VLMConfig.model_json_schema()`、绑定完整 schema 指纹，并通过 `OpenVikingConfig.from_dict()` 与 `get_vlm_instance()` 让 OpenViking 自己判定 Provider 配置构造。每个精确 Provider、模型和连接配置仍必须在当前受管子进程上产生 accepted task、匹配 usage 与 marker-bearing Working Memory，才为该进程发布能力证明；schema、构造或探针失败时保持未授权。
 
 运行配置指纹同时绑定用户目标、profile 指纹和 adapter 版本。profile 代码变化属于待应用运行目标，只有显式重启和实际能力探针成功后进入 active 代际；当前 ready 实例继续使用自己的已绑定 profile。
 
@@ -66,7 +66,7 @@ requestReady
 ```
 
 用户配置模块拥有 targetConfig/targetProfile。项目启动器拥有 activeProcess、serviceReady 和状态文件原子发布；`memory-runtime-capability.ts` 拥有生产探针、proof 校验与代际身份。Launcher 只编排这些能力函数，不另建协议成功语义。Session 记忆协调和 Pi 集成只消费能力模块对当前 runtime snapshot 的校验结果。
-运行代际由启动器身份、子进程身份、能力 proof ID、active 配置指纹、active profile 指纹和 adapter 版本共同构成；proof ID 防止操作系统复用 PID 时误采纳其它代际的 optimizer 或 Session 状态。memoryCapability 在该代际启动或显式恢复时由实际探针生成，并与该代际共同生效。每个 constructed 请求绑定该代际；Provider hook 重新读取当前 runtime，只有同一代际和同一 proof 仍有效才确认。启动器、子进程、能力 proof、active 配置/profile 或 adapter 变化创建新代际；其它代际的 checkpoint、refresh 和请求证明不能进入当前代际。实际记忆调用失败时锁存故障；显式重启或恢复探针成功后进入新代际。
+运行代际由启动器身份、子进程身份、能力 proof ID、active 配置指纹、active profile 指纹和 adapter 版本共同构成；proof ID 防止操作系统复用 PID 时误采纳其它代际的 optimizer 或 Session 状态。memoryCapability 在该代际启动或显式恢复时由实际探针生成，并与该代际共同生效。每个 constructed 请求在 `context` 阶段绑定并核对该代际；Provider hook 重新读取当前 runtime 只形成时点观察诊断，不撤销或阻断已经进入 Pi transport 的请求。启动器、子进程、能力 proof、active 配置/profile 或 adapter 变化创建新代际；其它代际的 checkpoint、refresh 和构造证明不能进入当前代际。实际记忆调用失败时锁存故障；显式重启或恢复探针成功后进入新代际。
 
 Launcher 发布原始 runtime state；能力模块验证其绑定并形成当前代际结果，Session 记忆协调和 Pi 集成据此决定请求。用户配置文件变化本身不改变 active 代际。
 
@@ -150,13 +150,13 @@ Launcher 发布原始 runtime state；能力模块验证其绑定并形成当前
 
 以下内容不得保存或回显：API key、OAuth token、云凭据、认证响应、完整任务 payload 和完整探针响应。用户配置与子进程环境遵循第 2 节的数据边界；观测只记录变量是否存在或凭据哈希是否匹配，不记录实际值。
 
-配置加载、readiness、记忆模型能力、运行代际、本扩展授权、hook 时点证明和 transport 最终采用分别观测，不能相互推断。
+配置加载、readiness、记忆模型能力、运行代际、本扩展 `context` 授权、Provider hook 观察和 transport 最终采用分别观测，不能相互推断。
 
 ## 10. 验证与校准
 
 设计成立需要证明：
 
-- 配置桥接受的目标都生成精确绑定的 MemoryRuntimeProfile；每个实际受管进程只有在能力探针通过后才发布请求能力；
+- 配置桥从锁定 VLM schema 发布稳定字段与完整指纹，任意 Provider 字符串交由 OpenViking 构造；每个目标生成精确绑定的 MemoryRuntimeProfile，且实际受管进程只有在能力探针通过后才发布请求能力；
 - profile 的模型请求字段精确进入受审查 OpenViking VLM 配置，实际 task usage 绑定目标 Provider/模型，生成配置不存在 backup；
 - 用户文件权限、内容所有权和凭据保密边界成立；
 - `/memory-model` 准确展示相互独立的运行事实；

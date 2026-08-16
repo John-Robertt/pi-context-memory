@@ -33,12 +33,6 @@ import {
   sanitizeFullOutputLocators,
 } from "../.pi/extensions/pi-context-memory/pi-session-protocol.ts";
 import {
-  createOpenAICompletionsPayloadProof,
-  openAICompletionsPayloadMatches,
-  openAICompletionsPayloadMatchesProfile,
-  openAICompletionsToolPayloadUpperBoundBytes,
-} from "../.pi/extensions/pi-context-memory/provider-payload-proof.ts";
-import {
   DEFAULT_WORKING_MEMORY_TASK_TIMEOUT_MS,
   MAX_OPENVIKING_APPEND_BODY_BYTES,
   MAX_OPENVIKING_PROJECTION_BYTES,
@@ -48,10 +42,10 @@ import {
 import {
   assemblyRouteProofError,
   buildEnhancedContext,
-  createProviderPayloadProfile,
+  createTaskContextBudget,
   createRetentionBudgetIdentity,
   formatWorkingContext,
-  payloadCarriesEnhancedContent,
+  observeEnhancedContent,
   WorkingContextOptimizer,
 } from "../.pi/extensions/pi-context-memory/working-context-optimization.ts";
 
@@ -865,7 +859,7 @@ async function runPiAdoptionCase(openViking) {
       event.type === "before_provider_request"
       && event.sessionId === expected.sessionId
       && event.sessionFile === expected.sessionFile
-      && event.hookOutcome === "verified"
+      && event.hookOutcome === "observed"
       && event.contextAuthorization === "allowed"
       && run.payloads.some((payload) => createHash("sha256")
         .update(JSON.stringify(payload))
@@ -1054,8 +1048,8 @@ async function runPiAdoptionCase(openViking) {
     const overflowRun = await promptAndSettle("overflow compaction suppression prompt");
     provider.state.rejectEnhancedOverflow = false;
     const overflowObservations = readObservations(observationLog).slice(overflowObservationOffset);
-    const overflowVerifiedRequests = overflowObservations
-      .filter((event) => event.type === "before_provider_request" && event.hookOutcome === "verified");
+    const overflowObservedRequests = overflowObservations
+      .filter((event) => event.type === "before_provider_request" && event.hookOutcome === "observed");
     const overflowSuppressed = overflowObservations.some((event) =>
       event.type === "session_before_compact"
       && event.reason === "overflow"
@@ -1063,7 +1057,7 @@ async function runPiAdoptionCase(openViking) {
       && event.decision === "cancel")
       && !overflowObservations.some((event) => event.type === "session_compact")
       && overflowRun.payloads.length === 1
-      && overflowVerifiedRequests.length === 1;
+      && overflowObservedRequests.length === 1;
     const overflowState = (await client.send("get_state")).data;
     const overflowLeafId = (await client.send("get_entries")).data.leafId;
     const overflowAdoptionRun = await promptAndSettle("overflow compaction suppression continuation probe");
@@ -1093,13 +1087,13 @@ async function runPiAdoptionCase(openViking) {
     const sessionShutdowns = observations.filter((event) => event.type === "session_shutdown");
     const lifecycleProviderRequests = observations.filter((event) => event.type === "before_provider_request");
     const constructedOutputs = observations.filter((event) => event.type === "context_allowed");
-    const hookVerified = lifecycleProviderRequests.filter((event) => event.hookOutcome === "verified" && event.nonce);
-    const hookRejected = lifecycleProviderRequests.filter((event) => event.hookOutcome === "rejected" && event.nonce);
+    const hookObserved = lifecycleProviderRequests.filter((event) => event.hookOutcome === "observed" && event.nonce);
+    const hookChanged = lifecycleProviderRequests.filter((event) => ["changed", "missing", "ambiguous"].includes(event.hookOutcome) && event.nonce);
     const hookUnobserved = observations.filter((event) => event.type === "constructed_output_unobserved" && event.nonce);
-    const outcomeNonces = [hookVerified, hookRejected, hookUnobserved].map((events) => new Set(events.map((event) => event.nonce)));
+    const outcomeNonces = [hookObserved, hookChanged, hookUnobserved].map((events) => new Set(events.map((event) => event.nonce)));
     const hookOutcomeAccounting = constructedOutputs.length > 0
       && new Set(constructedOutputs.map((event) => event.nonce)).size === constructedOutputs.length
-      && hookVerified.length + hookRejected.length + hookUnobserved.length === constructedOutputs.length
+      && hookObserved.length + hookChanged.length + hookUnobserved.length === constructedOutputs.length
       && outcomeNonces.every((nonces, index) => outcomeNonces.every((other, otherIndex) => index === otherIndex
         || [...nonces].every((nonce) => !other.has(nonce))));
 
@@ -1108,14 +1102,14 @@ async function runPiAdoptionCase(openViking) {
       receivedAt: provider.state.receivedAt[index],
     }));
     const transportPartitions = { adopted: 0, changed: 0, unobserved: 0 };
-    for (let index = 0; index < hookVerified.length; index += 1) {
-      const request = hookVerified[index];
+    for (let index = 0; index < hookObserved.length; index += 1) {
+      const request = hookObserved[index];
       if (transportRecords.some((record) => record.hash === request.payloadHash)) {
         transportPartitions.adopted += 1;
         continue;
       }
       const startedAt = Date.parse(request.at);
-      const endedAt = Date.parse(hookVerified[index + 1]?.at ?? "9999-12-31T23:59:59.999Z");
+      const endedAt = Date.parse(hookObserved[index + 1]?.at ?? "9999-12-31T23:59:59.999Z");
       if (transportRecords.some((record) => record.receivedAt >= startedAt && record.receivedAt < endedAt)) {
         transportPartitions.changed += 1;
       } else {
@@ -1123,11 +1117,11 @@ async function runPiAdoptionCase(openViking) {
       }
     }
     const transportObservedIndependently = transportPartitions.adopted > 0
-      && Object.values(transportPartitions).reduce((total, count) => total + count, 0) === hookVerified.length;
+      && Object.values(transportPartitions).reduce((total, count) => total + count, 0) === hookObserved.length;
 
     const statusEvents = client.events.filter((event) => event.type === "extension_ui_request" && event.method === "setStatus");
     const statusTexts = statusEvents.map((event) => event.statusText);
-    const uiProviderStateConsistent = hookVerified.every((requestEvent) => {
+    const uiProviderStateConsistent = hookObserved.every((requestEvent) => {
       const matchedIndex = transportRecords.findIndex((record) => record.hash === requestEvent.payloadHash);
       if (matchedIndex < 0) return false;
       const receivedAt = transportRecords[matchedIndex].receivedAt;
@@ -1193,7 +1187,7 @@ async function runPiAdoptionCase(openViking) {
         && requestAdoptedFor(overflowAdoptionRun, { ...overflowState, leafId: overflowLeafId }),
       backgroundRefreshFailureRetainsAuthorization: backendNativeRun.observations.some((event) =>
         event.type === "before_provider_request"
-        && event.hookOutcome === "verified"
+        && event.hookOutcome === "observed"
         && backendNativeRun.payloads.some((payload) => createHash("sha256")
           .update(JSON.stringify(payload)).digest("hex") === event.payloadHash))
         && !observations.slice(backendFailureOffset, archiveFailureOffset).some((event) =>
@@ -1227,9 +1221,9 @@ async function runPiAdoptionCase(openViking) {
       "second mismatched-runtime prompt",
       "third route preparation prompt",
     ].includes(message.content));
-    const runHasVerifiedTransport = (run) => run.observations.some((event) =>
+    const runHasObservedTransport = (run) => run.observations.some((event) =>
       event.type === "before_provider_request"
-      && event.hookOutcome === "verified"
+      && event.hookOutcome === "observed"
       && event.contextAuthorization === "allowed"
       && run.payloads.some((payload) => createHash("sha256")
         .update(JSON.stringify(payload))
@@ -1237,27 +1231,27 @@ async function runPiAdoptionCase(openViking) {
     const inFlightReadyIndex = inFlightWaitRun.observations.indexOf(inFlightWaitReady);
     const inFlightProviderIndex = inFlightWaitRun.observations.indexOf(inFlightWaitProvider);
     return {
-      hookVerifiedAndTransportAdopted: fourthRequest?.hookOutcome === "verified"
+      hookObservedAndTransportAdopted: fourthRequest?.hookOutcome === "observed"
         && fourthRequest.contextAuthorization === "allowed"
         && Boolean(fourthPayload)
         && JSON.stringify(fourthPayload).includes("# Enhanced session context")
         && JSON.stringify(fourthPayload).includes("fourth current prompt"),
       spoofedMarkerCannotAuthorize: spoofedMarkerObservations.some((event) =>
-        event.type === "before_provider_request" && event.hookOutcome === "verified")
+        event.type === "before_provider_request" && event.hookOutcome === "observed")
         && spoofedMarkerObservations.some((event) => event.type === "context_allowed" && typeof event.nonce === "string")
         && spoofedMarkerTransportCount === 1,
-      inFlightContextWaitAdopted: inFlightWaitProvider?.hookOutcome === "verified"
+      inFlightContextWaitAdopted: inFlightWaitProvider?.hookOutcome === "observed"
         && inFlightWaitProvider?.contextAuthorization === "allowed"
         && inFlightProviderIndex >= 0
         && (inFlightReadyIndex < 0 || inFlightProviderIndex < inFlightReadyIndex)
         && inFlightWaitElapsedMs < 2_000
-        && runHasVerifiedTransport(inFlightWaitRun),
-      runtimeRevocationAtHookBlocked: runtimeRevocationRun.payloads.length === 0
+        && runHasObservedTransport(inFlightWaitRun),
+      runtimeRevocationAtHookDiagnosed: runtimeRevocationRun.payloads.length === 1
         && runtimeRevocationRun.observations.some((event) => event.type === "before_provider_request"
-          && event.hookOutcome === "rejected"
-          && event.rejectionReason === "Memory runtime capability is unavailable"),
-      desiredConfigDoesNotDisableRuntime: runHasVerifiedTransport(desiredMismatchRun)
-        && runHasVerifiedTransport(stableRuntimeRun),
+          && event.hookOutcome === "changed"
+          && event.observationReason === "Memory runtime capability is unavailable"),
+      desiredConfigDoesNotDisableRuntime: runHasObservedTransport(desiredMismatchRun)
+        && runHasObservedTransport(stableRuntimeRun),
       hookOutcomeAccounting,
       transportObservedIndependently,
       transportPartitions,
@@ -1434,7 +1428,7 @@ async function runPiFooterCase(openViking) {
       branch: rendered.snapshot.gitBranch === expectedGitBranch,
       marker: Buffer.concat(output).toString("utf8").includes("(增强)"),
       authorizationIndependent: observations.some((event) => event.type === "before_provider_request"
-        && event.hookOutcome === "verified" && event.contextAuthorization === "allowed"),
+        && event.hookOutcome === "observed" && event.contextAuthorization === "allowed"),
     };
   } finally {
     try {
@@ -1517,7 +1511,7 @@ async function runPiCurrentTurnCase(openViking) {
     baseUrl: ${JSON.stringify(provider.baseUrl)},
     apiKey: "local-validation",
     api: "openai-completions",
-    models: [{ id: "local", name: "Local", reasoning: false, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 32768, maxTokens: 256 }],
+    models: [{ id: "local", name: "Local", reasoning: false, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 272000, maxTokens: 128000 }],
   });
 }\n`, "utf8");
 
@@ -1533,7 +1527,12 @@ async function runPiCurrentTurnCase(openViking) {
     }) };
   });
   pi.on("before_provider_request", (event) => {
-    if (!JSON.stringify(event.payload).includes("current-turn profile mutation probe")) return;
+  const serialized = JSON.stringify(event.payload);
+  if (serialized.includes("current-turn hook failure probe")) {
+    process.env.PCR_PROBE_FAIL_EVENT = "before_provider_request";
+    return;
+  }
+  if (!serialized.includes("current-turn profile mutation probe")) return;
     const payload = event.payload;
     return {
       ...payload,
@@ -1616,6 +1615,7 @@ export default function currentTurnTools(pi) {
     const rawRun = await promptAndSettle("current-turn raw tool probe");
     const projectedRun = await promptAndSettle("current-turn projected tool probe");
     const profileMutationRun = await promptAndSettle("current-turn profile mutation probe");
+    const hookFailureRun = await promptAndSettle("current-turn hook failure probe");
     const readyBeforeReplacement = readObservations(observationLog)
       .filter((event) => event.type === "checkpoint_refresh_complete").length;
     await client.send("new_session");
@@ -1633,10 +1633,11 @@ export default function currentTurnTools(pi) {
     const rawPayload = rawRun.payloads.at(-1);
     const projectedPayload = projectedRun.payloads.at(-1);
     const projectedMessages = Array.isArray(projectedPayload?.messages) ? projectedPayload.messages : [];
-    const callIds = projectedMessages.flatMap((message) =>
+    const projectedToolCalls = projectedMessages.flatMap((message) =>
       message.role === "assistant" && Array.isArray(message.tool_calls)
-        ? message.tool_calls.map((call) => call.id)
+        ? message.tool_calls
         : []);
+    const callIds = projectedToolCalls.map((call) => call.id);
     const resultIds = projectedMessages.filter((message) => message.role === "tool").map((message) => message.tool_call_id);
     const projectedRecords = projectedContext?.currentTurn?.projectedSourceEntryIds?.map((entryId) => JSON.parse(readFileSync(join(
       archiveRoot,
@@ -1656,7 +1657,7 @@ export default function currentTurnTools(pi) {
     ), "utf8") : undefined;
     const transportAdopted = (run, context) => run.observations.some((event) =>
       event.type === "before_provider_request"
-      && event.hookOutcome === "verified"
+      && event.hookOutcome === "observed"
       && event.nonce === context?.nonce
       && run.payloads.some((payload) => createHash("sha256").update(JSON.stringify(payload)).digest("hex") === event.payloadHash));
     return {
@@ -1671,14 +1672,18 @@ export default function currentTurnTools(pi) {
         && !JSON.stringify(projectedPayload).includes("L".repeat(1_000))
         && Buffer.byteLength(JSON.stringify(projectedPayload), "utf8") < 32_768,
       protocolComplete: callIds.length === 3 && JSON.stringify(resultIds) === JSON.stringify(callIds),
+      argumentsPreserved: projectedToolCalls.every((call) => call.function?.arguments === "{}"),
       sourcesRecoverable: Boolean(largeRecord) && fullBlob === `full:${"F".repeat(210_000)}`,
       transportAdopted: transportAdopted(rawRun, rawContext) && transportAdopted(projectedRun, projectedContext),
-      profileMutationBlocked: profileMutationRun.payloads.length === 0
+      providerMutationDoesNotBlock: profileMutationRun.payloads.length === 1
         && profileMutationRun.observations.some((event) => event.type === "before_provider_request"
-          && event.hookOutcome === "rejected"
-          && event.rejectionReason === "handler payload does not match the constructed Provider payload profile"),
+          && event.hookOutcome === "observed"),
+      hookFailureDoesNotBlock: hookFailureRun.payloads.length === 1
+        && hookFailureRun.observations.some((event) => event.type === "before_provider_request_observation_error"
+          && event.detail === "Provider hook observation failed internally")
+        && !hookFailureRun.observations.some((event) => event.type === "context_blocked"),
       sourceMutationBlocked: sourceMutationRun.observations
-        .filter((event) => event.type === "before_provider_request" && event.hookOutcome === "verified").length === 1
+        .filter((event) => event.type === "before_provider_request" && event.hookOutcome === "observed").length === 1
         && sourceMutationRun.observations.some((event) => event.type === "context_blocked"
           && event.fault === "source-barrier")
         && !sourceMutationRun.payloads.some((payload) => JSON.stringify(payload).includes("M".repeat(1_000))),
@@ -1713,7 +1718,7 @@ async function runAuthorizationBlockCase() {
     baseUrl: ${JSON.stringify(provider.baseUrl)},
     apiKey: "local-validation",
     api: "openai-completions",
-    models: [{ id: "local", name: "Local", reasoning: false, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 8192, maxTokens: 256 }],
+    models: [{ id: "local", name: "Local", reasoning: false, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 1024, maxTokens: 256 }],
   });
 }\n`, "utf8");
   const child = spawn("pi", [
@@ -1744,13 +1749,17 @@ async function runAuthorizationBlockCase() {
     await waitFor(() => client.events.some((event) => event.type === "extension_ui_request" && event.method === "setStatus"), "block-case Pi startup");
     await client.send("prompt", { message: "authorization block probe" });
     await waitFor(() => readObservations(observationLog).some((event) => event.type === "agent_settled"), "authorization block settlement");
+    await client.send("prompt", { message: "/memory-model" });
+    const authorizationDiagnostic = await waitFor(() => client.events.findLast((event) => event.type === "extension_ui_request"
+      && event.method === "notify"
+      && event.message.includes("Authorization fault: budget:")), "authorization fault diagnostic");
     const observations = readObservations(observationLog);
     const blockIndex = observations.findLastIndex((event) => event.type === "context_blocked");
     const settledIndex = observations.findIndex((event, index) => index > blockIndex && event.type === "agent_settled");
     const extensionContinuedAfterBlock = blockIndex < 0 ? Number.POSITIVE_INFINITY : observations
       .slice(blockIndex + 1, settledIndex < 0 ? undefined : settledIndex)
       .filter((event) => event.type === "context_allowed"
-        || (event.type === "before_provider_request" && event.hookOutcome === "verified"))
+        || (event.type === "before_provider_request" && event.hookOutcome === "observed"))
       .length;
     const blocked = observations.filter((event) => event.type === "context_blocked");
     return {
@@ -1759,6 +1768,7 @@ async function runAuthorizationBlockCase() {
         && !Object.hasOwn(blocked[0], "messages")
         && !Object.hasOwn(blocked[0], "adoptedMessages"),
       transportObservedIndependently: provider.state.payloads.length === 0,
+      authorizationFaultReported: authorizationDiagnostic.message.includes("Task context budget leaves no room"),
       extensionContinuedAfterBlock,
       transportRequestCount: provider.state.payloads.length,
       blockFaults: blocked.map((event) => event.fault),
@@ -1935,12 +1945,10 @@ try {
     taskPollMs: 5,
   });
   const optimizer = new WorkingContextOptimizer({ maxContextChars: 1_600 });
-  const providerProfile = createProviderPayloadProfile({
+  const taskBudget = createTaskContextBudget({
     provider: "validation",
     model: "local",
-    api: "openai-completions",
-    baseUrl: "http://127.0.0.1/validation",
-    compat: null,
+    api: "arbitrary-task-api",
     contextWindowTokens: 16_384,
     maxOutputTokens: 256,
     systemPrompt: "validation",
@@ -1953,7 +1961,7 @@ try {
     sessionMemory,
   );
   const retentionBudgetIdentity = createRetentionBudgetIdentity(
-    providerProfile,
+    taskBudget,
     runtimeCoordinator.checkpointRetentionPolicy(),
   );
   const emptyCheckpoint = sessionMemory.emptyCheckpoint(commonRoute, retentionBudgetIdentity);
@@ -1973,7 +1981,7 @@ try {
       hasOpaqueSegment: true,
     },
     messages: [{ role: "user", content: "current prompt" }],
-    providerPayloadProfile: providerProfile,
+    taskContextBudget: taskBudget,
     toolSources: { callSources: {}, resultSources: {}, ambiguousToolIds: [] },
     toProviderMessages: (messages) => convertToLlm(messages),
     ensureSources: async () => undefined,
@@ -2256,12 +2264,10 @@ try {
     currentTurnEntries.map((entry) => entry.message),
     currentTurnProjection.fullOutputCandidates,
   );
-  const payloadProfileInput = {
+  const taskBudgetInput = {
     provider: "context-enhancement-validation",
     model: "local",
-    api: "openai-completions",
-    baseUrl: "http://127.0.0.1/validation",
-    compat: null,
+    api: "arbitrary-task-api",
     contextWindowTokens: 12_000,
     maxOutputTokens: 256,
     systemPrompt: "bounded current-turn validation",
@@ -2270,13 +2276,13 @@ try {
       { name: "full_tool", description: "return a persisted result", parameters: { type: "object" } },
     ],
   };
-  const providerPayloadProfile = createProviderPayloadProfile(payloadProfileInput);
+  const taskContextBudget = createTaskContextBudget(taskBudgetInput);
   const projectedAuthorization = await optimizer.authorize({
     generation,
     requestRoute: branchBHistorical.route,
     historical: branchBHistorical,
     messages: currentMessages,
-    providerPayloadProfile,
+    taskContextBudget,
     toolSources: currentToolSources,
     toProviderMessages: (messages) => convertToLlm(messages),
     ensureSources: (entryIds) => coordinator.ensureCurrentSourcesRecoverable(currentTurnSnapshot, entryIds),
@@ -2295,10 +2301,11 @@ try {
   const projectedProviderMessages = projectedAuthorization.kind === "allow"
     ? convertToLlm(projectedAuthorization.enhancedContext)
     : [];
-  const projectedCallIds = projectedProviderMessages
+  const projectedCalls = projectedProviderMessages
     .flatMap((message) => message.role === "assistant" && Array.isArray(message.content)
-      ? message.content.filter((block) => block.type === "toolCall").map((block) => block.id)
+      ? message.content.filter((block) => block.type === "toolCall")
       : []);
+  const projectedCallIds = projectedCalls.map((block) => block.id);
   const projectedResultIds = projectedProviderMessages
     .filter((message) => message.role === "toolResult")
     .map((message) => message.toolCallId);
@@ -2308,16 +2315,13 @@ try {
   checks.currentTurnProjected = projectedAuthorization.kind === "allow"
     && projectedAuthorization.metrics.projectedToolBatches === 1
     && projectedAuthorization.metrics.rawToolBatches === 0
-    && projectedAuthorization.metrics.providerMessageTokenUpperBound <= providerPayloadProfile.messageTokenBudget
+    && projectedAuthorization.metrics.taskMessageTokenUpperBound <= taskContextBudget.messageTokenBudget
     && JSON.stringify(projectedProviderMessages).length < 20_000
     && !JSON.stringify(projectedProviderMessages).includes("L".repeat(1_000));
   checks.currentTurnProjectionProtocolComplete = JSON.stringify(projectedCallIds) === JSON.stringify(["large-call", "full-call"])
-    && JSON.stringify(projectedResultIds) === JSON.stringify(projectedCallIds)
-    && Boolean(createOpenAICompletionsPayloadProof(
-      payloadProfileInput.provider,
-      payloadProfileInput.model,
-      projectedProviderMessages,
-    ));
+    && JSON.stringify(projectedResultIds) === JSON.stringify(projectedCallIds);
+  checks.currentTurnProjectionArgumentsPreserved = JSON.stringify(projectedCalls.map((block) => block.arguments))
+    === JSON.stringify([{ query: "large" }, { query: "full" }]);
   checks.currentTurnProjectionSourcesRecoverable = projectedAuthorization.kind === "allow"
     && JSON.stringify(projectedAuthorization.metrics.projectedSourceEntryIds) === JSON.stringify([
       "current-assistant-tools",
@@ -2339,7 +2343,7 @@ try {
       { ...currentMessages[2], content: [{ type: "text", text: "small result" }] },
       { ...currentMessages[3], content: [{ type: "text", text: "small error" }], details: undefined },
     ],
-    providerPayloadProfile,
+    taskContextBudget,
     toolSources: currentToolSources,
     toProviderMessages: (messages) => convertToLlm(messages),
     ensureSources: async () => { rawSourceBarrierCalls += 1; },
@@ -2373,7 +2377,7 @@ try {
     requestRoute: branchBHistorical.route,
     historical: branchBHistorical,
     messages: oldestMessages,
-    providerPayloadProfile,
+    taskContextBudget,
     toolSources: currentTurnToolSources(oldestEntries, oldestSourcesById),
     toProviderMessages: (messages) => convertToLlm(messages),
     ensureSources: async (entryIds) => { oldestProjectedSources = [...entryIds]; },
@@ -2410,7 +2414,7 @@ try {
     requestRoute: branchBHistorical.route,
     historical: branchBHistorical,
     messages: duplicateMessages,
-    providerPayloadProfile,
+    taskContextBudget,
     toolSources: currentTurnToolSources(duplicateEntries, duplicateSourcesById),
     toProviderMessages: (messages) => convertToLlm(messages),
     ensureSources: async () => undefined,
@@ -2425,7 +2429,7 @@ try {
     messages: currentMessages.map((message, index) => index === 2
       ? { ...message, content: [{ type: "text", text: `modified:${"M".repeat(200_000)}` }] }
       : message),
-    providerPayloadProfile,
+    taskContextBudget,
     toolSources: currentToolSources,
     toProviderMessages: (messages) => convertToLlm(messages),
     ensureSources: async () => undefined,
@@ -2438,7 +2442,7 @@ try {
     requestRoute: branchBHistorical.route,
     historical: branchBHistorical,
     messages: currentMessages,
-    providerPayloadProfile,
+    taskContextBudget,
     toolSources: currentToolSources,
     toProviderMessages: (messages) => convertToLlm(messages),
     ensureSources: async () => { throw new Error("Projected source barrier failed"); },
@@ -2461,168 +2465,53 @@ try {
         isError: false,
       },
     ],
-    providerPayloadProfile,
+    taskContextBudget,
     toolSources: currentToolSources,
     toProviderMessages: (messages) => convertToLlm(messages),
     ensureSources: async () => undefined,
   });
   checks.currentTurnOpaqueOverflowBlocks = opaqueAuthorizationWithinBudget.kind === "block"
     && opaqueAuthorizationWithinBudget.fault.kind === "opaque-content-unrepresentable";
-  let unsupportedPayloadApiRejected = false;
-  try {
-    createProviderPayloadProfile({ ...payloadProfileInput, api: "changed-api" });
-  } catch {
-    unsupportedPayloadApiRejected = true;
-  }
-  checks.providerPayloadProfileIdentity = unsupportedPayloadApiRejected
-    && createProviderPayloadProfile(payloadProfileInput).identity === providerPayloadProfile.identity
+  checks.taskContextBudgetIdentity = createTaskContextBudget(taskBudgetInput).identity === taskContextBudget.identity
     && [
-    { ...payloadProfileInput, model: "changed" },
-    { ...payloadProfileInput, baseUrl: "http://127.0.0.1/changed" },
-    { ...payloadProfileInput, compat: { maxTokensField: "max_tokens" } },
-    { ...payloadProfileInput, systemPrompt: "changed system" },
-    { ...payloadProfileInput, tools: [...payloadProfileInput.tools, { name: "changed", description: "changed", parameters: {} }] },
-    ].every((changed) => createProviderPayloadProfile(changed).identity !== providerPayloadProfile.identity);
-  const wireProfileProof = {
-    systemPromptHash: providerPayloadProfile.systemPromptHash,
-    toolsHash: providerPayloadProfile.toolsHash,
-    maxOutputTokens: providerPayloadProfile.maxOutputTokens,
-  };
-  const wireProfilePayload = {
-    messages: [{ role: "system", content: payloadProfileInput.systemPrompt }],
-    tools: payloadProfileInput.tools.map((tool) => ({
-      type: "function",
-      function: { ...tool, strict: false },
-    })),
-    max_completion_tokens: payloadProfileInput.maxOutputTokens,
-  };
-  checks.providerPayloadWireProfileBound = openAICompletionsToolPayloadUpperBoundBytes(payloadProfileInput.tools)
-    === Buffer.byteLength(JSON.stringify(wireProfilePayload.tools), "utf8")
-    && openAICompletionsPayloadMatchesProfile(wireProfilePayload, wireProfileProof)
-    && openAICompletionsPayloadMatchesProfile({
-      ...wireProfilePayload,
-      messages: [{ role: "developer", content: payloadProfileInput.systemPrompt }],
-    }, wireProfileProof)
-    && !openAICompletionsPayloadMatchesProfile({
-      ...wireProfilePayload,
-      messages: [
-        { role: "system", content: payloadProfileInput.systemPrompt },
-        { role: "developer", content: payloadProfileInput.systemPrompt },
-      ],
-    }, wireProfileProof)
-    && !openAICompletionsPayloadMatchesProfile({
-      ...wireProfilePayload,
-      messages: [{ role: "system", content: `${payloadProfileInput.systemPrompt} changed` }],
-    }, wireProfileProof)
-    && !openAICompletionsPayloadMatchesProfile({
-      ...wireProfilePayload,
-      tools: [...wireProfilePayload.tools, { type: "function", function: { name: "changed", description: "changed", parameters: {}, strict: false } }],
-    }, wireProfileProof)
-    && !openAICompletionsPayloadMatchesProfile({
-      ...wireProfilePayload,
-      max_completion_tokens: payloadProfileInput.maxOutputTokens + 1,
-    }, wireProfileProof);
+      { ...taskBudgetInput, model: "changed" },
+      { ...taskBudgetInput, api: "another-task-api" },
+      { ...taskBudgetInput, contextWindowTokens: taskBudgetInput.contextWindowTokens + 1 },
+      { ...taskBudgetInput, maxOutputTokens: taskBudgetInput.maxOutputTokens + 1 },
+      { ...taskBudgetInput, systemPrompt: "changed system" },
+      { ...taskBudgetInput, tools: [...taskBudgetInput.tools, { name: "changed", description: "changed", parameters: {} }] },
+    ].every((changed) => createTaskContextBudget(changed).identity !== taskContextBudget.identity);
+  const largeOutputTaskBudget = createTaskContextBudget({
+    provider: "task-provider",
+    model: "large-output-model",
+    api: "arbitrary-task-api",
+    contextWindowTokens: 272_000,
+    maxOutputTokens: 128_000,
+    systemPrompt: "S".repeat(46_629),
+    tools: "T".repeat(28_765),
+  });
+  checks.largeOutputTaskBudgetFits = largeOutputTaskBudget.fixedTokenUpperBound === 204_166
+    && largeOutputTaskBudget.messageTokenBudget === 67_834;
+  checks.taskApiIndependent = taskContextBudget.api === "arbitrary-task-api"
+    && projectedAuthorization.kind === "allow";
   const enhancedContent = adopted[0].content;
   const enhancedContentHash = createHash("sha256").update(JSON.stringify(enhancedContent)).digest("hex");
-  checks.proofContentMutationRejected = payloadCarriesEnhancedContent(
-    { messages: [{ content: [{ type: "text", text: enhancedContent }] }] },
+  checks.enhancedContentObservation = observeEnhancedContent(
+    { arbitrary: { nested: [{ value: enhancedContent }] } },
     "validation-nonce",
     enhancedContentHash,
-  ) && !payloadCarriesEnhancedContent(
-    { messages: [{ content: [{ type: "text", text: `${enhancedContent}\nmutated` }] }] },
-    "validation-nonce",
-    enhancedContentHash,
-  );
-  const toolSequenceProof = createOpenAICompletionsPayloadProof(
-    "context-enhancement-validation",
-    "local",
-    convertToLlm(adopted),
-  );
-  const toolSequencePayload = {
-    model: "local",
-    messages: [
-      { role: "system", content: "system" },
-      { role: "user", content: [{ type: "text", text: adopted[0].content }] },
-      { role: "user", content: "current prompt" },
-      {
-        role: "assistant",
-        content: null,
-        tool_calls: [{
-          id: "current-tool",
-          type: "function",
-          function: { name: "read", arguments: "{}" },
-        }],
-      },
-      { role: "tool", content: "current evidence", tool_call_id: "current-tool" },
-    ],
-  };
-  checks.proofToolSequenceBound = Boolean(toolSequenceProof)
-    && openAICompletionsPayloadMatches(toolSequencePayload, "validation-nonce", toolSequenceProof)
-    && openAICompletionsPayloadMatches({
-      ...toolSequencePayload,
-      messages: [
-        { role: "developer", content: "system" },
-        ...toolSequencePayload.messages.slice(1),
-      ],
-    }, "validation-nonce", toolSequenceProof);
-
-  const sequenceNonce = "validation-sequence-nonce";
-  const sequenceAdopted = buildEnhancedContext([
-    { role: "user", content: "sequence current prompt", timestamp: 10 },
-    { role: "assistant", content: [{ type: "text", text: "sequence answer" }], timestamp: 11 },
-  ], preparedB, sequenceNonce);
-  const sequenceProof = createOpenAICompletionsPayloadProof(
-    "context-enhancement-validation",
-    "local",
-    convertToLlm(sequenceAdopted),
-  );
-  const sequencePayloadMessages = [
-    { role: "system", content: "system" },
-    { role: "user", content: [{ type: "text", text: sequenceAdopted[0].content }] },
-    { role: "user", content: "sequence current prompt" },
-    { role: "assistant", content: "sequence answer" },
-  ];
-  checks.proofMessageSequenceBound = Boolean(sequenceProof)
-    && openAICompletionsPayloadMatches({ model: "local", messages: sequencePayloadMessages }, sequenceNonce, sequenceProof)
-    && !openAICompletionsPayloadMatches(
-      {
-        model: "local",
-        messages: [
-          sequencePayloadMessages[0],
-          { role: "user", content: "injected prefix" },
-          ...sequencePayloadMessages.slice(1),
-        ],
-      },
-      sequenceNonce,
-      sequenceProof,
-    )
-    && !openAICompletionsPayloadMatches(
-      { model: "local", messages: [sequencePayloadMessages[0], sequencePayloadMessages[1], sequencePayloadMessages[3]] },
-      sequenceNonce,
-      sequenceProof,
-    )
-    && !openAICompletionsPayloadMatches(
-      { model: "local", messages: [sequencePayloadMessages[0], sequencePayloadMessages[1], sequencePayloadMessages[3], sequencePayloadMessages[2]] },
-      sequenceNonce,
-      sequenceProof,
-    )
-    && !openAICompletionsPayloadMatches(
-      { model: "changed", messages: sequencePayloadMessages },
-      sequenceNonce,
-      sequenceProof,
-    )
-    && !openAICompletionsPayloadMatches(
-      {
-        model: "local",
-        messages: [
-          ...sequencePayloadMessages.slice(0, -1),
-          { ...sequencePayloadMessages.at(-1), name: "mutated" },
-        ],
-      },
-      sequenceNonce,
-      sequenceProof,
-    );
-
+  ) === "observed"
+    && observeEnhancedContent(
+      { input: [{ content: `${enhancedContent}\nmutated` }] },
+      "validation-nonce",
+      enhancedContentHash,
+    ) === "changed"
+    && observeEnhancedContent({ input: [{ content: "native" }] }, "validation-nonce", enhancedContentHash) === "missing"
+    && observeEnhancedContent(
+      { input: [{ content: enhancedContent }, { content: enhancedContent }] },
+      "validation-nonce",
+      enhancedContentHash,
+    ) === "ambiguous";
   const createSessionMemory = (name, options = {}) => new OpenVikingSessionMemory(
     openViking.baseUrl,
     undefined,
@@ -2651,7 +2540,7 @@ try {
   const skippedCommitTaskCount = openViking.state.tasks.size;
   const skippedMemory = createSessionMemory("skipped", { keepRecentMessages: 100 });
   const skippedCoordinator = createRuntimeCoordinator("skipped", skippedMemory);
-  const skippedRetention = createRetentionBudgetIdentity(providerProfile, skippedCoordinator.checkpointRetentionPolicy());
+  const skippedRetention = createRetentionBudgetIdentity(taskBudget, skippedCoordinator.checkpointRetentionPolicy());
   const skippedRefresh = await skippedCoordinator.scheduleCheckpointRefresh(
     snapshot(identity, common),
     skippedRetention,
@@ -2672,7 +2561,7 @@ try {
   openViking.state.taskPollsBeforeCompletion = 2;
   const slowMemory = createSessionMemory("slow");
   const slowCoordinator = createRuntimeCoordinator("slow", slowMemory);
-  const slowRetention = createRetentionBudgetIdentity(providerProfile, slowCoordinator.checkpointRetentionPolicy());
+  const slowRetention = createRetentionBudgetIdentity(taskBudget, slowCoordinator.checkpointRetentionPolicy());
   const slowCommon = await slowCoordinator.scheduleCheckpointRefresh(
     snapshot(identity, common),
     slowRetention,
@@ -2752,8 +2641,8 @@ try {
     && slowTasks.every((task) => task.status === "completed")
     && slowTasks.slice(1).every((task) => task.polls >= 100);
 
-  const smallerProfile = createProviderPayloadProfile({ ...payloadProfileInput, contextWindowTokens: 8_000 });
-  const smallerRetention = createRetentionBudgetIdentity(smallerProfile, slowCoordinator.checkpointRetentionPolicy());
+  const smallerBudget = createTaskContextBudget({ ...taskBudgetInput, contextWindowTokens: 8_000 });
+  const smallerRetention = createRetentionBudgetIdentity(smallerBudget, slowCoordinator.checkpointRetentionPolicy());
   openViking.state.taskPollsBeforeCompletion = 2;
   const smallerRefresh = await slowCoordinator.scheduleCheckpointRefresh(
     snapshot(identity, branchA),
@@ -2797,7 +2686,7 @@ try {
   openViking.state.taskPollsBeforeCompletion = Number.MAX_SAFE_INTEGER;
   const timeoutMemory = createSessionMemory("timeout", { taskTimeoutMs: 30 });
   const timeoutCoordinator = createRuntimeCoordinator("timeout", timeoutMemory);
-  const timeoutRetention = createRetentionBudgetIdentity(providerProfile, timeoutCoordinator.checkpointRetentionPolicy());
+  const timeoutRetention = createRetentionBudgetIdentity(taskBudget, timeoutCoordinator.checkpointRetentionPolicy());
   let timeoutFailed = false;
   try {
     await timeoutCoordinator.scheduleCheckpointRefresh(snapshot(identity, common), timeoutRetention, { required: true });
@@ -2815,7 +2704,7 @@ try {
   const commitShutdownBaseline = new Set(openViking.state.sessions.keys());
   const commitShutdownMemory = createSessionMemory("commit-shutdown");
   const commitShutdownCoordinator = createRuntimeCoordinator("commit-shutdown", commitShutdownMemory);
-  const commitShutdownRetention = createRetentionBudgetIdentity(providerProfile, commitShutdownCoordinator.checkpointRetentionPolicy());
+  const commitShutdownRetention = createRetentionBudgetIdentity(taskBudget, commitShutdownCoordinator.checkpointRetentionPolicy());
   const commitShutdownRefresh = commitShutdownCoordinator.scheduleCheckpointRefresh(
     snapshot(identity, common),
     commitShutdownRetention,
@@ -2830,7 +2719,7 @@ try {
   const failedMirrorBaseline = new Set(openViking.state.allSessions.keys());
   const failedMemory = createSessionMemory("failed");
   const failedCoordinator = createRuntimeCoordinator("failed", failedMemory);
-  const failedRetention = createRetentionBudgetIdentity(providerProfile, failedCoordinator.checkpointRetentionPolicy());
+  const failedRetention = createRetentionBudgetIdentity(taskBudget, failedCoordinator.checkpointRetentionPolicy());
   openViking.state.failNextContext = true;
   let backendFailed = false;
   try {
@@ -2861,7 +2750,7 @@ try {
   openViking.state.createResponseDelayMs = 250;
   const queueMemory = createSessionMemory("queue");
   const queueCoordinator = createRuntimeCoordinator("queue", queueMemory);
-  const queueRetention = createRetentionBudgetIdentity(providerProfile, queueCoordinator.checkpointRetentionPolicy());
+  const queueRetention = createRetentionBudgetIdentity(taskBudget, queueCoordinator.checkpointRetentionPolicy());
   const runningRefresh = queueCoordinator.scheduleCheckpointRefresh(
     snapshot(identity, common),
     queueRetention,
@@ -2891,7 +2780,7 @@ try {
   const createRequestsBeforeShutdownProbe = openViking.state.createRequests;
   const shutdownMemory = createSessionMemory("shutdown");
   const shutdownCoordinator = createRuntimeCoordinator("shutdown", shutdownMemory);
-  const shutdownRetention = createRetentionBudgetIdentity(providerProfile, shutdownCoordinator.checkpointRetentionPolicy());
+  const shutdownRetention = createRetentionBudgetIdentity(taskBudget, shutdownCoordinator.checkpointRetentionPolicy());
   const interruptedRefresh = shutdownCoordinator.scheduleCheckpointRefresh(
     snapshot(identity, common),
     shutdownRetention,
@@ -2957,23 +2846,26 @@ try {
   const piCurrentTurn = await runPiCurrentTurnCase(openViking);
   const piFooter = await runPiFooterCase(openViking);
   const authorizationBlock = await runAuthorizationBlockCase();
-  checks.hookVerifiedAtExtension = piAdoption.hookVerifiedAndTransportAdopted;
+  checks.hookObservedAtExtension = piAdoption.hookObservedAndTransportAdopted;
   checks.spoofedMarkerCannotAuthorize = piAdoption.spoofedMarkerCannotAuthorize;
   checks.contextBlockStopsExtension = authorizationBlock.contextBlockStopsExtension;
+  checks.authorizationFaultReported = authorizationBlock.authorizationFaultReported;
   checks.hookOutcomeAccounting = piAdoption.hookOutcomeAccounting;
   checks.transportObservedIndependently = piAdoption.transportObservedIndependently
     && authorizationBlock.transportObservedIndependently;
   checks.inFlightContextWaitAdopted = piAdoption.inFlightContextWaitAdopted;
-  checks.runtimeRevocationAtHookBlocked = piAdoption.runtimeRevocationAtHookBlocked;
+  checks.runtimeRevocationAtHookDiagnosed = piAdoption.runtimeRevocationAtHookDiagnosed;
   checks.desiredConfigDoesNotDisableRuntime = piAdoption.desiredConfigDoesNotDisableRuntime;
   checks.footerAdapterLifecycle = Object.values(piFooter).every(Boolean);
-  checks.providerPayloadCurrentTurn = piAdoption.currentTurnOnly;
+  checks.taskContextCurrentTurn = piAdoption.currentTurnOnly;
   checks.piCurrentTurnRaw = piCurrentTurn.raw;
   checks.piCurrentTurnProjected = piCurrentTurn.projected;
   checks.piCurrentTurnProtocolComplete = piCurrentTurn.protocolComplete;
+  checks.piCurrentTurnArgumentsPreserved = piCurrentTurn.argumentsPreserved;
   checks.piCurrentTurnSourcesRecoverable = piCurrentTurn.sourcesRecoverable;
   checks.piCurrentTurnTransportAdopted = piCurrentTurn.transportAdopted;
-  checks.piProviderPayloadProfileMutationBlocked = piCurrentTurn.profileMutationBlocked;
+  checks.piProviderMutationDoesNotBlock = piCurrentTurn.providerMutationDoesNotBlock;
+  checks.piHookFailureDoesNotBlock = piCurrentTurn.hookFailureDoesNotBlock;
   checks.piModifiedCurrentTurnSourceBlocked = piCurrentTurn.sourceMutationBlocked;
   checks.localProviderOnly = piAdoption.providerRequests > 5 && openViking.state.providerRequests === 0;
   checks.treeLifecycle = piAdoption.lifecycle.treeRoundTrip
@@ -3022,7 +2914,7 @@ try {
     providerRequests: piAdoption.providerRequests,
     contextAllowed: piAdoption.observations.filter((event) => event.type === "context_allowed").length,
     contextBlocked: piAdoption.observations.filter((event) => event.type === "context_blocked").length,
-    hookOutcomes: Object.fromEntries(["verified", "rejected", "no-constructed-output"].map((outcome) => [
+    hookOutcomes: Object.fromEntries(["observed", "changed", "missing", "ambiguous", "no-constructed-output"].map((outcome) => [
       outcome,
       piAdoption.observations.filter((event) => event.type === "before_provider_request" && event.hookOutcome === outcome).length,
     ])),

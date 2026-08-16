@@ -34,10 +34,10 @@ import {
   type ContextAuthorization,
   assemblyRouteProofError,
   type ContextFault,
-  createProviderPayloadProfile,
+  createTaskContextBudget,
   createRetentionBudgetIdentity,
-  payloadCarriesEnhancedContent,
-  type ProviderPayloadProfile,
+  observeEnhancedContent,
+  type TaskContextBudget,
   WorkingContextOptimizer,
 } from "./working-context-optimization.ts";
 import { OpenVikingSessionMemory } from "./session-working-memory.ts";
@@ -57,12 +57,6 @@ import {
 import { DEFAULT_OPENVIKING_REQUEST_TIMEOUT_MS } from "./openviking-protocol.ts";
 import { memoryRuntimeGenerationFromState } from "./memory-runtime-capability.ts";
 import {
-  createOpenAICompletionsPayloadProof,
-  openAICompletionsPayloadMatches,
-  openAICompletionsPayloadMatchesProfile,
-  type ProviderPayloadProof,
-} from "./provider-payload-proof.ts";
-import {
   entriesBeforeCurrentPrompt,
   currentTurnToolSources,
   isMessageSource,
@@ -80,15 +74,14 @@ const PI_PROTOCOL_PROFILE: PiProtocolProfile = {
   providerMessages: (entry) => convertToLlm(sessionEntryToContextMessages(entry as never)) as never[],
 };
 
-interface PendingRequestProof {
+interface PendingConstruction {
   assembly: AssemblyProof;
-  payload: ProviderPayloadProof;
   memoryCapabilityProofId: string;
 }
 
 interface LatchedGenerationFault {
   generation: string | undefined;
-  stage: "working-context" | "archive" | "source-index" | "provider-proof";
+  stage: "working-context" | "archive" | "source-index";
   sessionKey?: string;
   fault: ContextFault;
 }
@@ -99,7 +92,6 @@ const observationPath = process.env.PCR_OBSERVATION_LOG
   ? resolve(process.cwd(), process.env.PCR_OBSERVATION_LOG)
   : undefined;
 const runId = process.env.PCR_RUN_ID ?? "manual";
-const failureEvent = process.env.PCR_PROBE_FAIL_EVENT;
 const archiveDelayMs = Number.parseInt(process.env.PCR_ARCHIVE_DELAY_MS ?? "0", 10) || 0;
 const archiveCopyTimeoutMs = (() => {
   const configured = process.env.PCR_ARCHIVE_COPY_TIMEOUT_MS;
@@ -168,7 +160,7 @@ function writeRecord(type: string, data: Record<string, unknown> = {}): void {
 }
 
 function maybeFail(type: string): void {
-  if (failureInjected || failureEvent !== type) return;
+  if (failureInjected || process.env.PCR_PROBE_FAIL_EVENT !== type) return;
   failureInjected = true;
   writeRecord("failure_injected", { event: type });
   throw new Error(`pi-context-memory probe injected failure at ${type}`);
@@ -280,29 +272,11 @@ function payloadSummary(payload: unknown): Record<string, unknown> {
   if (!payload || typeof payload !== "object") {
     return { payloadType: typeof payload, payloadBytes: bytes(payload), payloadHash: hash(payload) };
   }
-  const value = payload as Record<string, unknown>;
-  const instructions = value.instructions ?? value.system ?? value.system_instruction;
-  const messages = value.input ?? value.messages ?? value.contents;
-  const tools = value.tools ?? value.toolConfig;
   return {
-    payloadKeys: Object.keys(value).sort(),
+    payloadKeys: Object.keys(payload as Record<string, unknown>).sort(),
     payloadBytes: bytes(payload),
     payloadHash: hash(payload),
-    instructionsBytes: bytes(instructions ?? ""),
-    instructionsHash: hash(instructions ?? ""),
-    messagesBytes: bytes(messages ?? []),
-    messagesHash: hash(messages ?? []),
-    toolsBytes: bytes(tools ?? []),
-    toolsHash: hash(tools ?? []),
   };
-}
-function payloadCarriesNonce(value: unknown, nonce: string, seen = new Set<unknown>()): boolean {
-  if (typeof value === "string") return value.includes(nonce);
-  if (!value || typeof value !== "object") return false;
-  if (seen.has(value)) return false;
-  seen.add(value);
-  if (Array.isArray(value)) return value.some((item) => payloadCarriesNonce(item, nonce, seen));
-  return Object.values(value as Record<string, unknown>).some((item) => payloadCarriesNonce(item, nonce, seen));
 }
 
 
@@ -328,6 +302,7 @@ function formatMemoryModelState(
   setting: MemoryModelSetting | undefined,
   state: OpenVikingRuntimeState | undefined,
   authorization: "初始化中" | "增强记忆" | "已阻断",
+  authorizationFault?: ContextFault,
 ): string {
   const configured = setting ? `${setting.provider}/${setting.model}` : "not configured";
   const running = state?.activeProvider && state.activeModel ? `${state.activeProvider}/${state.activeModel}` : "no VLM loaded";
@@ -353,12 +328,13 @@ function formatMemoryModelState(
     state?.configurationError ? `Configuration error: ${state.configurationError}` : undefined,
     state?.error ? `Runtime error: ${state.error}` : undefined,
     `Extension authorization: ${authorization}`,
+    authorizationFault ? `Authorization fault: ${authorizationFault.kind}: ${authorizationFault.detail}` : undefined,
   ].filter((line): line is string => Boolean(line)).join("\n");
 }
 
 
 export default function piContextMemoryProbe(pi: ExtensionAPI): void {
-  function providerPayloadProfile(ctx: ExtensionContext): ProviderPayloadProfile {
+  function taskContextBudget(ctx: ExtensionContext): TaskContextBudget {
     const model = ctx.model;
     if (!model) throw new Error("Task Provider model is unavailable");
     const toolsByName = new Map(pi.getAllTools().map((tool) => [tool.name, tool]));
@@ -367,12 +343,10 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
       if (!tool) throw new Error(`Active Pi tool is unavailable: ${name}`);
       return { name: tool.name, description: tool.description, parameters: tool.parameters };
     });
-    return createProviderPayloadProfile({
+    return createTaskContextBudget({
       provider: model.provider,
       model: model.id,
       api: model.api,
-      baseUrl: model.baseUrl,
-      compat: model.compat ?? null,
       contextWindowTokens: model.contextWindow,
       maxOutputTokens: model.maxTokens,
       systemPrompt: ctx.getSystemPrompt(),
@@ -380,12 +354,10 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
     });
   }
 
-  function providerPayloadProfileFault(error: unknown): ContextFault {
+  function taskContextBudgetFault(error: unknown): ContextFault {
     const detail = error instanceof Error ? error.message : String(error);
     return {
-      kind: /no verified provider payload adapter/iu.test(detail)
-        ? "opaque-content-unrepresentable"
-        : /budget|context window|maximum output/iu.test(detail) ? "budget" : "service",
+      kind: /budget|context window|maximum output/iu.test(detail) ? "budget" : "service",
       detail,
     };
   }
@@ -440,9 +412,11 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
   let memoryModelConfigCheck: Promise<void> | undefined;
   let memoryEnhancementAvailable = false;
   let lastAuthorization: "初始化中" | "增强记忆" | "已阻断" = "初始化中";
+  let lastAuthorizationFault: ContextFault | undefined;
   let renderedMemoryUiState: MemoryUiState | undefined;
+  let lastHookObservationDiagnostic: string | undefined;
   let contextAuthorizationOutcome: "pending" | "allowed" | "blocked" = "pending";
-  let pendingAssemblyProof: PendingRequestProof | undefined;
+  let pendingAssemblyProof: PendingConstruction | undefined;
   let pendingCompactionDecision: { reason: "manual" | "threshold" | "overflow"; branchLeafId: string | null } | undefined;
   let pendingTreeDecision: {
     targetId: string;
@@ -581,8 +555,12 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
     return operation;
   }
 
-  function setAuthorization(value: "初始化中" | "增强记忆" | "已阻断"): void {
+  function setAuthorization(
+    value: "初始化中" | "增强记忆" | "已阻断",
+    fault?: ContextFault,
+  ): void {
     lastAuthorization = value;
+    lastAuthorizationFault = value === "已阻断" ? fault : undefined;
   }
 
   /** 未到达 before_provider_request 的 constructed 输出记为 unobserved。 */
@@ -631,7 +609,7 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
     latchedGenerationFaults.set(key, { generation, stage, fault, sessionKey });
     contextAuthorizationOutcome = "blocked";
     retireUnobservedProof(`${stage} fault`);
-    setAuthorization("已阻断");
+    setAuthorization("已阻断", fault);
     setMemoryUiState(ctx, "faulted");
     writeRecord("generation_fault_latched", {
       generation,
@@ -772,7 +750,7 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
       if (!activeCoordinator.projectCurrentRoute(snapshot).projections.some(isMessageSource)) return;
       route = activeCoordinator.identifyCurrentRoute(snapshot);
       retentionBudgetIdentity = createRetentionBudgetIdentity(
-        providerPayloadProfile(ctx),
+        taskContextBudget(ctx),
         activeCoordinator.checkpointRetentionPolicy(),
       );
     } catch (error) {
@@ -944,7 +922,13 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
         const setting = await validateMemoryModelSetting(root);
         const state = await readRuntimeState(root);
         lastMemoryModelConfigDiagnosticKey = undefined;
-        ctx.ui.notify(formatMemoryModelState(configPath, setting, state, lastAuthorization), "info");
+        ctx.ui.notify(formatMemoryModelState(
+          configPath,
+          setting,
+          state,
+          lastAuthorization,
+          lastAuthorizationFault,
+        ), "info");
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         if (root && message.startsWith("Invalid memory model configuration at ")) {
@@ -1205,12 +1189,12 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
             };
           }
         }
-        let payloadProfile: ProviderPayloadProfile | undefined;
+        let budget: TaskContextBudget | undefined;
         if (!currentFault) {
           try {
-            payloadProfile = providerPayloadProfile(ctx);
+            budget = taskContextBudget(ctx);
           } catch (error) {
-            currentFault = providerPayloadProfileFault(error);
+            currentFault = taskContextBudgetFault(error);
           }
         }
         if (currentFault) {
@@ -1225,12 +1209,12 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
             event.messages as unknown[],
             currentProjection.fullOutputCandidates,
           );
-          let currentProfile = payloadProfile!;
+          let currentBudget = budget!;
           authorization = { kind: "block", fault: { kind: "service", detail: "Historical context was not evaluated" } };
           for (let attempt = 0; attempt < 2; attempt += 1) {
             const historicalSnapshot = snapshotBeforeCurrentPrompt(requestSnapshot);
             const retentionBudgetIdentity = createRetentionBudgetIdentity(
-              currentProfile,
+              currentBudget,
               activeCoordinator.checkpointRetentionPolicy(),
             );
             const historical = await activeCoordinator.resolveHistoricalContext(
@@ -1242,7 +1226,7 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
               requestRoute: activeCoordinator.identifyCurrentRoute(requestSnapshot),
               historical,
               messages,
-              providerPayloadProfile: currentProfile,
+              taskContextBudget: currentBudget,
               toolSources: currentTurnToolSources(requestSnapshot.entries, messageSourcesByEntryId),
               toProviderMessages: (providerMessages) => convertToLlm(providerMessages as never[]) as unknown[],
               ensureSources: (entryIds) => activeCoordinator.ensureCurrentSourcesRecoverable(requestSnapshot, entryIds),
@@ -1271,12 +1255,12 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
               break;
             }
             requestSnapshot = liveSnapshot;
-            currentProfile = providerPayloadProfile(ctx);
+            currentBudget = taskContextBudget(ctx);
           }
           if (authorization.kind === "refresh-required") {
             authorization = {
               kind: "block",
-              fault: { kind: "budget", detail: "The refreshed checkpoint still cannot satisfy the Provider payload budget" },
+              fault: { kind: "budget", detail: "The refreshed checkpoint still cannot satisfy the task context budget" },
             };
           }
         }
@@ -1294,25 +1278,9 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
         fault: { kind: "budget", detail: "Checkpoint refresh did not resolve the historical context requirement" },
       };
     }
-    let requestProof: PendingRequestProof | undefined;
+    let requestProof: PendingConstruction | undefined;
     if (authorization.kind === "allow") {
-      const model = ctx.model;
-      const payloadProof = model?.api === "openai-completions"
-        ? createOpenAICompletionsPayloadProof(
-          model.provider,
-          model.id,
-          convertToLlm(authorization.enhancedContext as never[]) as unknown[],
-        )
-        : undefined;
-      if (!payloadProof) {
-        authorization = {
-          kind: "block",
-          fault: {
-            kind: "opaque-content-unrepresentable",
-            detail: `No verified Provider payload adapter is available for ${model?.api ?? "unknown API"}`,
-          },
-        };
-      } else if (!workingContextCapabilityProofId) {
+      if (!workingContextCapabilityProofId) {
         authorization = {
           kind: "block",
           fault: { kind: "not-ready", detail: "Memory capability proof identity is unavailable" },
@@ -1320,7 +1288,6 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
       } else {
         requestProof = {
           assembly: authorization.proof,
-          payload: payloadProof,
           memoryCapabilityProofId: workingContextCapabilityProofId,
         };
       }
@@ -1334,7 +1301,7 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
         });
       }
       contextAuthorizationOutcome = "blocked";
-      setAuthorization("已阻断");
+      setAuthorization("已阻断", authorization.fault);
       setMemoryUiState(ctx, "faulted");
       writeRecord("context_blocked", {
         fault: authorization.fault.kind,
@@ -1350,9 +1317,9 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
 
     if (!requestProof) {
       contextAuthorizationOutcome = "blocked";
-      setAuthorization("已阻断");
+      setAuthorization("已阻断", { kind: "service", detail: "Enhanced construction proof is unavailable" });
       setMemoryUiState(ctx, "faulted");
-      writeRecord("context_blocked", { fault: "service", detail: "Provider payload proof construction failed" });
+      writeRecord("context_blocked", { fault: "service", detail: "Enhanced construction proof is unavailable" });
       ctx.abort();
       return undefined;
     }
@@ -1369,11 +1336,8 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
       retentionBudgetIdentity: authorization.proof.retentionBudgetIdentity,
       deltaHash: authorization.proof.deltaHash,
       enhancedContentHash: authorization.proof.enhancedContentHash,
-      providerPayloadProfileId: authorization.proof.providerPayloadProfileId,
+      taskContextBudgetId: authorization.proof.taskContextBudgetId,
       currentTurn: authorization.metrics,
-      messagesHash: requestProof.payload.messagesHash,
-      messageCount: requestProof.payload.messageCount,
-      payloadProofAdapter: requestProof.payload.adapterId,
       inputMessagesHash: hash(event.messages),
       adoptedMessagesBytes: bytes(authorization.enhancedContext),
       ...branchSnapshot(ctx),
@@ -1388,10 +1352,12 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
   });
 
   pi.on("before_provider_request", async (event, ctx) => {
-    providerRequestIndex += 1;
-    const payloadHasEnhancedContext = payloadUsesEnhancedContext(event.payload);
-    const proof = pendingAssemblyProof;
-    pendingAssemblyProof = undefined;
+    try {
+      providerRequestIndex += 1;
+      const proof = pendingAssemblyProof;
+      pendingAssemblyProof = undefined;
+      const payloadHasEnhancedContext = payloadUsesEnhancedContext(event.payload);
+
     let currentRuntimeGeneration: string | undefined;
     let currentMemoryCapabilityProofId: string | undefined;
     let runtimeValidationError: string | undefined;
@@ -1406,14 +1372,15 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
         runtimeValidationError = error instanceof Error ? error.message : String(error);
       }
     }
-    let currentProviderPayloadProfile: ProviderPayloadProfile | undefined;
-    let currentProviderPayloadProfileId: string | undefined;
-    let providerPayloadProfileError: string | undefined;
-    try {
-      currentProviderPayloadProfile = providerPayloadProfile(ctx);
-      currentProviderPayloadProfileId = currentProviderPayloadProfile.identity;
-    } catch (error) {
-      providerPayloadProfileError = error instanceof Error ? error.message : String(error);
+
+    let currentTaskContextBudget: TaskContextBudget | undefined;
+    let taskContextBudgetError: string | undefined;
+    if (proof) {
+      try {
+        currentTaskContextBudget = taskContextBudget(ctx);
+      } catch (error) {
+        taskContextBudgetError = error instanceof Error ? error.message : String(error);
+      }
     }
 
     let currentRequestRouteFingerprint: string | undefined;
@@ -1421,7 +1388,7 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
     let currentCheckpointIdentity: string | undefined;
     let currentDeltaHash: string | undefined;
     let historicalValidationError: string | undefined;
-    if (proof && currentProviderPayloadProfile) {
+    if (proof && currentTaskContextBudget) {
       try {
         const liveSnapshot = sessionRouteSnapshot(ctx);
         const activeCoordinator = currentCoordinator(ctx);
@@ -1430,7 +1397,7 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
         currentRequestRouteFingerprint = requestRoute.fingerprint;
         const historicalSnapshot = snapshotBeforeCurrentPrompt(liveSnapshot);
         const retentionBudgetIdentity = createRetentionBudgetIdentity(
-          currentProviderPayloadProfile,
+          currentTaskContextBudget,
           activeCoordinator.checkpointRetentionPolicy(),
         );
         if (retentionBudgetIdentity !== proof.assembly.retentionBudgetIdentity) {
@@ -1448,99 +1415,75 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
         historicalValidationError = error instanceof Error ? error.message : String(error);
       }
     }
+
     const routeProofError = proof
       ? assemblyRouteProofError(proof.assembly, currentRequestRouteFingerprint, currentHistoricalRouteFingerprint)
       : undefined;
-    // 只核对本 handler 执行时实际可见的 payload；最终采用由职责外观测分类。
-    let hookOutcome: "verified" | "rejected" | "no-constructed-output";
-    let rejectionReason: string | undefined;
+    let hookOutcome: "observed" | "changed" | "missing" | "ambiguous" | "no-constructed-output";
+    let observationReason: string | undefined;
     if (!proof) {
       hookOutcome = "no-constructed-output";
-      if (payloadHasEnhancedContext) rejectionReason = "enhanced content without a current proof";
-    } else if (!payloadHasEnhancedContext) {
-      hookOutcome = "rejected";
-      rejectionReason = "handler payload no longer carries the constructed enhanced content";
-    } else if (!payloadCarriesNonce(event.payload, proof.assembly.nonce)) {
-      hookOutcome = "rejected";
-      rejectionReason = "handler payload does not carry the expected nonce";
-    } else if (!payloadCarriesEnhancedContent(
-      event.payload,
-      proof.assembly.nonce,
-      proof.assembly.enhancedContentHash,
-    )) {
-      hookOutcome = "rejected";
-      rejectionReason = "handler payload changed the constructed enhanced content";
-    } else if (!currentRuntimeGeneration) {
-      hookOutcome = "rejected";
-      rejectionReason = runtimeValidationError ?? "memory runtime capability is unavailable";
-    } else if (currentRuntimeGeneration !== proof.assembly.generation) {
-      hookOutcome = "rejected";
-      rejectionReason = "runtime generation changed after the context decision";
-    } else if (currentMemoryCapabilityProofId !== proof.memoryCapabilityProofId) {
-      hookOutcome = "rejected";
-      rejectionReason = "memory capability proof changed after the context decision";
-    } else if (ctx.model?.provider !== proof.payload.provider
-      || ctx.model.id !== proof.payload.model
-      || ctx.model.api !== proof.payload.api) {
-      hookOutcome = "rejected";
-      rejectionReason = "task Provider, model, or API changed after the context decision";
-    } else if (currentProviderPayloadProfileId !== proof.assembly.providerPayloadProfileId) {
-      hookOutcome = "rejected";
-      rejectionReason = providerPayloadProfileError
-        ? `Provider payload profile is unavailable: ${providerPayloadProfileError}`
-        : "Provider payload profile changed after the context decision";
-    } else if (historicalValidationError) {
-      hookOutcome = "rejected";
-      rejectionReason = historicalValidationError;
-    } else if (routeProofError) {
-      hookOutcome = "rejected";
-      rejectionReason = routeProofError;
-    } else if (currentCheckpointIdentity !== proof.assembly.checkpointIdentity) {
-      hookOutcome = "rejected";
-      rejectionReason = "MemoryCheckpoint changed after the context decision";
-    } else if (currentDeltaHash !== proof.assembly.deltaHash) {
-      hookOutcome = "rejected";
-      rejectionReason = "VerifiedActiveDelta changed after the context decision";
-    } else if (!openAICompletionsPayloadMatchesProfile(event.payload, {
-      systemPromptHash: currentProviderPayloadProfile!.systemPromptHash,
-      toolsHash: currentProviderPayloadProfile!.toolsHash,
-      maxOutputTokens: currentProviderPayloadProfile!.maxOutputTokens,
-    })) {
-      hookOutcome = "rejected";
-      rejectionReason = "handler payload does not match the constructed Provider payload profile";
-    } else if (!openAICompletionsPayloadMatches(event.payload, proof.assembly.nonce, proof.payload)) {
-      hookOutcome = "rejected";
-      rejectionReason = "handler payload changed the constructed Provider message sequence";
+      if (payloadHasEnhancedContext) observationReason = "enhanced content is visible without a current construction proof";
     } else {
-      hookOutcome = "verified";
+      hookOutcome = observeEnhancedContent(
+        event.payload,
+        proof.assembly.nonce,
+        proof.assembly.enhancedContentHash,
+      );
+      if (hookOutcome === "missing") observationReason = "handler payload does not expose the constructed enhancement marker";
+      else if (hookOutcome === "ambiguous") observationReason = "handler payload exposes the construction nonce more than once";
+      else if (hookOutcome === "changed") observationReason = "handler payload changed the constructed enhancement string";
+      else if (!currentRuntimeGeneration) {
+        hookOutcome = "changed";
+        observationReason = runtimeValidationError ?? "memory runtime capability is unavailable";
+      } else if (currentRuntimeGeneration !== proof.assembly.generation) {
+        hookOutcome = "changed";
+        observationReason = "runtime generation changed after the context decision";
+      } else if (currentMemoryCapabilityProofId !== proof.memoryCapabilityProofId) {
+        hookOutcome = "changed";
+        observationReason = "memory capability proof changed after the context decision";
+      } else if (currentTaskContextBudget?.identity !== proof.assembly.taskContextBudgetId) {
+        hookOutcome = "changed";
+        observationReason = taskContextBudgetError
+          ? `Task context budget is unavailable: ${taskContextBudgetError}`
+          : "task context budget changed after the context decision";
+      } else if (historicalValidationError) {
+        hookOutcome = "changed";
+        observationReason = historicalValidationError;
+      } else if (routeProofError) {
+        hookOutcome = "changed";
+        observationReason = routeProofError;
+      } else if (currentCheckpointIdentity !== proof.assembly.checkpointIdentity) {
+        hookOutcome = "changed";
+        observationReason = "MemoryCheckpoint changed after the context decision";
+      } else if (currentDeltaHash !== proof.assembly.deltaHash) {
+        hookOutcome = "changed";
+        observationReason = "VerifiedActiveDelta changed after the context decision";
+      }
     }
 
-    if (hookOutcome === "verified") {
+    if (hookOutcome === "observed") {
+      lastHookObservationDiagnostic = undefined;
       setAuthorization("增强记忆");
       setMemoryUiState(ctx, "active");
-    } else if (hookOutcome === "rejected") {
-      latchGenerationFault(
-        ctx,
-        "provider-proof",
-        { kind: "service", detail: rejectionReason ?? "Provider proof rejected" },
-        { generation: proof?.assembly.generation, sessionScoped: true },
-      );
-      setAuthorization("已阻断");
-      setMemoryUiState(ctx, "faulted");
+    } else if (observationReason && observationReason !== lastHookObservationDiagnostic) {
+      lastHookObservationDiagnostic = observationReason;
+      if (ctx.hasUI) ctx.ui.notify(`增强上下文 hook 观察异常：${observationReason}。请求未被本扩展阻断，请根据当前组合决定后续处理。`, "warning");
     }
 
     writeRecord("before_provider_request", {
       requestIndex: providerRequestIndex,
       provider: ctx.model?.provider,
       model: ctx.model?.id,
-      // hook 时点事实，不表示最终 Provider 采用
+      api: ctx.model?.api,
+      // 只描述本 handler 时点观察，不表示最终 Provider 采用。
       hookOutcome,
-      rejectionReason,
+      observationReason,
       nonce: proof?.assembly.nonce,
       memoryCapabilityProofId: proof?.memoryCapabilityProofId,
       currentMemoryCapabilityProofId,
-      providerPayloadProfileId: proof?.assembly.providerPayloadProfileId,
-      currentProviderPayloadProfileId,
+      taskContextBudgetId: proof?.assembly.taskContextBudgetId,
+      currentTaskContextBudgetId: currentTaskContextBudget?.identity,
       checkpointIdentity: proof?.assembly.checkpointIdentity,
       currentCheckpointIdentity,
       deltaHash: proof?.assembly.deltaHash,
@@ -1554,8 +1497,25 @@ export default function piContextMemoryProbe(pi: ExtensionAPI): void {
       ...payloadSummary(event.payload),
       ...branchSnapshot(ctx),
     });
-    maybeFail("before_provider_request");
-    if (hookOutcome === "rejected") ctx.abort();
+      maybeFail("before_provider_request");
+    } catch {
+      const detail = "Provider hook observation failed internally";
+      try {
+        writeRecord("before_provider_request_observation_error", {
+          requestIndex: providerRequestIndex,
+          provider: ctx.model?.provider,
+          model: ctx.model?.id,
+          api: ctx.model?.api,
+          detail,
+        });
+      } catch {}
+      if (ctx.hasUI && detail !== lastHookObservationDiagnostic) {
+        lastHookObservationDiagnostic = detail;
+        try {
+          ctx.ui.notify(`增强上下文 hook 观察失败：${detail}。请求未被本扩展阻断，请根据当前组合决定后续处理。`, "warning");
+        } catch {}
+      }
+    }
   });
 
   pi.on("after_provider_response", (event, ctx) => {

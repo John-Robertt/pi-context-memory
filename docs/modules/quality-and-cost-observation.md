@@ -45,7 +45,7 @@ suite 启动时记录 `ValidationCoordinates`：任务/记忆 Provider、模型�
 - 工具调用与结果没有丢失、错序或协议破坏；
 - 当前目标、硬约束、有效事实和必要证据保持连续；
 - branch、session 和迟到结果没有污染；
-- constructed 输出完整分区 hook verified/rejected/unobserved；只有 verified 再分 transport 结果，且无虚假采用声明；
+- constructed 输出完整分区 hook `observed | changed | missing | ambiguous | unobserved`；transport 另由独立证据分类，且无虚假采用声明；
 - Provider 基线未丢失 Pi 可见 foreign/opaque 单元，记忆投影未吸收 private metadata/locator；
 - manifest 声明的 compaction/tree 宿主兼容性与实际请求/entry 一致，不一致时只形成该组合的兼容性失败；
 - 已有 summary 文本没有进入本扩展 VLM、来源或增强历史；
@@ -75,13 +75,13 @@ memory-precondition 只有在本扩展 block 且 transport 独立观测到对应
 - run ID 和 request ID；
 - 任务 Provider、模型和 API；
 - session、完整 request route fingerprint、HistoricalRouteKey、MemoryCheckpoint、VerifiedActiveDelta 和运行代际；
-- system prompt、tool schema、消息、ProviderPayloadProfile 与适配版本哈希；
+- system prompt、tool schema、增强字符串和 `TaskContextBudget` 哈希；
 - `context` 授权决定；
-- constructed identity、hook verified/rejected/unobserved 与 handler 顺序；
+- constructed identity、hook `observed | changed | missing | ambiguous | unobserved` 与 handler 顺序；
 - Provider 实际接收时刻；
 - 阻断错误码。
 
-只有 hook verified 才进一步分类 transport adopted/changed/unobserved；rejected/unobserved 也保存实际 transport 结果但不称增强采用。本扩展不控制后续 handler，用户根据诊断决定处理。
+hook 分类只描述本扩展 handler 的可见时点；transport adopted/changed/unobserved 始终由独立 Provider 或响应事实分类。只有 hook observed 且 transport adopted 同时成立时才声明增强采用，其他组合保留实际事实而不提升结论。本扩展不控制后续 handler，用户根据诊断决定处理。
 
 通过条件与指标定义统一引用 [`../validation/README.md`](../validation/README.md) §6；本模块只采集重算这些指标所需的 handler、transport、Provider 基线、记忆投影、跨组件修改、block 和 summary 污染事实。
 
@@ -126,7 +126,7 @@ Pi 原生 arm 只作为独立开发基线，用于比较任务质量和成本；
 - 任一核心节点只有替身证据却被标记为完成；
 - suite 中途改变 Provider/模型，或在坐标未变时把重复授权作为验证前置条件；
 - 大工具输出、快速调用、后台刷新或必要等待导致任务中断；
-- constructed 输出未完整分区，或把 hook rejected/unobserved、transport changed/unobserved 宣称为采用；
+- constructed 输出未完整分区，或把 hook 观察异常、transport changed/unobserved 宣称为采用；
 - 本扩展 block 后仍由自身代码继续构造或确认同一增强处理；
 - Provider 基线丢失 Pi 可见 foreign/opaque 单元，或记忆投影吸收 private metadata/locator/extension-private 内容；
 - 本扩展尝试禁用、重排或修改其它扩展、加载顺序或 Pi 配置；

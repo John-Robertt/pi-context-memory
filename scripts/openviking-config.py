@@ -2,44 +2,16 @@
 import hashlib
 import json
 import sys
-from pathlib import Path
 from copy import deepcopy
 
 from openviking import __version__ as openviking_version
 from openviking_cli.utils.config import OpenVikingConfig, VLMConfig
+
 OPENVIKING_MEMORY_API_KEY_ENV = "PCR_OPENVIKING_MEMORY_API_KEY"
 OPENVIKING_MEMORY_API_KEY_REFERENCE = f"${{{OPENVIKING_MEMORY_API_KEY_ENV}}}"
-ADAPTER_CONTRACT_PATH = Path(__file__).resolve().parents[1] / "config" / "openviking-adapter-contract.json"
+USER_SETTING_FIELDS = ("provider", "model", "api_key", "api_base", "api_version")
 
 
-def adapter_contract():
-    contract = json.loads(ADAPTER_CONTRACT_PATH.read_text(encoding="utf-8"))
-    if contract.get("schemaVersion") != 1:
-        raise ValueError("OpenViking adapter contract schemaVersion is unsupported")
-    setting_fields = contract.get("settingFields")
-    providers = contract.get("providers")
-    if not isinstance(setting_fields, list) or not setting_fields or len(setting_fields) != len(set(setting_fields)):
-        raise ValueError("OpenViking adapter contract settingFields are invalid")
-    if not isinstance(providers, list) or not providers:
-        raise ValueError("OpenViking adapter contract providers are invalid")
-    provider_names = []
-    for descriptor in providers:
-        if not isinstance(descriptor, dict) or not isinstance(descriptor.get("name"), str):
-            raise ValueError("OpenViking adapter contract contains an invalid provider")
-        provider_names.append(descriptor["name"])
-        if descriptor.get("credential") not in {
-            "api-key",
-            "api-key-or-native",
-            "optional-api-key-or-native",
-        }:
-            raise ValueError(f"OpenViking adapter contract credential is invalid for {descriptor['name']}")
-        for field in ("required", "optional", "apiKeyRequiredModelPrefixes"):
-            values = descriptor.get(field)
-            if not isinstance(values, list) or any(not isinstance(value, str) for value in values):
-                raise ValueError(f"OpenViking adapter contract {field} is invalid for {descriptor['name']}")
-    if len(provider_names) != len(set(provider_names)):
-        raise ValueError("OpenViking adapter contract repeats a provider")
-    return contract
 
 
 def stable_hash(value):
@@ -65,47 +37,22 @@ def vlm_properties():
 
 
 def describe():
-    contract = adapter_contract()
     schema, properties = vlm_properties()
-    schema_hash = stable_hash(schema)
-    if schema_hash != contract.get("vlmSchemaSha256"):
-        raise ValueError("OpenViking VLM schema does not match the reviewed adapter contract")
+    missing = [name for name in USER_SETTING_FIELDS if name not in properties]
+    if missing:
+        raise ValueError(f"OpenViking VLM schema is missing required configuration fields: {', '.join(missing)}")
     return {
         "openVikingVersion": openviking_version,
-        "providers": [
-            {
-                "name": descriptor["name"],
-                "required": descriptor["required"],
-                "optional": descriptor["optional"],
-                "credential": descriptor["credential"],
-                "apiKeyRequiredModelPrefixes": descriptor["apiKeyRequiredModelPrefixes"],
-            }
-            for descriptor in contract["providers"]
-        ],
-        "settingFields": {
-            name: properties[name]
-            for name in contract["settingFields"]
-        },
-        "vlmSchemaSha256": schema_hash,
-        "adapterContractSha256": stable_hash(contract),
-        "litellmCatalogUrl": contract["litellmCatalogUrl"],
+        "settingFields": {name: properties[name] for name in USER_SETTING_FIELDS},
+        "vlmSchemaSha256": stable_hash(schema),
     }
 
 
-def requires_api_key(descriptor, model):
-    if descriptor["credential"] == "api-key":
-        return True
-    normalized_model = model.lower()
-    return any(
-        normalized_model.startswith(prefix.lower())
-        for prefix in descriptor["apiKeyRequiredModelPrefixes"]
-    )
 
 def normalized_setting(value):
     if not isinstance(value, dict):
         raise ValueError("Memory model setting must be a JSON object")
-    capabilities = describe()
-    unknown = sorted(set(value) - set(capabilities["settingFields"]))
+    unknown = sorted(set(value) - set(USER_SETTING_FIELDS))
     if unknown:
         raise ValueError(f"Unknown memory model setting fields: {', '.join(unknown)}")
 
@@ -113,33 +60,22 @@ def normalized_setting(value):
     model = value.get("model")
     if not isinstance(provider, str) or not provider.strip():
         raise ValueError("Memory model provider is required")
-    provider = provider.strip().lower()
-    provider_names = [item["name"] for item in capabilities["providers"]]
-    if provider not in provider_names:
-        raise ValueError(f"Unknown OpenViking VLM provider: {provider}")
     if not isinstance(model, str) or not model.strip():
         raise ValueError("Memory model ID is required")
 
-    result = {"provider": provider, "model": model.strip()}
+    result = {"provider": provider.strip().lower(), "model": model.strip()}
     api_key = value.get("api_key")
     if api_key is not None and api_key != "":
         if not isinstance(api_key, str) or not api_key.strip():
             raise ValueError("api_key must be a non-empty string")
         result["api_key"] = api_key.strip()
-    descriptor = next(item for item in capabilities["providers"] if item["name"] == provider)
-    accepted_connections = set(descriptor["required"] + descriptor["optional"])
     for field in ("api_base", "api_version"):
         raw = value.get(field)
         if raw is None or raw == "":
             continue
-        if field not in accepted_connections:
-            raise ValueError(f"{field} is not supported for OpenViking provider {provider}")
         if not isinstance(raw, str) or not raw.strip():
             raise ValueError(f"{field} must be a non-empty string")
         result[field] = raw.strip().rstrip("/") if field == "api_base" else raw.strip()
-    for field in descriptor["required"]:
-        if field not in result:
-            raise ValueError(f"OpenViking provider {provider} requires {field}")
     return result
 
 
@@ -172,13 +108,6 @@ def compile_config(payload):
 
     provider = setting["provider"]
     api_key = setting.get("api_key")
-    descriptor = next(
-        item for item in describe()["providers"]
-        if item["name"] == provider
-    )
-    api_key_required = requires_api_key(descriptor, setting["model"])
-    if api_key_required and not api_key:
-        raise ValueError(f"api_key is required for OpenViking provider {provider}")
     credential_secrets = [api_key] if api_key else []
     vlm = {
         "provider": provider,
@@ -200,7 +129,8 @@ def compile_config(payload):
     generated = deepcopy(base_config)
     generated["vlm"] = vlm
     try:
-        OpenVikingConfig.from_dict(deepcopy(generated))
+        validated = OpenVikingConfig.from_dict(deepcopy(generated))
+        validated.vlm.get_vlm_instance()
     except Exception as error:
         raise ValueError(redacted_error(error, credential_secrets)) from None
     return {

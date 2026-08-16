@@ -76,9 +76,9 @@ CurrentTurn
 
 `CurrentTurn` 先保留 Pi Provider 基线，再治理本扩展替换范围。全-text message/ToolBatch 可形成 MessageSource；含 image/unsupported public block 的完整单元形成 OpaqueProviderSegment，不部分归档。thinking/private metadata 按 Pi 结构规则处理且不归档；ControlBoundary 无正文。customType、正文语义和来源黑名单都不决定 Provider 资格。
 
-Pi 集成先验证 context 时刻的完整 `SessionRouteSnapshot`，再以当前 Agent run 的 user prompt 为边界拆分。`HistoricalRouteKey` 绑定 prompt 之前的有序 MessageSource taskContent、完成状态、仍需原样保留的 Pi Provider 内容与 ControlBoundary 身份；完整 request route fingerprint 绑定当时从根到实际 leaf 的全部 entry 身份，PayloadProofAdapter 再绑定该 prompt、后续 Provider 基线消息、增强历史及其最终序列。请求证明同时绑定 request route、HistoricalRouteKey、MemoryCheckpoint identity、VerifiedActiveDelta hash 和最终内容哈希。
+Pi 集成先验证 `context` 时刻的完整 `SessionRouteSnapshot`，再以当前 Agent run 的 user prompt 为边界拆分。`HistoricalRouteKey` 绑定 prompt 之前的有序 MessageSource taskContent、完成状态、仍需原样保留的 Pi Provider 内容与 ControlBoundary 身份；完整 request route fingerprint 绑定当时从根到实际 leaf 的全部 entry 身份。构造证明同时绑定 request/HistoricalRoute、MemoryCheckpoint identity、VerifiedActiveDelta hash、retentionBudgetIdentity、`TaskContextBudget`、最终增强字符串哈希和 nonce。
 
-同一 user prompt 后的连续工具循环只更新完整 request route 与 Provider 消息证明，不提交 Working Memory refresh。Agent settled 后归档完整回合，并可为稳定路线 watermark 安排后台刷新；下一 user prompt 到达时优先组合兼容检查点与实际路线后缀，不因后台任务仍在运行而等待。
+同一 user prompt 后的连续工具循环只更新完整 request route、CurrentTurn 和构造证明，不提交 Working Memory refresh。Agent settled 后归档完整回合，并可为稳定路线 watermark 安排后台刷新；下一 user prompt 到达时优先组合兼容检查点与实际路线后缀，不因后台任务仍在运行而等待。
 
 首轮请求使用扩展本地合法空检查点与空 VerifiedActiveDelta。它仍绑定已经通过实际能力验证的运行代际，并生成增强证明。
 
@@ -96,9 +96,9 @@ Session 记忆协调按以下顺序解析历史上下文：
 
 1. 选择 coveredRoutePrefixKey 仍为当前 HistoricalRoute 精确前缀且不跨越 OpaqueProviderSegment 的最近检查点；没有可用检查点时从本地空检查点开始；
 2. 对检查点后缀中的 MessageSource/ControlBoundary 执行同版本规范化、路线核验和来源屏障，形成 VerifiedActiveDelta；OpaqueProviderSegment 另按 Pi 基线保留；
-3. 让工作上下文优化预计算检查点、delta、opaque segment 和 CurrentTurn 是否能够进入 ProviderPayloadProfile 预算；
+3. 让工作上下文优化预计算检查点、delta、opaque segment 和 CurrentTurn 是否能够进入 `TaskContextBudget`；
 4. 若能够进入则立即继续，已存在或新安排的后台刷新不成为等待条件；
-5. 若缺少可用检查点、旧检查点在当前历史预算下过大，或 delta 需要被检查点覆盖，则以当前 generation、精确路线前缀、watermark 和 retentionBudgetIdentity 创建或加入必要刷新；刷新完成后重新读取当前 ProviderPayloadProfile 与路线，不沿用旧请求快照；
+5. 若缺少可用检查点、旧检查点在当前历史预算下过大，或 delta 需要被检查点覆盖，则以当前 generation、精确路线前缀、watermark 和 retentionBudgetIdentity 创建或加入必要刷新；刷新完成后重新读取当前 `TaskContextBudget` 与路线，不沿用旧请求快照；
 6. 刷新结果只在 task completed、assembly、来源和完整 RefreshTarget 全部核验后原子发布，当前 watermark 后的新 entry 仍保留为 delta。
 
 后台刷新在 Agent settled、tree/resume 预热和 delta 预算高水位触发。完整 RefreshTarget 相同才共享；尚未启动的线性后继只有 retentionBudgetIdentity 相同才合并到最新 watermark；运行中的目标不改变，新预算请求重新评估，仍需刷新时创建自己的目标。机会性 refresh 返回 `skipped` 时保留既有检查点与 delta，不发布伪检查点或改变运行能力 proof。`refresh-required` 使用与 retentionBudgetIdentity 绑定的显式 retention 边界；若仍返回 skipped，则作为契约/策略错误锁存故障，不以重复提交形成无界循环。
@@ -107,7 +107,7 @@ Session 记忆协调按以下顺序解析历史上下文：
 
 ## 7. 工作上下文构造
 
-Pi 集成先以当前任务 Provider、模型与 API 形成版本化 `ProviderPayloadProfile`；其字段和失效条件由 [`../modules/pi-integration.md`](../modules/pi-integration.md) 负责。工作上下文优化按 [`../modules/working-context-optimization.md`](../modules/working-context-optimization.md) 的唯一预算算法，从任务模型窗口扣除输出预留、system prompt、active tool schema、Provider framing 和 transport margin，并采用 profile 约束的保守消息估算。footer 百分比和记忆模型窗口不参与授权。
+Pi 集成先从当前任务 Provider、模型、API、上下文窗口、最大输出量、system prompt 和 active tools 形成版本化 `TaskContextBudget`；其字段和失效条件由 [`../modules/pi-integration.md`](../modules/pi-integration.md) 负责。工作上下文优化按 [`../modules/working-context-optimization.md`](../modules/working-context-optimization.md) 的唯一预算算法扣除输出预留、system/tool 保守上界、framing 和 transport margin。任务 Provider/API 名称不形成准入清单；footer 百分比和记忆模型窗口不参与授权。
 
 内容分配严格采用工作上下文优化 §6 的唯一顺序：只依据顺序、结构、大小、预算和来源状态；不分类“否定”“重要”或“影响下一步”。结构必需输入超限时按该模块返回 opaque、refresh 或 context-budget 结果。
 
@@ -115,12 +115,10 @@ Pi 集成先以当前任务 Provider、模型与 API 形成版本化 `ProviderPa
 
 - 隐藏增强历史消息；
 - 有界 CurrentTurn 与必须原样保留的 OpaqueProviderSegment；
-- ProviderPayloadProfile 身份；
-- session、完整 request route fingerprint、HistoricalRouteKey、MemoryCheckpoint identity、VerifiedActiveDelta hash 和运行代际；
-- system prompt 与 active tool schema 哈希；
-- 上下文消息内容哈希；
-- 单次请求 nonce；
-- 来源集合与预算统计。
+- `TaskContextBudget` 身份；
+- 完整 request route fingerprint、HistoricalRoute fingerprint、MemoryCheckpoint identity、VerifiedActiveDelta hash、retentionBudgetIdentity、OpenViking Session ID 和运行代际；
+- 最终增强字符串内容哈希和单次请求 nonce；
+- CurrentTurn raw/projected 批次、来源 entry ID 与消息预算统计。
 
 ## 8. Provider 请求闸门
 
@@ -134,26 +132,21 @@ context
   → 仅在历史输入确实无法满足预算时等待必要 checkpoint refresh
   → 等待工具批次来源屏障
   → 构造有界工作上下文
-  → 重新核对 session、leaf、路线、检查点、delta、profile 和运行代际
-  → 返回增强消息并发布单次请求证明
+  → 重新核对 session、leaf、路线、检查点、delta、任务预算和运行代际
+  → 返回增强消息并发布单次构造证明
 ```
 
 任一步骤失败时，Pi 集成调用 `ctx.abort()` 终止当前 Agent 请求，记录结构化阻断原因并显示故障诊断。扩展异常不能用作控制流；所有可预期错误必须在集成边界转换为确定的阻断结果。
 
-### 8.2 Provider 请求时点自检
+### 8.2 Provider hook 时点观察
 
-本扩展的 `before_provider_request` handler 只核对它在自身执行时实际可见的 payload：
+本扩展的 `before_provider_request` handler 只检查它在自身执行时实际可见且由本扩展拥有的事实：
 
-- 当前任务 Provider、模型和 API 与授权证明一致，并具有已验证的 PayloadProofAdapter；
-- 归一化后的系统、工具 schema 和有序消息与授权输入一致；
-- nonce 存在、未消费且只出现于预期增强消息；
-- 重新读取的 runtime snapshot 仍证明同一受管进程代际和同一能力 proof 有效；完整 request route fingerprint、HistoricalRouteKey、MemoryCheckpoint identity 与 VerifiedActiveDelta hash 仍为当前值；
-- ProviderPayloadProfile 的上下文窗口、输出设置、system/tool 开销和适配版本与实际 payload 一致；
-- payload 增强内容哈希与 `context` 决定一致；
-- handler payload 未丢失或改变本扩展发布的有序 messages；
-- 当前请求没有故障锁存。
+- payload 任意层级中恰好一个字符串携带当前一次性 nonce，且整个字符串哈希与 `context` 构造结果一致；
+- 重新读取的 runtime snapshot 仍是同一受管进程代际和能力 proof；
+- 当前 `TaskContextBudget`、完整 request/HistoricalRoute、MemoryCheckpoint identity、VerifiedActiveDelta hash 和 retentionBudgetIdentity 仍与构造证明一致。
 
-核对成功原子消费 nonce 并记 verified；进程/代际失效、能力 proof 变化或 payload/proof 不一致时记 hookRejected，按当前 session 与代际锁存故障、停止自身确认并 abort。constructed 输出未到达 handler 由 runner 记 hookUnobserved。Pi 可继续其它生命周期；最终采用仅由 transport 观测，无法建立则记 unobserved，由用户决定后续。
+结果记为 `observed | changed | missing | ambiguous`；constructed 输出未到达 handler 由 runner 记 `unobserved`。异常只发布脱敏诊断，不锁存故障、不调用 `abort()`，也不按任务 Provider/API 名称阻断请求。本扩展不把递归找到字符串解释为 wire 级采用；最终 transport adopted/changed/unobserved 只能由记录型 Provider、真实响应或其它独立证据确定。
 
 ## 9. Pi compaction 与 tree hook
 
@@ -171,7 +164,7 @@ Pi 的上下文用量来自最近一次任务 Provider usage，并对其后的�
 
 在交互宿主中，本扩展安装 footer adapter，保留模型、usage、费用和 branch，并以 `(增强)` 标识自己负责的上下文构造。它不修改 Pi compaction setting；扩展未加载时不安装 adapter，后续 footer 语义由 Pi 负责。
 
-footer 和状态栏都不参与预算、请求授权或故障恢复。预算事实是 `ProviderPayloadProfile` 与本扩展构造/时点自检结果；显示暂时高估、低估或不可用不能放宽本扩展边界，最终 transport 采用仍由外部观测确定。
+footer 和状态栏都不参与预算、请求授权或故障恢复。预算事实是 `TaskContextBudget` 与本扩展构造结果；hook 观察只形成诊断。显示暂时高估、低估或不可用不能放宽本扩展边界，最终 transport 采用仍由外部观测确定。
 
 ## 11. 并发、迟到结果与清理
 
@@ -186,7 +179,7 @@ footer 和状态栏都不参与预算、请求授权或故障恢复。预算事�
 
 ## 12. 故障与恢复
 
-故障记录必须区分：配置、认证、Launcher 所有权、服务、模型能力、来源、路线、OpenViking 协议、工具批次、预算、Provider 证明和关闭阶段。
+故障记录必须区分：配置、认证、Launcher 所有权、服务、记忆模型能力、来源、路线、OpenViking 协议、工具批次、预算和关闭阶段；Provider hook 观察异常属于独立诊断，不归入运行故障。
 
 恢复流程为：
 
@@ -195,7 +188,7 @@ footer 和状态栏都不参与预算、请求授权或故障恢复。预算事�
   → 执行 /restart-viking，或在扩展更新后重新启动 Pi
   → 创建新运行代际
   → 实际能力探针通过
-  → 清除旧代检查点引用、刷新任务与请求证明
+  → 清除旧代检查点引用、刷新任务与构造证明
   → 从当前 Pi branch 与已核验来源建立本地空检查点和 VerifiedActiveDelta，并安排当前代际第一次后台刷新
   → 状态恢复为“增强记忆”
 ```
@@ -210,9 +203,9 @@ footer 和状态栏都不参与预算、请求授权或故障恢复。预算事�
 - 多个快速、并行和大输出工具批次保持有界并正确推进任务；
 - 慢 refresh 期间，兼容 checkpoint+delta 仍可构造 allow；hook/transport 结果分别观测；
 - 基线遵循 Pi 转换：全-text 可投影，mixed/image 整单元 opaque，当前 unknown role drop；thinking/private metadata/locator 不进长期记忆；
-- ProviderPayloadProfile 约束本扩展预算，footer 只显示任务上下文并以 `(增强)` 标识；
-- constructed 输出在 hook 分为 verified/rejected/unobserved；只有 verified 的 transport 才分 adopted/changed/unobserved；
-- 本扩展内部必要能力失败时不确认增强输出；abort 返回与 transport 结果分别观测；
+- `TaskContextBudget` 约束本扩展预算，任务 Provider/API 名称不形成准入清单，footer 只显示任务上下文并以 `(增强)` 标识；
+- constructed 输出在 hook 分为 `observed | changed | missing | ambiguous | unobserved`；transport 始终独立分账，只有外部证据成立才声明 adopted；
+- 本扩展内部必要能力失败时在 `context` 阶段不确认增强输出；abort 返回与 transport 结果分别观测，hook 异常只诊断；
 - 在声明经过验证的 Pi/扩展组合中，compaction 和 tree summary 结果符合本 handler 的请求；不符合时只形成 `host-behavior-unverified` 兼容性结论；
 - tree、fork、clone、resume、reload 后，本扩展只使用 Pi 实际当前路线；
 - 扩展未加载时不声明 Pi 的上下文、summary 或 footer 行为。

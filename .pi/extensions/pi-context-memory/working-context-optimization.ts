@@ -15,42 +15,32 @@ import type {
   SessionRouteIdentity,
   VerifiedActiveDelta,
 } from "./session-memory-coordination.ts";
-import {
-  OPENAI_COMPLETIONS_PAYLOAD_PROOF_ADAPTER,
-  openAICompletionsToolPayloadUpperBoundBytes,
-} from "./provider-payload-proof.ts";
 
 const DEFAULT_MAX_CONTEXT_CHARS = 48_000;
 const MIN_WORKING_CONTEXT_CHARS = 256;
-const PROVIDER_MESSAGE_SERIALIZATION_FACTOR = 2;
-const PROVIDER_FRAMING_TOKEN_RESERVE = 256;
+const TASK_FRAMING_TOKEN_RESERVE = 256;
 const TRANSPORT_MARGIN_TOKEN_RESERVE = 512;
 const PROJECTED_EDGE_CHARS = 160;
 
-export interface ProviderPayloadProfile {
+export interface TaskContextBudget {
   schemaVersion: 1;
   identity: string;
   provider: string;
   model: string;
   api: string;
-  payloadAdapter: typeof OPENAI_COMPLETIONS_PAYLOAD_PROOF_ADAPTER;
-  baseUrlHash: string;
-  compatHash: string;
   contextWindowTokens: number;
   maxOutputTokens: number;
   systemPromptHash: string;
   toolsHash: string;
   fixedTokenUpperBound: number;
   messageTokenBudget: number;
-  estimator: "utf8-json-bytes-x2";
+  estimator: "stable-json-utf8-bytes";
 }
 
-export interface ProviderPayloadProfileInput {
+export interface TaskContextBudgetInput {
   provider: string;
   model: string;
   api: string;
-  baseUrl: string;
-  compat: unknown;
   contextWindowTokens: number;
   maxOutputTokens: number;
   systemPrompt: string;
@@ -89,10 +79,7 @@ export interface ContextFault {
   detail: string;
 }
 
-/**
- * 工作上下文构造证明分别绑定完整请求路线与历史路线、检查点、delta、增强内容和一次性 nonce；
- * 完整 Provider 消息序列由 Pi 集成的 PayloadProofAdapter 另行绑定。
- */
+/** 工作上下文构造证明绑定完整请求路线与历史路线、检查点、delta、任务预算、增强内容和一次性 nonce。 */
 export interface AssemblyProof {
   nonce: string;
   generation: string;
@@ -103,7 +90,7 @@ export interface AssemblyProof {
   deltaHash: string;
   openVikingSessionId: string | null;
   enhancedContentHash: string;
-  providerPayloadProfileId: string;
+  taskContextBudgetId: string;
 }
 
 export function assemblyRouteProofError(
@@ -124,8 +111,8 @@ export interface CurrentTurnMetrics {
   rawToolBatches: number;
   projectedToolBatches: number;
   projectedSourceEntryIds: readonly string[];
-  providerMessageTokenUpperBound: number;
-  providerMessageTokenBudget: number;
+  taskMessageTokenUpperBound: number;
+  taskMessageTokenBudget: number;
 }
 
 export type ContextAuthorization<T> =
@@ -138,7 +125,7 @@ export interface AuthorizationInput<T> {
   requestRoute: SessionRouteIdentity;
   historical: ResolvedHistoricalContext;
   messages: readonly T[];
-  providerPayloadProfile: ProviderPayloadProfile;
+  taskContextBudget: TaskContextBudget;
   toolSources: CurrentTurnToolSources;
   toProviderMessages(messages: readonly T[]): readonly unknown[];
   ensureSources(entryIds: readonly string[]): Promise<void>;
@@ -161,74 +148,79 @@ function serializedBytes(value: unknown): number {
   return Buffer.byteLength(JSON.stringify(stable(value)), "utf8");
 }
 
-export function createProviderPayloadProfile(input: ProviderPayloadProfileInput): ProviderPayloadProfile {
-  if (input.api !== "openai-completions") throw new Error(`No verified Provider payload adapter is available for ${input.api}`);
+export function createTaskContextBudget(input: TaskContextBudgetInput): TaskContextBudget {
   for (const [name, value] of [
     ["Context window", input.contextWindowTokens],
     ["Maximum output", input.maxOutputTokens],
   ] as const) {
     if (!Number.isSafeInteger(value) || value <= 0) throw new Error(`${name} must be a positive integer`);
   }
-  const systemPromptTokens = Buffer.byteLength(input.systemPrompt, "utf8");
-  const toolsTokens = openAICompletionsToolPayloadUpperBoundBytes(input.tools);
+  const systemPromptTokens = serializedBytes(input.systemPrompt);
+  const toolsTokens = serializedBytes(input.tools);
   const fixedTokenUpperBound = input.maxOutputTokens
     + systemPromptTokens
     + toolsTokens
-    + PROVIDER_FRAMING_TOKEN_RESERVE
+    + TASK_FRAMING_TOKEN_RESERVE
     + TRANSPORT_MARGIN_TOKEN_RESERVE;
   const messageTokenBudget = input.contextWindowTokens - fixedTokenUpperBound;
   if (messageTokenBudget < MIN_WORKING_CONTEXT_CHARS) {
-    throw new Error("Provider payload budget leaves no room for a bounded enhanced request");
+    throw new Error("Task context budget leaves no room for a bounded enhanced request");
   }
   const identityInput = {
     schemaVersion: 1,
     provider: input.provider,
     model: input.model,
     api: input.api,
-    payloadAdapter: OPENAI_COMPLETIONS_PAYLOAD_PROOF_ADAPTER,
-    baseUrlHash: sha256(input.baseUrl),
-    compatHash: sha256(stable(input.compat ?? null)),
     contextWindowTokens: input.contextWindowTokens,
     maxOutputTokens: input.maxOutputTokens,
     systemPromptHash: sha256(input.systemPrompt),
     toolsHash: sha256(stable(input.tools)),
     fixedTokenUpperBound,
     messageTokenBudget,
-    estimator: "utf8-json-bytes-x2" as const,
+    estimator: "stable-json-utf8-bytes" as const,
   };
   return { ...identityInput, identity: sha256(identityInput) };
 }
 
 export function createRetentionBudgetIdentity(
-  profile: ProviderPayloadProfile,
+  budget: TaskContextBudget,
   policy: RetentionPolicy,
 ): string {
   return sha256({
     schemaVersion: 1,
     policy,
-    contextWindowTokens: profile.contextWindowTokens,
-    maxOutputTokens: profile.maxOutputTokens,
-    fixedTokenUpperBound: profile.fixedTokenUpperBound,
-    messageTokenBudget: profile.messageTokenBudget,
-    estimator: profile.estimator,
+    contextWindowTokens: budget.contextWindowTokens,
+    maxOutputTokens: budget.maxOutputTokens,
+    fixedTokenUpperBound: budget.fixedTokenUpperBound,
+    messageTokenBudget: budget.messageTokenBudget,
+    estimator: budget.estimator,
   });
 }
-/** 在任意 Provider payload 结构中核对 nonce 所属的完整增强内容。 */
-export function payloadCarriesEnhancedContent(
+
+export type EnhancedContentObservation = "observed" | "missing" | "changed" | "ambiguous";
+
+/** 只观察本 handler 可见 payload 中的一次性增强字符串，不解释 Provider wire 协议。 */
+export function observeEnhancedContent(
   value: unknown,
   nonce: string,
   expectedHash: string,
-  seen = new Set<unknown>(),
-): boolean {
-  if (typeof value === "string") return value.includes(nonce) && sha256(value) === expectedHash;
-  if (!value || typeof value !== "object") return false;
-  if (seen.has(value)) return false;
-  seen.add(value);
-  if (Array.isArray(value)) {
-    return value.some((item) => payloadCarriesEnhancedContent(item, nonce, expectedHash, seen));
-  }
-  return Object.values(value as Record<string, unknown>)
-    .some((item) => payloadCarriesEnhancedContent(item, nonce, expectedHash, seen));
+): EnhancedContentObservation {
+  const candidates: string[] = [];
+  const seen = new Set<unknown>();
+  const visit = (candidate: unknown): void => {
+    if (typeof candidate === "string") {
+      if (candidate.includes(nonce)) candidates.push(candidate);
+      return;
+    }
+    if (!candidate || typeof candidate !== "object" || seen.has(candidate)) return;
+    seen.add(candidate);
+    if (Array.isArray(candidate)) candidate.forEach(visit);
+    else Object.values(candidate as Record<string, unknown>).forEach(visit);
+  };
+  visit(value);
+  if (candidates.length === 0) return "missing";
+  if (candidates.length > 1) return "ambiguous";
+  return sha256(candidates[0]) === expectedHash ? "observed" : "changed";
 }
 
 /** 把本扩展责任内的失败归类为确定的阻断原因；异常不作为控制流离开授权边界。 */
@@ -369,6 +361,7 @@ function projectedToolBatch<T>(
   }
   const sourceEntryIds = [callSource.id];
   const assistantDescriptor = projectionDescriptor(assistant, callSource.id);
+  // Pi 会按 active tool schema 校验结构化调用；投影只能缩减结果，不能改写调用参数。
   const projectedAssistant = {
     ...assistant,
     content: [
@@ -382,14 +375,7 @@ function projectedToolBatch<T>(
           type: "toolCall",
           id: block.id,
           name: block.name,
-          arguments: {
-            piContextMemoryProjection: {
-              sourceEntryId: callSource.id,
-              sha256: sha256(stable(block.arguments ?? {})),
-              sizeBytes: Buffer.byteLength(JSON.stringify(stable(block.arguments ?? {})), "utf8"),
-              ...edge(JSON.stringify(stable(block.arguments ?? {}))),
-            },
-          },
+          arguments: block.arguments ?? {},
         })),
     ],
   } as T;
@@ -487,8 +473,9 @@ function currentTurnUnits<T>(
   return { units };
 }
 
+/** 每个 token 至少承载一个 UTF-8 字节，因此稳定 JSON 字节数是协议无关的 token 保守上界。 */
 function messageTokenUpperBound(messages: readonly unknown[]): number {
-  return serializedBytes(messages) * PROVIDER_MESSAGE_SERIALIZATION_FACTOR;
+  return serializedBytes(messages);
 }
 
 function enhancedContent(prepared: PreparedWorkingContext, nonce: string): string {
@@ -573,7 +560,7 @@ export class WorkingContextOptimizer {
         input.historical,
         selected.flat(),
         nonce,
-        input.providerPayloadProfile,
+        input.taskContextBudget,
         input.toProviderMessages,
       );
       const projectedIndexes = new Set<number>();
@@ -595,7 +582,7 @@ export class WorkingContextOptimizer {
             input.historical,
             selected.flat(),
             nonce,
-            input.providerPayloadProfile,
+            input.taskContextBudget,
             input.toProviderMessages,
           );
           if (fitted) break;
@@ -611,7 +598,7 @@ export class WorkingContextOptimizer {
             kind: "block",
             fault: {
               kind: "opaque-content-unrepresentable",
-              detail: "Current Provider-visible content cannot be represented within the Provider payload budget",
+              detail: "Current task-visible content cannot be represented within the extension context budget",
             },
           };
         }
@@ -620,7 +607,7 @@ export class WorkingContextOptimizer {
             kind: "refresh-required",
             fault: {
               kind: "checkpoint-refresh-required",
-              detail: "VerifiedActiveDelta must be folded into a checkpoint for the current Provider payload budget",
+              detail: "VerifiedActiveDelta must be folded into a checkpoint for the current task context budget",
             },
           };
         }
@@ -628,7 +615,7 @@ export class WorkingContextOptimizer {
           kind: "block",
           fault: {
             kind: "budget",
-            detail: "Current turn and the minimum checkpoint history exceed the Provider payload budget",
+            detail: "Current turn and the minimum checkpoint history exceed the extension context budget",
           },
         };
       }
@@ -650,14 +637,14 @@ export class WorkingContextOptimizer {
           deltaHash: delta.hash,
           openVikingSessionId: fitted.prepared.openVikingSessionId,
           enhancedContentHash: sha256(enhancedContent(fitted.prepared, nonce)),
-          providerPayloadProfileId: input.providerPayloadProfile.identity,
+          taskContextBudgetId: input.taskContextBudget.identity,
         },
         metrics: {
           rawToolBatches: toolBatchIndexes.length - projectedIndexes.size,
           projectedToolBatches: projectedIndexes.size,
           projectedSourceEntryIds,
-          providerMessageTokenUpperBound: fitted.providerMessageTokenUpperBound,
-          providerMessageTokenBudget: input.providerPayloadProfile.messageTokenBudget,
+          taskMessageTokenUpperBound: fitted.taskMessageTokenUpperBound,
+          taskMessageTokenBudget: input.taskContextBudget.messageTokenBudget,
         },
       };
     } catch (error) {
@@ -669,12 +656,12 @@ export class WorkingContextOptimizer {
     historical: ResolvedHistoricalContext,
     currentTurn: readonly T[],
     nonce: string,
-    profile: ProviderPayloadProfile,
+    budget: TaskContextBudget,
     toProviderMessages: (messages: readonly T[]) => readonly unknown[],
-  ): { prepared: PreparedWorkingContext; enhancedContext: T[]; providerMessageTokenUpperBound: number } | undefined {
+  ): { prepared: PreparedWorkingContext; enhancedContext: T[]; taskMessageTokenUpperBound: number } | undefined {
     let low = MIN_WORKING_CONTEXT_CHARS;
     let high = this.maxContextChars;
-    let best: { prepared: PreparedWorkingContext; enhancedContext: T[]; providerMessageTokenUpperBound: number } | undefined;
+    let best: { prepared: PreparedWorkingContext; enhancedContext: T[]; taskMessageTokenUpperBound: number } | undefined;
     while (low <= high) {
       const maxChars = Math.floor((low + high) / 2);
       const projected = this.project(historical, maxChars);
@@ -684,9 +671,9 @@ export class WorkingContextOptimizer {
       }
       const enhancedContext = buildEnhancedContext(currentTurn, projected, nonce);
       if (!enhancedContext) return undefined;
-      const providerMessageTokenUpperBound = messageTokenUpperBound(toProviderMessages(enhancedContext));
-      if (providerMessageTokenUpperBound <= profile.messageTokenBudget) {
-        best = { prepared: projected, enhancedContext, providerMessageTokenUpperBound };
+      const taskMessageTokenUpperBound = messageTokenUpperBound(toProviderMessages(enhancedContext));
+      if (taskMessageTokenUpperBound <= budget.messageTokenBudget) {
+        best = { prepared: projected, enhancedContext, taskMessageTokenUpperBound };
         low = maxChars + 1;
       } else {
         high = maxChars - 1;

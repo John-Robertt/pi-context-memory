@@ -118,19 +118,20 @@ run manifest、每个已执行 attempt 和停止原因都进入 evidence：
 - 刷新显著慢于相邻请求时，可用历史继续；机会性后台刷新失败保留旧 checkpoint+delta 和 ready 状态，必要刷新失败才使本扩展锁存并不确认依赖输出，transport 是否仍有其它请求由外部观测分类；
 - OpenViking 单条派生索引投影和 batch append JSON 分别满足 32 KiB/256 KiB 上限；省略投影含原始字节数、taskContentHash 和权威 `read_source` 入口，来源归档仍可恢复完整正文；
 - 后台刷新、必要等待和队列期间用户状态保持“增强记忆”。
-- 多工具批次完整匹配，raw 和 projected payload 均符合 Provider 协议；
+- 多工具批次完整匹配，raw 和 projected payload 均符合 Provider 协议；projected tool call 的 arguments 与 Pi 权威调用逐项相同，并在真实 Pi 受控工具链中保持 schema 可接受；
 - 未持久化、未截断且预算内的实际 ToolBatch 可以 raw 保留；含 FullOutputCandidate 的内容在 fullOutputRef 发布前不获得本扩展 allow；
 - projected ToolBatch 等待权威 entry 与来源屏障，失败时本扩展返回 block 诊断；
-- ProviderPayloadProfile 预算覆盖上下文窗口、system prompt、tool schema、framing、transport margin、current turn 和实际输出上限；改变模型、API、system 或 tools 始终使旧请求 profile 失效，并只在历史可用空间或 estimator 变化时改变 retentionBudgetIdentity；
+- `TaskContextBudget` 以稳定 JSON UTF-8 字节数作为协议无关 token 上界，覆盖上下文窗口、system prompt、tool schema、framing、transport margin、CurrentTurn 和最大输出预留；改变 Provider、模型、API、system 或 tools 使旧请求预算身份失效，但 Provider/API 名称本身不形成准入清单；只在历史可用空间或 estimator 变化时改变 retentionBudgetIdentity；
+- 代表性大输出模型边界使用 272000 窗口、128000 输出预留、约 46 KiB system 与 28 KiB tools，仍必须留下正消息预算；预算阻断后 `/memory-model` 必须显示 fault 分类和原因；
 - 必要 refresh pending 时缩小任务历史预算，旧 RefreshTarget 不直接完成新请求；旧结果只作为候选 checkpoint 由新预算重算：过大时创建新 retentionBudgetIdentity 目标，新目标检查点可容纳时发送，当前身份的最小合法检查点仍超限时一次性 `context-budget`，不重复刷新；
 - 真实交互 TUI 中安装 footer adapter，任务响应后按 Pi session usage 与 `getContextUsage()` 刷新，显示模型、累计 usage、费用、实际 Git branch 和 `(增强)`，session shutdown 时恢复宿主 footer；RPC/JSON/print 不安装组件。显示值和记忆模型窗口不影响授权，扩展不修改持久化 compaction setting；
 - 相同输入形成相同上下文哈希；
-- session、session file、完整 request route fingerprint、HistoricalRouteKey、MemoryCheckpoint identity、VerifiedActiveDelta hash、ProviderPayloadProfile、完整 Provider 消息序列、规范化内容和运行代际形成唯一采用身份；
+- 完整 request/HistoricalRoute、MemoryCheckpoint identity、VerifiedActiveDelta hash、retentionBudgetIdentity、运行代际、能力 proof ID、`TaskContextBudget`、增强字符串哈希和 nonce 形成唯一构造身份；
 - 分支、迟到结果、替换 session 和 reload 保持隔离；
-- 每个候选任务 Provider API 的 PayloadProofAdapter 先以 controlled payload 核对 raw 与 projected 序列化结果；只有另有 actual Provider 证据的 API 才标记受支持；
+- 受控 Pi 模型以不同任务 API 名称计算同一协议无关预算并构造增强请求；任务 API 没有 payload adapter 不得形成 block；实际 Provider 采用仍需独立证据；
 - model_select 清除 pending 证明和预算缓存，下一请求绑定新模型；
-- 本 handler 可见 malformed payload 记 hookRejected；constructed 输出因更早 handler/取消而未到达本 handler 时记 hookUnobserved，二者 transport 结果都另行保存；
-- 本 handler 前的 payload/proof 修改记 hookRejected；本 handler 后修改不改变 verified 时点事实，但 transport 哈希不一致且 false claim 为零；
+- 本 handler 可见 payload 中 nonce 缺失、改变或重复分别记 `missing | changed | ambiguous`；constructed 输出因更早 handler/取消而未到达本 handler 时记 `unobserved`；这些结果只诊断，不 abort、不锁存故障；
+- 本 handler 前的增强字符串或扩展自有身份修改记异常观察；本 handler 后修改不改变 observed 时点事实，但 transport 哈希不一致且 false claim 为零；
 - 用户文本不能伪造增强证明；nonce 只能在本 handler 时点消费一次；
 - foreign customType 按 Pi Provider 基线处理，无需额外注册；其它扩展及其 handler 顺序保持不变；
 - compaction/tree handler 的返回值、调用顺序、实际 summary Provider 请求和新 entry 分别记录；
@@ -160,7 +161,7 @@ run manifest、每个已执行 attempt 和停止原因都进入 evidence：
 - Pi session 与最终任务产物；
 - 任务 checker 结果；
 - OpenViking 进程和实际模型能力状态；
-- 每个 `context` 授权、请求证明和 Provider 接收事件；
+- 每个 `context` 授权、构造证明、hook 观察和 Provider 接收事件；
 - 工具调用、结果、来源屏障和投影统计；
 - MemoryCheckpoint、VerifiedActiveDelta、refresh task 目标/终态、assembly 和 profile 采用；
 - compaction 与 tree summary 的 Provider 请求及新 entry 计数；
@@ -175,7 +176,7 @@ run manifest、每个已执行 attempt 和停止原因都进入 evidence：
 - 后台 refresh pending 时兼容检查点与 delta 继续推进，只有必要 refresh 形成等待；
 - 工具调用和结果无丢失、错序或跨批次污染；
 - 当前目标、约束、事实和来源保持正确；
-- constructed 输出完整分入 hook verified/rejected/unobserved；verified 的 transport 再分 adopted/changed/unobserved，且无虚假采用声明；
+- constructed 输出完整分入 hook `observed | changed | missing | ambiguous | unobserved`；transport 另由独立证据分账，且无虚假采用声明；
 - 没有本扩展内部失败被记为增强成功；OpaqueProviderSegment 只按 Pi 基线保留；
 - manifest 若声明当前 Pi/扩展组合支持 compaction/tree 抑制，则实际 summary 请求和新 entry 符合声明；不符合时该兼容性声明失败，但扩展不修改其它组件；
 - 已有 summary 文本未进入本扩展 VLM、来源或增强历史。
@@ -188,7 +189,7 @@ evidence 保存 transport 最终哈希或不可观测原因，使验证总则 §
 
 manifest 可以把 `changedAfterHook == 0`、`transportUnobserved == 0`、native summary 请求或新 entry 为零设为某个明确 Pi/扩展组合的兼容性通过条件。该结果只描述被测组合，不形成对任意 Pi 或其它扩展的行为要求。
 
-增强时点证明仍关联 run/request、Provider/模型/API、session、完整 request route fingerprint、HistoricalRouteKey、MemoryCheckpoint、VerifiedActiveDelta、运行代际、构造时能力 proof ID、hook 时点 runtime snapshot、system/tools、完整消息序列、ProviderPayloadProfile/PayloadProofAdapter 和 nonce；稳定 evidence 只保存非敏感身份、哈希与计数。
+构造与 hook 观察证据关联 run/request、Provider/模型/API、完整 request/HistoricalRoute、MemoryCheckpoint、VerifiedActiveDelta、运行代际、能力 proof ID、hook 时点 runtime snapshot、`TaskContextBudget`、增强字符串哈希和 nonce；不保存或解释 Provider 专用 wire。稳定 evidence 只保存非敏感身份、哈希与计数。
 
 ## 9. 故障与恢复矩阵
 
@@ -203,7 +204,6 @@ manifest 可以把 `changedAfterHook == 0`、`transportUnobserved == 0`、native
 - checkpoint 前缀不兼容、必要 refresh profile 超时、后端取消、分支切换和迟到结果；
 - 用户主动取消等待但运行代际仍然健康；
 - ToolBatch 不完整、OpaqueProviderSegment 超预算和普通 context-budget；
-- `context` 决定后、Provider hook 前使受管子进程身份失效、runtime 能力撤销、能力 proof ID 改变或 payload proof 被修改；handler 之后的变化按 §8 记为 transport 兼容性观测，不作为本扩展故障注入。
 
 用户取消只要求本扩展释放等待者且不发布 allow；`ctx.abort()` 与 transport 实际结果分别记录，不锁存服务故障。
 
@@ -217,6 +217,8 @@ manifest 可以把 `changedAfterHook == 0`、`transportUnobserved == 0`、native
 6. 显式修复创建新代际；
 7. 新代际只从当前 branch 重建；
 8. 用户重新提交后使用增强路径完成任务。
+
+另行在 `context` allow 后、Provider hook 前改变受管进程身份、runtime 能力 proof、路线、检查点、delta、任务预算或增强字符串，并注入观察 handler 内部异常；身份/内容变化必须形成 `changed | missing | ambiguous` 诊断，内部异常形成独立 observation error，二者都保持当前运行状态、不调用 `abort()`，并让 transport 结果按 §8 独立记录。
 
 ## 10. 禁用扩展边界
 
@@ -259,7 +261,7 @@ node scripts/check-validation-evidence.mjs
 - 每个 attempt 的 ID、分类、开始结束时间、停止原因和 artifact 索引；
 - task checker 的逐项结果与最终产物哈希；
 - 独立外部服务事件和 blocked 归因；
-- constructed、hookVerified/hookRejected/hookUnobserved、verified transport 分区、其它 transport 结果、falseClaim 和 extensionContinuedAfterBlock 计数；
+- constructed、hook `observed | changed | missing | ambiguous | unobserved`、独立 transport 分区、falseClaim 和 extensionContinuedAfterBlock 计数；
 - compaction/tree handler 返回与实际 summary 请求/entry 结果、Provider 基线/记忆投影违规、跨组件修改、summary 污染、MemoryCheckpoint/refresh/profile 和 API generation 归属；
 - eligible、completed、failed、blocked、inconclusive 和可靠性聚合；
 - 实现文件清单、哈希与最终 `passed`。

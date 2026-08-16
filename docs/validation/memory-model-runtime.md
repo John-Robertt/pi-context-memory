@@ -12,8 +12,8 @@
 
 固定检查包括：
 
-- 配置桥按项目契约接受 Provider 字段、凭据形态和 VLM schema；每个精确配置仍需通过当前受管进程的实际能力探针；
-- 模板说明当前契约接受的必要字段、认证入口和官方路由来源；
+- 配置桥发布锁定 `VLMConfig` 的五个稳定字段和完整 schema 指纹，不枚举 Provider；任意 Provider 字符串交给 `OpenVikingConfig.from_dict()`、`get_vlm_instance()` 和真实能力探针；
+- 模板只说明稳定字段、环境引用和通用示例，不列出 Provider/认证支持清单；
 - 默认路径严格位于隔离 HOME 的 `.pi/pi-context-memory.jsonc`；
 - 缺失用户配置原子独占创建，已有普通文件只收紧权限而不改写内容；当前 POSIX runner 核对 `0600`；
 - 普通注释、字符串 URL 和尾逗号正确解析；
@@ -21,10 +21,10 @@
 - direct key、`$NAME` 与 `${NAME}` 都产生只含固定 `${PCR_OPENVIKING_MEMORY_API_KEY}` 引用的运行配置；不可序列化的编译凭据仅在内存中携带，凭据轮换改变配置指纹；
 - 受控 Launcher 覆盖 `$A → $B → direct key / null` 与不可解析配置的冷启动；带显式凭据的 child 只由 Launcher 注入当前内部变量，不含用户引用、ambient `OPENROUTER_API_KEY` 或无关 Provider sentinel，并用验证凭据哈希确认采用当前值；source-only child 不注入任何环境变量；
 - 实际 OpenRouter 验证通过 `pi auth print-api-key --provider openrouter` 复用 Pi 凭证；任务 Pi observer 观测隔离变量、内部变量和 ambient `OPENROUTER_API_KEY` 均不存在；真实 OpenViking wrapper 观测只有内部变量存在，用户隔离变量与 ambient key 不存在，不记录任何值，并在结束时确认真实 PID 已退出；
-- 必要凭据缺失或引用变量未设置时在停止旧实例前失败；
-- 无 `api_key` 配置不会隐式继承 ambient 认证环境；需要环境变量的原生认证保持未支持，直到具有独立配置契约与 actual 证据；
+- 缺失环境引用或 OpenViking 在配置构造阶段判定的错误在停止旧实例前失败；构造阶段无法证明的认证能力只由真实探针判定；
+- 无 `api_key` 配置不会隐式继承 ambient 认证环境；需要 ambient 变量的原生认证保持不可用，直到具有独立配置边界与 actual 证据；
 - key、OAuth token、云凭据和认证响应不进入状态、日志、evidence 或 Pi session；
-- 每个被配置桥接受的 Provider/模型/API 都生成与该目标绑定的版本化 MemoryRuntimeProfile；用户配置不接受 profile 内部字段或任意请求体透传；
+- 每个规范化 Provider/模型目标都生成与该目标绑定的版本化 MemoryRuntimeProfile；用户配置不接受 profile 内部字段或任意请求体透传；
 - profile 的 thinking、temperature、stream、maxOutput、requestTimeout、maxRetries 与 maxConcurrency 精确进入受审查 OpenViking VLM 配置；实际 task usage 另行绑定目标 Provider/模型；adapterVersion 进入运行代际绑定；
 - 配置不依赖 OpenViking 隐式默认值，不配置 backup Provider/model，retry 保持同一坐标。
 
@@ -89,9 +89,9 @@
 - active 子进程停止立即撤销旧代 requestReady；
 - 新子进程 service ready 但能力未通过时，本扩展不确认增强输出；abort 与 transport 结果分别记录；
 - Launcher 启动、显式恢复和实际记忆操作之外的空闲期，记忆 Provider 请求数保持为零；
-- Provider hook 重新读取 runtime，并在进程代际或能力 proof ID 变化时阻断；不从内部状态推断最终 Provider 零请求；
+- `context` 阶段核对 runtime 并在代际或能力 proof 无效时阻断；Provider hook 的再次读取只形成时点诊断，不从内部状态推断最终 transport；
 - 能力证明只对绑定的子进程、proof ID、配置、MemoryRuntimeProfile 和 adapter 版本有效；proof ID 变化必须定义新代际，即使 child PID 被复用；
-- 新代际不复用旧代 checkpoint、refresh、能力 proof 或请求证明；
+- 新代际不复用旧代 checkpoint、refresh、能力 proof 或构造证明；
 - 新代际只从当前 Pi branch 重建；
 - 运行实例与配置目标不一致时诊断准确但不影响有效旧代。
 

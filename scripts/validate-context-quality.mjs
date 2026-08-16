@@ -18,7 +18,7 @@ import {
   OpenVikingSessionMemory,
 } from "../.pi/extensions/pi-context-memory/session-working-memory.ts";
 import {
-  createProviderPayloadProfile,
+  createTaskContextBudget,
   createRetentionBudgetIdentity,
   WorkingContextOptimizer,
 } from "../.pi/extensions/pi-context-memory/working-context-optimization.ts";
@@ -139,18 +139,16 @@ async function validateActualCheckpointFlow(openViking, runtimeState) {
     taskPollMs: 100,
   });
   try {
-    const profile = createProviderPayloadProfile({
+    const budget = createTaskContextBudget({
       provider: "actual-checkpoint-validation",
       model: "fixed-suite-model",
-      api: "openai-completions",
-      baseUrl: "http://127.0.0.1/actual-checkpoint-validation",
-      compat: null,
+      api: "actual-task-api",
       contextWindowTokens: 32_000,
       maxOutputTokens: 256,
       systemPrompt: "actual checkpoint validation",
       tools: [],
     });
-    const retentionBudgetIdentity = createRetentionBudgetIdentity(profile, sessionMemory.retentionPolicy());
+    const retentionBudgetIdentity = createRetentionBudgetIdentity(budget, sessionMemory.retentionPolicy());
     const sessionId = `quality-checkpoint-${randomUUID()}`;
     const sessionFile = join(openViking.runtimeDir, `${sessionId}.jsonl`);
     const projections = Array.from({ length: 8 }, (_, index) => checkpointSource(
@@ -171,7 +169,7 @@ async function validateActualCheckpointFlow(openViking, runtimeState) {
     const authorizationInput = {
       generation,
       messages: [{ role: "user", content: "continue actual checkpoint validation" }],
-      providerPayloadProfile: profile,
+      taskContextBudget: budget,
       toolSources: { callSources: {}, resultSources: {}, ambiguousToolIds: [] },
       toProviderMessages: (messages) => messages,
       ensureSources: async () => undefined,
@@ -551,9 +549,9 @@ async function runArm(name, model, openViking) {
       usage: assistantEntry.message.usage,
     };
     const observations = readObservations(observationLog);
-    const hookVerified = name === "enhanced"
+    const hookObserved = name === "enhanced"
       ? observations.some((event) => event.type === "before_provider_request"
-        && event.hookOutcome === "verified"
+        && event.hookOutcome === "observed"
         && event.contextAuthorization === "allowed")
       : null;
     const conditionRecords = readObservations(conditionLog);
@@ -565,7 +563,7 @@ async function runArm(name, model, openViking) {
       text,
       textSha256: sha256(text),
       checker: checker(text),
-      hookVerified,
+      hookObserved,
       model: state.model ? `${state.model.provider}/${state.model.id}` : undefined,
       hostCompatibility,
       condition,
@@ -575,7 +573,7 @@ async function runArm(name, model, openViking) {
         workingContextReady: observations.filter((event) => event.type === "checkpoint_refresh_complete"
           && event.outcome === "accepted"
           && event.hasWorkingMemory === true).length,
-        hookVerifiedRequests: observations.filter((event) => event.type === "before_provider_request" && event.hookOutcome === "verified").length,
+        hookObservedRequests: observations.filter((event) => event.type === "before_provider_request" && event.hookOutcome === "observed").length,
         providerPayloads: providerPayloadObservations.length,
         authoritySummaryContaminationHits,
         summaryContaminationHits: providerPayloadObservations.flatMap((record) => record.summaryContaminationHits ?? []),
@@ -619,23 +617,6 @@ const memory = {
   ...parseModel(memoryModel, "memory model"),
   api_key: isolatedOpenRouterCredential.reference,
 };
-const adapterProbe = JSON.parse(commandOutput(
-  pythonCommand,
-  [join(root, "scripts/validate-openviking-vlm-adapters.py"), memory.model],
-));
-const memoryRequestSemantics = memory.provider === suite.models.memoryProvider
-  && memory.model === suite.models.memoryRoute
-  && adapterProbe.passed === true
-  ? {
-    adapter: "LiteLLM OpenRouter",
-    model: adapterProbe.litellmOpenRouterRequest?.model,
-    apiKeyForwarded: adapterProbe.litellmOpenRouterRequest?.apiKeyForwarded,
-    reasoningForwarded: adapterProbe.litellmOpenRouterRequest?.reasoningForwarded,
-    temperatureForwarded: adapterProbe.litellmOpenRouterRequest?.temperatureForwarded,
-    temperature: adapterProbe.litellmOpenRouterRequest?.temperature,
-    timeoutForwarded: adapterProbe.litellmOpenRouterRequest?.timeoutForwarded,
-  }
-  : undefined;
 const runtimeDir = join(artifactRoot, "openviking-runtime");
 const settingsPath = join(artifactRoot, "memory-model.jsonc");
 const baseConfigPath = join(artifactRoot, "openviking-base.json");
@@ -799,7 +780,7 @@ try {
     taskPiCredentialEnvironmentExcluded,
     nativeQuality: nativePassed,
     enhancedQuality: enhancedPassed,
-    enhancedContextHookVerified: enhanced.hookVerified && enhanced.observations.hookVerifiedRequests > 0,
+    enhancedContextHookObserved: enhanced.hookObserved && enhanced.observations.hookObservedRequests > 0,
     realWorkingMemoryReady: enhanced.observations.workingContextReady > 0,
     actualCheckpointRequiredWait: actualCheckpointFlow.requiredWait,
     actualCheckpointRequestParallel: actualCheckpointFlow.requestContinuedBeforeRefresh,
@@ -820,12 +801,6 @@ try {
         === JSON.stringify(["PCR_SUMMARY_CONTAMINATION_COMPACTION"])
       && enhanced.observations.providerPayloads > 0
       && enhanced.observations.summaryContaminationHits.length === 0,
-    controlledMemoryAdapterSemanticsObserved: memoryRequestSemantics?.model === taskModel
-      && memoryRequestSemantics.apiKeyForwarded === true
-      && memoryRequestSemantics.reasoningForwarded === false
-      && memoryRequestSemantics.temperatureForwarded === true
-      && memoryRequestSemantics.temperature === 0
-      && memoryRequestSemantics.timeoutForwarded === true,
     pairedConditions: Boolean(native.condition)
       && JSON.stringify(native.condition) === JSON.stringify(enhanced.condition),
   };
@@ -847,10 +822,6 @@ try {
       credentialSource: "pi-auth",
       configFingerprint: compiledMemoryModel.configFingerprint,
       explicitRequestControls: explicitMemoryRequestControls,
-      controlledAdapterProbe: memoryRequestSemantics,
-      reasoningSemantics: memoryRequestSemantics?.reasoningForwarded === false
-        ? "provider-default"
-        : "adapter-specific",
     },
     fixture: {
       path: "validation/fixtures/context-enhancement-long-task.json",

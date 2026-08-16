@@ -42,22 +42,22 @@ pi
 
 ## 3. 使用
 
-执行 `/memory-model` 查看用户配置路径和当前运行模型。编辑 `~/.pi/pi-context-memory.jsonc`，把 `memoryModel: null` 替换为文件中的 Provider 示例并填写模型、`api_key` 及必要连接字段；`api_key` 可直接填写，也可写 `$NAME` 或 `${NAME}`。保存后执行 `/restart-viking`。恢复为 `null` 并重启会停用 VLM、保留基础来源服务。命令不改写 JSONC，且只向当前项目启动器提交应用请求。普通运行由用户自行选择记忆模型；开发验证从 [`../../validation/suite.json`](../../validation/suite.json) 派生 Pi 任务路线和记忆路线，再通过隔离配置运行，不要求修改用户文件。无需 API key 的来源可以省略该字段；具体认证仍由目标来源负责，是否受支持以对应 actual evidence 为准。
+执行 `/memory-model` 查看用户配置路径和当前运行模型。编辑 `~/.pi/pi-context-memory.jsonc`，把 `memoryModel: null` 替换为通用字段示例，并按锁定 OpenViking 的目标配置填写 `provider`、`model` 及需要的 `api_key`、`api_base`、`api_version`；`api_key` 可直接填写，也可写 `$NAME` 或 `${NAME}`。保存后执行 `/restart-viking`。恢复为 `null` 并重启会停用 VLM、保留基础来源服务。命令不改写 JSONC，且只向当前项目启动器提交应用请求。开发验证从 [`../../validation/suite.json`](../../validation/suite.json) 派生隔离坐标，不要求修改用户文件。
 
-系统只在配置文件缺失时生成当前模板；已有配置由用户维护，字段和 LiteLLM 路由按当前模板及 [`../contracts/openviking-adapter.md`](../contracts/openviking-adapter.md) 校对。需要创建新的未配置模板时，先备份并删除原文件，再执行 `/memory-model`。
+系统只在配置文件缺失时生成当前模板；已有配置由用户维护。需要创建新的未配置模板时，先备份并删除原文件，再执行 `/memory-model`。
+
 ```jsonc
 {
   "memoryModel": {
-    "provider": "litellm",
-    "model": "openrouter/<provider>/<model-id>",
-    "api_key": "${OPENROUTER_API_KEY}"
+    "provider": "<openviking-provider>",
+    "model": "<model-id>",
+    "api_key": "${MEMORY_MODEL_API_KEY}",
+    "api_base": "https://optional.example/v1"
   }
 }
 ```
 
-扩展用户配置只选择 Provider、模型和必要连接字段；thinking、temperature、stream、timeout、retry 等运行策略由版本化 `MemoryRuntimeProfile` 显式写入 OpenViking 公共 VLM 配置，不依赖隐式默认值。LiteLLM 路由表达式及认证字段以目标适配器契约为准。
-
-模板展示当前配置契约接受的 Provider 和云路由字段；该次受管启动的真实能力探针决定精确配置能否用于增强，suite 坐标只限定 stable evidence。
+扩展用户配置只选择锁定 `VLMConfig` schema 中的五个稳定字段；thinking、temperature、stream、timeout、retry 等运行策略由版本化 `MemoryRuntimeProfile` 显式写入 OpenViking VLM 配置。扩展不列出 Provider 或认证支持清单；配置桥让锁定 OpenViking 构造精确目标，受管启动的真实能力探针最终决定它能否用于增强。
 任务模型可以调用：
 
 ```text

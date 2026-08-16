@@ -93,7 +93,7 @@ Pi 是宿主与控制平面，OpenViking 是记忆与上下文能力提供者，
 - 完整路线指纹；
 - 本扩展构造的工作上下文内容证明。
 
-`context` 阶段负责等待并构造精确结果；`before_provider_request` 只在本扩展 handler 被调用的时点复核增强证明。时点后是否被 Pi 或其它扩展改变不属于本扩展可控制事实，最终采用另由 transport 观测；无法观测时不得提升为成功结论。
+`context` 阶段负责等待、构造并核验这些扩展自有事实。`before_provider_request` 只以协议无关标记观察本扩展 handler 时点是否仍能识别该次增强内容；观察缺失、歧义或变化只形成兼容性诊断，不限制任务 Provider API、不锁存记忆故障，也不阻断宿主请求。时点后是否被 Pi 或其它扩展改变不属于本扩展可控制事实，最终采用另由 transport 观测；无法观测时不得提升为成功结论。
 
 ### 4.3 记忆服务于任务，不成为新的事实权威
 
@@ -127,7 +127,7 @@ Pi session 保留完整权威历史。已有 compaction/branch summary 只参与
 
 关键节点按其真实责任边界验证：本地数据结构使用真实文件和 Pi session，宿主集成使用真实 Pi 生命周期，记忆能力使用受管 OpenViking 与已配置的实际记忆 Provider/模型，任务结果和请求采用使用当前实际任务 Provider/模型，成本使用 Provider usage 或账单。替身只证明受控分支和故障语义，不能把模拟成功提升为系统完成证据。
 
-验证 manifest 固定当前 evidence 的 Provider、模型、API、Pi、OpenViking 与 extension composition；坐标或扩展组合变化需要用户决定并重新验证。产品运行时由 OpenViking 配置契约确定可接受字段，每个受管进程上的精确配置必须通过真实记忆能力探针才能进入增强请求；扩展加载顺序保持用户控制。
+验证 manifest 固定当前 evidence 的 Provider、模型、API、Pi、OpenViking 与 extension composition；坐标或扩展组合变化需要用户决定并重新验证，但不形成产品运行白名单。记忆模型配置面只接受产品拥有的最小字段，并要求这些字段存在于项目锁定 OpenViking 的权威 VLM schema；Provider 和模型是否可用只由受管进程的实际能力探针决定。扩展加载顺序保持用户控制。
 
 ## 5. 系统组成
 
@@ -167,7 +167,7 @@ Pi
 - 感知 Pi session、branch、消息、工具、compaction、tree 和模型调用生命周期；
 - 依据 Pi 公开转换契约建立 Provider 基线，并向下游发布具有结构证据的记忆投影；
 - 在 `context` 边界等待并应用当前精确路线的增强上下文，同时保留未被增强覆盖的 Pi Provider 内容；
-- 在自身 `before_provider_request` handler 时点核验增强证明，最终 transport 采用只作外部观测结论；
+- 在自身 `before_provider_request` handler 时点以协议无关标记观察增强内容，异常只形成兼容性诊断，最终 transport 采用只作外部观测结论；
 - 通过公开 hook 请求取消 Pi compaction 和无摘要 tree，并记录实际宿主结果；
 - 向任务模型提供统一召回入口；
 - 展示初始化、正常运行和故障状态，并把 Pi 的任务模型上下文用量标识为增强路径观测；
@@ -249,7 +249,7 @@ Pi
 - 根据预算保留原批次或生成来源可恢复的有界投影；
 - 按结构字段保留执行状态、isError/cancelled/truncated/stopReason、固定 head/tail、哈希和来源入口；
 - 为召回结果提供受控位置；
-- 生成可在本扩展 Provider handler 时点核验的增强证明；
+- 生成绑定扩展自有运行、路线、来源、预算和内容事实的增强证明与协议无关观察标记；
 - 对空结果、协议不完整和预算超限返回明确失败；对不透明 Provider 内容先原样保留，无法在预算内保持时报告自身表示能力边界。
 
 **责任分工**
@@ -365,8 +365,8 @@ Pi compaction/tree 事件
 架构是否有效由以下结果判断：
 
 1. 必要外部服务可用时，声明范围内的复杂长任务全部有效完成；
-2. 每个构造输出绑定当前代际与精确路线，并在 hook 准确分为 verified/rejected/unobserved；
-3. transport 最终采用被独立分类，不把 changed/unobserved 或宿主不兼容误报为增强成功；
+2. 每个构造输出绑定当前代际、精确路线、来源、预算与内容证明；hook 准确记录 observed/changed/missing/no-constructed-output，异常不阻断或锁存记忆运行；
+3. transport 最终采用被独立分类，不把 hook observed 或无法观察误报为 Provider 采用；
 4. Provider 基线遵循 Pi 转换；记忆投影仅用结构证据，Pi 可见 foreign/opaque 内容不因本扩展未知而删除；
 5. 多个快速、并行和大输出工具批次保持协议完整、输入有界和来源可恢复；
 6. session 与 branch 身份能够隔离冲突路线和迟到结果；

@@ -8,7 +8,7 @@ OpenViking 原生配置、生成配置格式和进程通信由系统设计管理
 
 ## 2. 目标与边界
 
-系统在 `~/.pi/pi-context-memory.jsonc` 维护用户级记忆模型配置。文件不存在时创建合法模板，并以注释列出当前配置契约接受的 Provider、连接字段和认证入口；每个精确配置由受管进程的实际能力探针决定能否授权增强。已有文件由用户拥有，系统不自动覆盖；直接填写 key 时该文件包含实际值，环境引用只保存变量名。
+系统在 `~/.pi/pi-context-memory.jsonc` 维护用户级记忆模型配置。文件不存在时创建合法模板，并以通用示例说明 `provider`、`model`、`api_key`、`api_base` 和 `api_version`；模板不列出 Provider 支持清单。每个精确配置由锁定 OpenViking 的 schema、配置构造和受管进程实际能力探针共同判定。已有文件由用户拥有，系统不自动覆盖；直接填写 key 时该文件包含实际值，环境引用只保存变量名。
 
 记忆模型设置独立于 Pi `/model` 的任务模型设置。修改或应用记忆模型配置不改变任务模型、Pi session 或当前 branch，也不产生任务模型请求。
 
@@ -28,11 +28,10 @@ OpenViking 原生配置、生成配置格式和进程通信由系统设计管理
 - 配置与运行实例是否一致；
 - 服务 readiness；
 - 记忆模型实际能力证明及其绑定代际；
-- 当前故障错误码和恢复入口。
+- 当前运行故障、最近一次扩展授权阻断原因和恢复入口。
 
 命令只检查和展示，不重写用户 JSONC。语法错误报告文件与行列，语义错误报告对应字段；诊断保持脱敏。
 
-`provider: "litellm"` 表示多来源路由层，`model` 使用其标准来源路由。具体模型前缀、认证和连接字段以 LiteLLM 与目标来源的有效契约为准。
 
 ## 4. `/restart-viking`
 
@@ -78,11 +77,11 @@ OpenViking 原生配置、生成配置格式和进程通信由系统设计管理
 
 ## 7. 完成条件
 
-- 用户只配置记忆模型 Provider、模型、可选 `api_key` 和该来源必要连接字段；
+- 用户只配置记忆模型 `provider`、`model`、可选 `api_key`、`api_base` 和 `api_version`；
 - 环境引用的实际值不进入用户配置或生成配置；直接 key 只存在于用户自行填写的配置；
 - 界面、状态、诊断、日志、evidence 和 Pi session 不回显凭据；
 - `/memory-model` 准确区分用户配置、内部运行 profile、运行实例、服务 readiness 和模型能力；
-- 配置兼容范围跟随受审查的 OpenViking schema；每个实际目标只有在当前受管进程中完成 task usage 与 Working Memory 能力探针后才授权，生成配置不含 Provider/model fallback；
+- 稳定字段来自锁定 OpenViking VLM schema，Provider 字符串不由扩展枚举；每个实际目标只有在当前受管进程中完成 task usage 与 Working Memory 能力探针后才授权，生成配置不含 Provider/model fallback；
 - `/restart-viking` 只控制项目启动器拥有的实例；
 - 新运行代际只有在与当前受管进程、proof ID 和配置一致的实际记忆模型能力证明存在时确认增强输出；
 - 配置、服务或能力故障时，本扩展不确认增强输出；`ctx.abort()` 和 transport 结果分别观测；

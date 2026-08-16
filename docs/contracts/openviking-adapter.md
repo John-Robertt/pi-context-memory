@@ -101,10 +101,11 @@ Working Memory overview 是派生文本，不以固定语言、标题、数量�
 
 ## 8. 配置适配
 
-用户 JSONC 是扩展拥有的稳定最小配置面，只包含 Provider、模型、`api_key` 和必要连接字段。[`../../config/openviking-adapter-contract.json`](../../config/openviking-adapter-contract.json) 唯一定义配置桥接受的 Provider 字段、凭据规则、VLM schema 指纹和适配器类别；配置桥据此为精确目标生成 `MemoryRuntimeProfile`，当前受管进程的生产探针决定实际请求能力。
+用户 JSONC 是扩展拥有的稳定最小配置面，只包含 `provider`、`model`、`api_key`、`api_base` 和 `api_version`。配置桥从锁定 OpenViking 的 `VLMConfig.model_json_schema()` 读取这五个字段的权威 schema 并绑定完整 schema 指纹；扩展不维护 Provider 枚举、Provider 专用字段表或凭据规则。上游缺少任一稳定字段或用户传入该配置面之外的字段时停止；完整 schema 指纹进入 evidence，变化后旧验证失效并需重新运行。
 
-`api_key` 普通字符串作为直接凭据；完整 `$NAME` 或 `${NAME}` 只在预检编译边界从 Launcher 环境解析。要求凭据的来源缺失字段或引用变量未设置时，在停止旧实例前失败。配置桥只生成固定 `${PCR_OPENVIKING_MEMORY_API_KEY}` 引用；实际值由 Launcher 保留在内存，并仅在 spawn 时赋给受管 OpenViking 子进程的同名内部变量。Launcher 不复制其它宿主环境；需要 ambient 变量的原生认证必须先增加独立受审查接口，不能从当前无 key 配置隐式获得。OpenViking 只负责按其配置加载契约展开固定引用，不解析用户配置语义。
-实际凭据值只进入用户直接填写的配置、预检编译过程内存，以及受管 OpenViking 子进程的固定内部环境变量；使用环境引用时，生成配置和用户配置均不保存实际值。本系统不把记忆凭据注入任务 Pi；受管 OpenViking 不继承用户引用变量、ambient Provider key 或其它宿主环境，spawn 时只注入当前编译结果携带的内部值。凭据值不进入运行状态、诊断、日志、evidence 或 Pi session。Python 配置桥、TypeScript 用户配置校验和适配器 runner 都消费同一受审查契约；OpenViking VLM schema 指纹不匹配时停止配置适配。上游新增 Provider 需要先把其公开字段和凭据边界纳入该契约；已有契约项仍由每次真实能力探针判断当前精确配置是否可用。
+`api_key` 普通字符串作为直接凭据；完整 `$NAME` 或 `${NAME}` 只在预检编译边界从 Launcher 环境解析，缺失引用在停止旧实例前失败。配置桥在生成配置中只保存固定 `${PCR_OPENVIKING_MEMORY_API_KEY}` 引用；实际值由 Launcher 保留在内存，并仅在 spawn 时赋给受管 OpenViking 子进程的同名内部变量。Launcher 不复制其它宿主环境；需要 ambient 变量的原生认证必须先增加独立受审查接口，不能从当前无 key 配置隐式获得。
+
+配置桥用 `OpenVikingConfig.from_dict()` 和目标 `VLMConfig.get_vlm_instance()` 让锁定 OpenViking 自己解释 Provider 和连接字段。OpenViking 在构造阶段能判定的错误在停止旧实例前返回；构造成功不等于请求能力，只有受管进程的真实生产协议探针通过才发布能力证明。实际凭据值不进入运行状态、诊断、日志、evidence 或 Pi session；本系统不把记忆凭据注入任务 Pi。
 
 `MemoryRuntimeProfile` 的字段与责任由 [`../system/memory-model-runtime.md`](../system/memory-model-runtime.md) 唯一定义；本契约负责把字段映射到 OpenViking 配置或客户端运行策略。运行配置不得依赖未受审查的隐式默认值，不配置 backup Provider/model，也不接受用户任意请求体透传。
 
@@ -119,7 +120,7 @@ Working Memory overview 是派生文本，不以固定语言、标题、数量�
 - 记忆模型能力证明与 active 配置、profile、adapter、子进程一致；
 - 当前业务 Session 操作继续满足本契约。
 
-配置发现、服务启动和初始能力探针可以在任务请求之前执行，业务 refresh 只在当前消费者需要时运行。每次 `context` 授权和 Provider hook 都重新读取并核对当前代际能力 proof；进程、绑定或 proof 不匹配时直接阻断。兼容 MemoryCheckpoint 与 VerifiedActiveDelta 无法形成可信有界历史时，另行等待对应的必要 refresh。
+配置发现、服务启动和初始能力探针可以在任务请求之前执行，业务 refresh 只在当前消费者需要时运行。每次 `context` 授权都重新读取并核对当前代际能力 proof；进程、绑定或 proof 不匹配时直接阻断。Provider hook 再读取相同事实用于时点诊断，但观察异常不阻断已经进入 Pi transport 的请求。兼容 MemoryCheckpoint 与 VerifiedActiveDelta 无法形成可信有界历史时，另行等待对应的必要 refresh。
 
 当前业务操作使能力证明失效时，协调器锁存故障。新代际通过显式重启或重新验证建立。
 
@@ -127,8 +128,9 @@ Working Memory overview 是派生文本，不以固定语言、标题、数量�
 
 OpenViking 适配变更至少验证：
 
-- 配置桥接受的目标生成精确绑定的 MemoryRuntimeProfile，字段进入受审查配置，且无 backup Provider/model；当前受管进程只有在真实能力探针通过后才授权；
-- 上游新增未知 Provider 需更新公开字段/凭据契约，默认值变化不绕过显式 profile；
+- 用户稳定配置字段来自锁定 `VLMConfig` schema，完整 schema 指纹变化会使 evidence stale；扩展不维护 Provider 枚举或 Provider 专用凭据规则；
+- 任意 Provider 字符串均交给 `OpenVikingConfig.from_dict()`、`get_vlm_instance()` 和真实能力探针判定，构造成功本身不授权；
+- 配置桥生成精确绑定的 `MemoryRuntimeProfile`，字段进入受审查配置且无 backup Provider/model；当前受管进程只有在真实能力探针通过后才授权；
 - 可选诊断字段缺失不影响经内容读回证明的来源写入；
 - Working Memory 标题、语言和可选 token 字段变化能够归一化；
 - malformed、跨路线或通用失败结果形成明确错误；

@@ -59,7 +59,6 @@ const DEFINITIONS = {
       ".pi/extensions/pi-context-memory/index.ts",
       ".pi/extensions/pi-context-memory/openviking-protocol.ts",
       ".pi/extensions/pi-context-memory/pi-session-protocol.ts",
-      ".pi/extensions/pi-context-memory/provider-payload-proof.ts",
       ".pi/extensions/pi-context-memory/memory-model-configuration.ts",
       ".pi/extensions/pi-context-memory/memory-runtime-capability.ts",
       ".pi/extensions/pi-context-memory/memory-runtime-profile.ts",
@@ -121,7 +120,6 @@ const DEFINITIONS = {
       ".pi/extensions/pi-context-memory/index.ts",
       ".pi/extensions/pi-context-memory/openviking-protocol.ts",
       ".pi/extensions/pi-context-memory/pi-session-protocol.ts",
-      ".pi/extensions/pi-context-memory/provider-payload-proof.ts",
       ".pi/extensions/pi-context-memory/memory-model-configuration.ts",
       ".pi/extensions/pi-context-memory/memory-runtime-capability.ts",
       ".pi/extensions/pi-context-memory/memory-runtime-profile.ts",
@@ -155,6 +153,7 @@ const DEFINITIONS = {
       "compactionBoundary",
       "compactionLifecycle",
       "contextBlockStopsExtension",
+      "authorizationFaultReported",
       "contextBounded",
       "currentRouteIdentity",
       "currentTurnDuplicateIdsBlocked",
@@ -164,6 +163,7 @@ const DEFINITIONS = {
       "currentTurnPreserved",
       "currentTurnProjected",
       "currentTurnProjectionProtocolComplete",
+      "currentTurnProjectionArgumentsPreserved",
       "currentTurnProjectionSourcesRecoverable",
       "currentTurnRawPreserved",
       "currentTurnSourceBarrierBlocks",
@@ -171,7 +171,7 @@ const DEFINITIONS = {
       "footerAdapterLifecycle",
       "hookOutcomeAccounting",
       "hookTransportStateConsistent",
-      "hookVerifiedAtExtension",
+      "hookObservedAtExtension",
       "inFlightCommitShutdownCleaned",
       "inFlightContextWaitAdopted",
       "inFlightReadyWaitBounded",
@@ -190,23 +190,24 @@ const DEFINITIONS = {
       "pendingTokensPreservedAcrossCommit",
       "piCurrentTurnProjected",
       "piCurrentTurnProtocolComplete",
+      "piCurrentTurnArgumentsPreserved",
       "piCurrentTurnRaw",
       "piCurrentTurnSourcesRecoverable",
       "piCurrentTurnTransportAdopted",
       "piModifiedCurrentTurnSourceBlocked",
       "piProtocolUnknownDropped",
-      "piProviderPayloadProfileMutationBlocked",
-      "providerPayloadCurrentTurn",
-      "providerPayloadProfileIdentity",
-      "providerPayloadWireProfileBound",
-      "proofContentMutationRejected",
-      "proofMessageSequenceBound",
-      "proofToolSequenceBound",
+      "piProviderMutationDoesNotBlock",
+      "piHookFailureDoesNotBlock",
+      "taskContextCurrentTurn",
+      "taskContextBudgetIdentity",
+      "largeOutputTaskBudgetFits",
+      "taskApiIndependent",
+      "enhancedContentObservation",
       "refreshTargetBudgetIsolation",
       "refreshWaitCancellationIsolated",
       "requestRouteMutationRejected",
       "routesPrepareDuringWorkingMemory",
-      "runtimeRevocationAtHookBlocked",
+      "runtimeRevocationAtHookDiagnosed",
       "sessionIsolation",
       "sessionReplacementLifecycle",
       "sharedFixtureLoaded",
@@ -228,7 +229,6 @@ const DEFINITIONS = {
       ".pi/extensions/pi-context-memory/pi-footer-adapter.ts",
       ".pi/extensions/pi-context-memory/openviking-protocol.ts",
       ".pi/extensions/pi-context-memory/pi-session-protocol.ts",
-      ".pi/extensions/pi-context-memory/provider-payload-proof.ts",
       ".pi/extensions/pi-context-memory/long-term-memory.ts",
       ".pi/extensions/pi-context-memory/memory-model-configuration.ts",
       ".pi/extensions/pi-context-memory/memory-runtime-capability.ts",
@@ -257,9 +257,8 @@ const DEFINITIONS = {
       "actualHostCompatibility",
       "credentialRoutedThroughInternalEnvironment",
       "taskPiCredentialEnvironmentExcluded",
-      "enhancedContextHookVerified",
+      "enhancedContextHookObserved",
       "enhancedQuality",
-      "controlledMemoryAdapterSemanticsObserved",
       "memoryUsageAttributed",
       "openVikingCredentialEnvironmentIsolated",
       "openVikingChildCleaned",
@@ -274,7 +273,6 @@ const DEFINITIONS = {
       ".pi/extensions/pi-context-memory/pi-footer-adapter.ts",
       ".pi/extensions/pi-context-memory/openviking-protocol.ts",
       ".pi/extensions/pi-context-memory/pi-session-protocol.ts",
-      ".pi/extensions/pi-context-memory/provider-payload-proof.ts",
       ".pi/extensions/pi-context-memory/long-term-memory.ts",
       ".pi/extensions/pi-context-memory/memory-model-configuration.ts",
       ".pi/extensions/pi-context-memory/memory-runtime-capability.ts",
@@ -309,11 +307,10 @@ const DEFINITIONS = {
       "actualProfileApplied",
       "actualProviderUsageBound",
       "actualTaskUsage",
-      "adapterProtocolsCovered",
       "apiKeyFormsResolved",
-      "apiKeysBoundToSettings",
-      "automaticConfigErrorReported",
-      "azureFieldRejected",
+      "desiredProviderNotPrejudged",
+      "openVikingAcceptsArbitraryProvider",
+      "missingCredentialRejectedByOpenViking",
       "branchUnchanged",
       "capabilityFailureBlocks",
       "capabilityErrorsRedacted",
@@ -325,7 +322,7 @@ const DEFINITIONS = {
       "childCredentialOutputRedacted",
       "codexNativeCredentialConfigurationPreserved",
       "commandNoProviderRequests",
-      "commentedTemplateCreated",
+      "genericTemplateCreated",
       "concurrentLauncherRejected",
       "concurrentRestartSerialized",
       "configCommandReadOnly",
@@ -345,7 +342,6 @@ const DEFINITIONS = {
       "explicitCapabilityRecovery",
       "failedProbeCleanupReported",
       "existingSymlinksPreserved",
-      "generatedConfigParsed",
       "inconsistentCapabilityUsageRejected",
       "interruptedControlOperationCompletes",
       "invalidColdStartCredentialExcluded",
@@ -354,15 +350,10 @@ const DEFINITIONS = {
       "jsoncConfigurationParsed",
       "launcherLogsExcludeCredentials",
       "launcherOwnershipProtected",
-      "litellmCatalogDocumented",
-      "litellmCatalogObserved",
       "memoryStatusVocabularyCurrent",
-      "missingCredentialRejected",
       "missingReferencedCredentialRejected",
       "missingLauncherReported",
       "nullConfigurationStateReported",
-      "openRouterApiKeyRequired",
-      "openRouterLauncherCredentialRequired",
       "operationDeadlineCoversFailureCleanup",
       "operationDeadlinePublished",
       "orderedRestart",
@@ -370,7 +361,6 @@ const DEFINITIONS = {
       "piSessionCredentialsExcluded",
       "preflightPreservesInstance",
       "runtimeProfileApplied",
-      "reviewedConfigurationAdapterSurface",
       "readinessTimeoutPublished",
       "referencedCredentialsRemainExcludedWithDirectKey",
       "removedReferenceRemainsExcluded",
@@ -386,8 +376,6 @@ const DEFINITIONS = {
       "targetPortPreflightPreservesInstance",
       "taskModelUnchanged",
       "unrelatedReadyNotReconciled",
-      "unknownFieldRejected",
-      "unreviewedProviderRejected",
       "unknownPortPreserved",
       "userConfigPath",
       "wrongLaunchRejected",
@@ -396,7 +384,6 @@ const DEFINITIONS = {
       ".pi/extensions/pi-context-memory/index.ts",
       ".pi/extensions/pi-context-memory/openviking-protocol.ts",
       ".pi/extensions/pi-context-memory/pi-session-protocol.ts",
-      ".pi/extensions/pi-context-memory/provider-payload-proof.ts",
       ".pi/extensions/pi-context-memory/session-memory-coordination.ts",
       ".pi/extensions/pi-context-memory/session-working-memory.ts",
       ".pi/extensions/pi-context-memory/working-context-optimization.ts",
@@ -408,7 +395,6 @@ const DEFINITIONS = {
       "scripts/check-validation-evidence.mjs",
       "scripts/install-dependencies.mjs",
       "scripts/openviking-config.py",
-      "scripts/validate-openviking-vlm-adapters.py",
       "scripts/start-openviking.mjs",
       "scripts/validate-memory-model-runtime.mjs",
       "scripts/validation-evidence.mjs",
@@ -419,7 +405,6 @@ const DEFINITIONS = {
 };
 
 const COMMON_IMPLEMENTATION_FILES = [
-  "config/openviking-adapter-contract.json",
   "config/openviking.json",
   "scripts/check-maintenance-sources.mjs",
 ];
@@ -456,17 +441,6 @@ function sha256(value) {
   return createHash("sha256").update(value).digest("hex");
 }
 
-function canonicalize(value) {
-  if (Array.isArray(value)) return value.map(canonicalize);
-  if (!value || typeof value !== "object") return value;
-  return Object.fromEntries(
-    Object.keys(value).sort().map((key) => [key, canonicalize(value[key])]),
-  );
-}
-
-function stableJsonSha256(value) {
-  return sha256(JSON.stringify(canonicalize(value)));
-}
 
 function versionAtLeast(actual, minimum) {
   const parse = (value) => {
@@ -615,13 +589,6 @@ export function stableEvidenceMismatches(root, key, evidence) {
     && evidence?.openVikingVersion !== expectedOpenVikingVersion) {
     mismatches.push("stable evidence OpenViking coordinate differs from pyproject.toml");
   }
-  if (key === "memory-model-runtime") {
-    const adapterContract = JSON.parse(readFileSync(resolve(root, "config/openviking-adapter-contract.json"), "utf8"));
-    if (evidence?.vlmSchemaSha256 !== adapterContract.vlmSchemaSha256
-      || evidence?.adapterContractSha256 !== stableJsonSha256(adapterContract)) {
-      mismatches.push("memory adapter contract evidence differs from the current reviewed contract");
-    }
-  }
   if (evidence?.schemaVersion !== STABLE_EVIDENCE_SCHEMA_VERSION) mismatches.push("stable evidence schema is unsupported");
   if (evidence?.generatedBy !== definition.generatedBy) mismatches.push("stable evidence generator differs");
   if (evidence?.scope !== definition.expectedScope) mismatches.push("stable evidence scope differs");
@@ -708,18 +675,11 @@ export function stableEvidenceMismatches(root, key, evidence) {
       mismatches.push("quality models differ from validation/suite.json");
     }
     if (typeof evidence?.memoryModelCondition?.configFingerprint !== "string"
+      || evidence.memoryModelCondition.credentialSource !== "pi-auth"
       || JSON.stringify(evidence?.memoryModelCondition?.explicitRequestControls)
         !== JSON.stringify(["thinking", "temperature", "max_retries", "stream"])
-      || evidence.models?.memory !== models.memory
-      || evidence.memoryModelCondition.controlledAdapterProbe?.adapter !== "LiteLLM OpenRouter"
-      || evidence.memoryModelCondition.controlledAdapterProbe?.model !== models.task
-      || evidence.memoryModelCondition.controlledAdapterProbe?.apiKeyForwarded !== true
-      || evidence.memoryModelCondition.controlledAdapterProbe?.reasoningForwarded !== false
-      || evidence.memoryModelCondition.controlledAdapterProbe?.temperatureForwarded !== true
-      || evidence.memoryModelCondition.controlledAdapterProbe?.temperature !== 0
-      || evidence.memoryModelCondition.controlledAdapterProbe?.timeoutForwarded !== true
-      || evidence.memoryModelCondition.reasoningSemantics !== "provider-default") {
-      mismatches.push("controlled memory adapter evidence is missing");
+      || evidence.models?.memory !== models.memory) {
+      mismatches.push("memory model condition evidence is missing");
     }
     const tokenRows = evidence?.openVikingUsage?.tokenRows;
     const memoryTokenRows = Array.isArray(tokenRows)
@@ -749,7 +709,7 @@ export function stableEvidenceMismatches(root, key, evidence) {
       mismatches.push("quality arm conditions differ");
     }
     if (!(enhanced?.observations?.workingContextReady > 0)
-      || !(enhanced?.observations?.hookVerifiedRequests > 0)) {
+      || !(enhanced?.observations?.hookObservedRequests > 0)) {
       mismatches.push("enhanced quality adoption evidence is missing");
     }
     const hostCompatibility = enhanced?.hostCompatibility;

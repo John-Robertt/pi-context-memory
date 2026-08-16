@@ -19,7 +19,7 @@
 - Pi Provider 基线中的 prompt 后 assistant、ToolBatch、bash、custom、召回内容，以及尚未被检查点覆盖的 OpaqueProviderSegment；
 - 每项来源的可恢复证明；
 - 当前 system prompt、active tool schema 及其规范化哈希；
-- Pi 集成提供的 ProviderPayloadProfile（任务 Provider、模型、API、上下文窗口、输出上限、系统与工具开销、传输余量、适配和估算版本）；
+- Pi 集成提供的 `TaskContextBudget`（任务 Provider、模型和 API 身份，模型上下文窗口、输出预留、system/tool 固定开销、framing/transport 余量与估算版本）；
 - 长时记忆提供的检查点 retention 输入边界与预算版本。
 
 输出包含：
@@ -90,11 +90,10 @@ CurrentTurn
 
 ### 5.2 投影不变量
 
-投影以完整批次为单位替换 tool call 和 tool result，由本地确定性算法生成，不调用任务模型或记忆模型。表示必须包含：
+投影以完整批次为单位，只缩减 tool result 与 assistant 的说明正文；结构化 tool call 必须逐项保留 Pi Provider 基线中的工具名称、调用 ID 和原始 arguments，使 active tool schema 仍可验证。投影由本地确定性算法生成，不调用任务模型或记忆模型。表示必须包含：
 
-- 批次顺序、工具名称和调用 ID；
+- 批次顺序、工具名称、调用 ID 和原始 arguments；
 - assistant task-content、完成状态、大小、哈希和有界 head/tail；
-- 参数规范化 JSON 的大小、哈希与固定上限 head/tail；
 - 每个结果的成功、错误、取消和截断状态；
 - 已支持 content block 的类型、大小、哈希与固定上限 head/tail；
 - 稳定 fullOutputRef、Pi entry ID、来源内容哈希或 `recall_session` 展开入口；不得包含 FullOutputCandidate 或本机路径；
@@ -110,23 +109,27 @@ projected ToolBatch 只能引用长时记忆已确认可恢复的来源；任何
 
 ## 6. 预算与选择顺序
 
-预算只由 `ProviderPayloadProfile` 与本次规范化输入计算：
+预算只由 `TaskContextBudget` 与本次规范化输入计算：
 
 ```text
-inputBudget = contextWindow - outputReserve - transportMargin
-enhancedBudget = inputBudget - systemPromptCost - activeToolSchemaCost - providerFramingCost
+fixedTokenUpperBound = maxOutputTokens
+                     + stableJsonUtf8Bytes(systemPrompt)
+                     + stableJsonUtf8Bytes(activeTools)
+                     + framingReserve
+                     + transportMargin
+messageTokenBudget = contextWindowTokens - fixedTokenUpperBound
 ```
 
-`outputReserve` 取受支持 Provider API 实际请求的输出上限；其它扣减使用 profile 的版本化保守估算。当前 adapter 先生成 Provider message 序列，再以规范化 JSON 的 UTF-8 字节数两倍作为消息上界；tool schema 按完整 API wrapper 的 UTF-8 字节上界计算，system prompt 另按 UTF-8 字节和固定 framing/transport 余量扣减。handler 要求实际 wire 首项是唯一的 `system` 或 `developer` instruction，内容哈希与 profile 相同，并同时核对 tools 和输出字段。profile 无法限界、adapter/base URL/compat 变化、instruction/tools 变化或结果超过预算时返回失败。Pi footer 百分比和记忆模型上下文窗口不参与授权计算。
+任务 Provider、模型和 API 只参与预算身份，不参与名称准入或 wire 解析。有效 UTF-8 JSON 的每个 token 至少承载一个字节，因此稳定 JSON 字节数本身就是协议无关的 token 保守上界；system、tools 和消息序列均按该上界计算，另保留 framing/transport 余量，不再重复乘以安全系数。结构必需输入超过 `messageTokenBudget` 时失败。任务模型没有发布正整数窗口/输出上限、固定开销已经耗尽窗口或消息结果超限时返回预算失败。Pi footer 百分比、记忆模型窗口和最终 transport token 计数不参与授权计算。
 
-模块同时从会改变 checkpoint retention/output 边界的预算事实生成 `retentionBudgetIdentity`：长时记忆 retention 输入边界、预算版本、任务模型 context window/output reserve、system/tool 规范化成本、Provider framing/transport margin 和 estimator 版本。它不包含本次 CurrentTurn、system/tool 正文哈希或其它与历史空间无关字段；相同 identity 表示可共享同一检查点生成边界，不表示最终请求证明相同。
+模块同时从会改变 checkpoint retention/output 边界的预算事实生成 `retentionBudgetIdentity`：长时记忆 retention 输入边界、预算版本、任务模型 context window/output reserve、system/tool 规范化成本、framing/transport margin 和 estimator 版本。它不包含本次 CurrentTurn、system/tool 正文哈希或其它与历史空间无关字段；相同 identity 表示可共享同一检查点生成边界，不表示最终构造证明相同。
 
 模块按以下优先级选择内容：
 
 1. 当前 user prompt；
 2. 保持 Provider 合法所需的 CurrentTurn 结构；
 3. 不能被检查点覆盖的 OpaqueProviderSegment；
-4. 当前 MemoryCheckpoint 中经适配器限界的派生记忆；
+4. 当前 MemoryCheckpoint 中在剩余消息预算内的派生记忆；
 5. VerifiedActiveDelta；
 6. 已采用召回结果和补充背景。
 
@@ -137,17 +140,12 @@ enhancedBudget = inputBudget - systemPromptCost - activeToolSchemaCost - provide
 每个成功输出生成一次性证明，至少绑定：
 
 - 运行代际；
-- session ID 和 session file；
-- 完整 request route fingerprint、HistoricalRoute fingerprint、MemoryCheckpoint identity 与 VerifiedActiveDelta hash；
-- 由 PayloadProofAdapter 绑定的完整 Provider 消息序列，其中包含 current prompt、后续消息与顺序；
-- system prompt 与 active tool schema 哈希；
-- 上下文消息内容哈希；
-- 请求 nonce；
-- 来源集合；
-- 预算版本；
-- ProviderPayloadProfile 身份（任务 Provider、模型、API、base URL/compat 与适配版本）。
+- 完整 request route fingerprint 与 HistoricalRoute fingerprint，其中路线身份包含当前 session；
+- MemoryCheckpoint identity、VerifiedActiveDelta hash、retentionBudgetIdentity 与 OpenViking Session ID；
+- 最终增强字符串内容哈希和一次性 nonce；
+- `TaskContextBudget` 身份，间接绑定任务 Provider、模型、API、system、tools、窗口、输出预留和估算版本。
 
-证明随隐藏增强消息进入 Provider 序列化结果，并供 Pi 集成在自己的 `before_provider_request` handler 时点核验。该证明不声明控制后续扩展或 Provider transport；用户文本不能伪造。
+nonce 随隐藏增强字符串进入 Pi Provider 基线，其余证明只保留在扩展内存中。Pi 集成可在自己的 `before_provider_request` handler 时点观察该字符串并重新计算扩展自有身份；这不解释任务 API wire，也不声明控制后续扩展或 Provider transport。
 
 ## 8. 错误语义
 
@@ -177,10 +175,10 @@ enhancedBudget = inputBudget - systemPromptCost - activeToolSchemaCost - provide
 - raw/projected 批次的 Provider 协议合法性；
 - isError/cancelled/truncated/stopReason 等结构状态、固定 head/tail 和负向哨兵的来源恢复；不引入正文分类器；
 - 相同输入的确定性内容与哈希；
-- ProviderPayloadProfile 对 system prompt、tool schema、framing、传输余量和输出上限的共同预算；footer 与记忆模型窗口不影响结果；
+- `TaskContextBudget` 对 system prompt、tool schema、framing、传输余量和输出上限的共同预算；任务 API 名称、footer 与记忆模型窗口不影响准入；
 - 任务历史预算缩小时，过大的旧检查点触发当前 retentionBudgetIdentity 刷新；该身份的最小合法检查点仍超限时终局失败且不重复刷新；
 - 不透明内容预算内原样保留，只有必须替换却无法表示时返回本扩展能力诊断；来源失败和预算不足保持独立错误；
-- 本扩展 handler 时点的 payload 增强证明与构造结果一致；
+- 本扩展 handler 时点对构造字符串、运行代际、路线、检查点、delta 和任务预算的观察与构造结果一致，异常只诊断；
 - 复杂长任务 checker 能依据投影继续正确行动。
 
 当前实现与设计之间的状态由 [`../DEVELOPMENT.md`](../DEVELOPMENT.md) 维护。

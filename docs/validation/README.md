@@ -35,7 +35,7 @@
 | 来源归档 | 真实 Pi `SessionManager`、项目内真实文件系统、实际完整工具输出和读回哈希 | 注入写入、损坏和期限失败 |
 | 来源索引与召回 | 真实受管 OpenViking、实际 embedding/索引、当前 branch URI 和 Pi message 展开 | 构造 malformed envelope、空结果和后端错误 |
 | 记忆模型运行时 | 真实受管 OpenViking 以固定 MemoryRuntimeProfile 调用已配置的实际记忆 Provider/模型，完成隔离探针、accepted task、来源核验 assembly、usage 归属、能力撤销和显式新代恢复；最终配置与 task 证明 profile 字段生效 | 穷举协议分支、绑定不匹配和故障锁存 |
-| Pi 集成与增强采用 | 真实 Pi 生命周期；采集 context、hook verified/rejected/unobserved、handler 顺序和 transport 结果 | 前后 handler 篡改、重复 nonce 和本扩展故障 |
+| Pi 集成与增强采用 | 真实 Pi 生命周期；采集 context、hook `observed | changed | missing | ambiguous | unobserved`、handler 顺序和独立 transport 结果 | 前后 handler 改变、重复/缺失 nonce 和本扩展故障 |
 | CurrentTurn 与 ToolBatch | 真实 Pi 工具调用、消息持久化、`convertToLlm` Provider 基线、结构化记忆投影、actual 大输出和任务后续行动 | opaque block、边界尺寸、私有 metadata 与 locator 哨兵 |
 | 复杂长任务 | 当前实际任务 Provider/模型、实际记忆 Provider/模型、受管 OpenViking、真实工具和独立任务 checker | 不允许替代 |
 | 完整成本 | 每个实际 generation 的 Provider usage、响应 ID 与最终账单 | 不允许用估算账单替代 |
@@ -100,8 +100,8 @@ run manifest、每个已执行 attempt、停止原因和未执行数量都进入
 每个真实和本地运行必须核对：
 
 ```text
-constructedEnhancedOutputs == hookVerifiedOutputs + hookRejectedOutputs + hookUnobservedOutputs
-hookVerifiedOutputs == transportAdopted + changedAfterHook + transportUnobserved
+constructedEnhancedOutputs == hookObserved + hookChanged + hookMissing + hookAmbiguous + hookUnobserved
+transportAdopted <= hookObserved
 falseTransportAdoptionClaims == 0
 extensionContinuedAfterBlock == 0
 providerBaselineViolations == 0
@@ -110,7 +110,7 @@ crossComponentMutations == 0
 summaryContaminationHits == 0
 ```
 
-本节是指标唯一权威定义。constructed 输出在 hook 分为 verified/rejected/unobserved；只有 verified 再按 transport adopted/changed/unobserved 分账，其它 transport 事实仍保存但不称增强采用。`extensionContinuedAfterBlock` 只检查本扩展 block 后未继续构造/确认，transport 结果不作本扩展必达项。其余违规分别对照 Pi 转换/探针、MessageSource/opaque 归宿、跨组件修改和 summary 污染。
+本节是指标唯一权威定义。constructed 输出在本扩展 hook 分为 `observed | changed | missing | ambiguous | unobserved`；该分类只描述 handler 时点。transport adopted/changed/unobserved 另由记录型 Provider、真实响应或其它职责外证据分账，只有 hook observed 且独立 transport 证据成立时才称增强采用。hook 异常不进入 `extensionContinuedAfterBlock`：后者只检查本扩展在 `context` 阶段 block 后未继续构造/确认，transport 结果不作本扩展必达项。其余违规分别对照 Pi 转换/探针、MessageSource/opaque 归宿、跨组件修改和 summary 污染。
 
 禁用扩展验证只证明新 Pi 进程未加载本扩展及禁用动作不删除其数据；Pi 后续 session/tree/tool/compaction 仅作外部观测，不属于增强运行结论。
 
@@ -138,8 +138,8 @@ summaryContaminationHits == 0
 | Python 开发版本 | `.python-version`；兼容范围由 `pyproject.toml` | 重新锁定依赖并纵向验证 |
 | OpenViking 直接依赖与闭包 | `pyproject.toml`、`uv.lock` | 核对 schema/adapter 契约并重跑实际节点 |
 | Pi profile、任务/记忆模型和样本政策 | `validation/suite.json` | 生成新 resolved run manifest；Provider/模型变化先由用户决定 |
-| OpenViking 配置适配字段和凭据规则 | `config/openviking-adapter-contract.json` | 未经 schema 与适配器探针验证不得扩展支持 |
-| 请求预算、timeout 与 retry | 对应 Runtime/Payload profile 或责任模块 | profile/实现指纹变化使相关 evidence stale |
+| OpenViking VLM 配置字段与 schema | 锁定运行时的 `VLMConfig.model_json_schema()`，由 `scripts/openviking-config.py describe` 发布 | schema 指纹变化后复核稳定配置面，并重跑构造和真实能力探针；不维护 Provider 清单 |
+| 请求预算、timeout 与 retry | 对应 `MemoryRuntimeProfile`、`TaskContextBudget` 或责任模块 | profile/实现指纹变化使相关 evidence stale |
 | 版本、usage、账单、端口与运行结果 | run artifact/evidence | 只由 runner 实际观测，不回写为长期配置 |
 
 升级只修改对应权威入口；runner 解析实际坐标并生成带哈希的 resolved manifest，行为探针和 actual suite 通过后才替换稳定 evidence。长期文档引用权威来源或说明契约，不复制当前版本、模型和运行期测量值。

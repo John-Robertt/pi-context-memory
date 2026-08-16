@@ -14,7 +14,7 @@
 
 - `config/toolchain.json`、`.python-version` 与依赖锁形成项目内安装链，uv bootstrap 先校验摘要且不创建用户级 Python 入口；
 - `validation/suite.json` 是 Pi profile、任务/记忆模型和验证政策的机器入口，runner 实际观测版本；
-- `config/openviking-adapter-contract.json` 统一配置桥、TypeScript 校验和适配器 runner 的受审查字段/凭据/schema 契约；
+- `scripts/openviking-config.py` 从锁定 OpenViking 的 `VLMConfig` schema 发布稳定配置字段和完整 schema 指纹，并用 `OpenVikingConfig.from_dict()`、`get_vlm_instance()` 与真实生产探针判定精确配置能力；扩展不维护 Provider 清单；
 - 扩展与启动器从同一 OpenViking 基础配置解析 endpoint；stable evidence 绑定当前实现、验证规格、suite 和工具链；
 - 持久化 Pi session 当前 branch 的本地来源归档；
 - `toolResult.details.fullOutputPath` 与 `BashExecutionMessage.fullOutputPath` 经权威 entry 提取、locator 脱敏后的内容寻址副本；
@@ -23,16 +23,16 @@
 - 用户记忆模型 JSONC、预检凭据解析、无凭据值的运行配置、固定内部子进程环境、child 输出实时脱敏、项目启动器所有权和受管重启；版本化 `MemoryRuntimeProfile` 显式约束模型请求与客户端策略，Launcher 在 service readiness 后完成隔离生产 Session 探针并发布进程代际绑定的能力证明，扩展逐项核对证明后才建立工作上下文代际；
 - OpenViking Session append、commit、task polling 和 context assembly 只由长时记忆执行，并在 task completed、目标、来源与 assembly 核验后原子发布不可变 `MemoryCheckpoint`；
 - Session 记忆协调按 generation、精确路线前缀、watermark 与 `retentionBudgetIdentity` 管理不可拆 `RefreshTarget`，选择兼容 checkpoint 并从 Pi 权威来源形成 `VerifiedActiveDelta`；相同目标共享，未启动的同预算线性后继收敛，运行目标、分支、预算和迟到结果保持隔离；
-- 工作上下文优化不执行 OpenViking IO，只消费已核验 checkpoint+delta；可用组合立即构造，delta 超过当前预算时返回唯一 `checkpoint-refresh-required`，必要 refresh 完成后重算路线与 Provider profile；
+- 工作上下文优化不执行 OpenViking IO，只消费已核验 checkpoint+delta；可用组合立即构造，delta 超过当前预算时返回唯一 `checkpoint-refresh-required`，必要 refresh 完成后重算路线与 `TaskContextBudget`；
 - Provider 基线与记忆投影双边界：`pi-session-protocol.ts` 复用 Pi 的 `buildContextEntries`/`sessionEntryToContextMessages`/`convertToLlm` 建立基线，并从结构证据产生 `MessageSource`、`ControlBoundary` 与 `OpaqueProviderSegment`；
 - Pi 集成在 manual/threshold/overflow `session_before_compact` 返回 `{ cancel: true }`，在用户选择 summary 的 `session_before_tree` 返回空 summary；实际 entry 与本 handler 请求不一致时只记录 `host-behavior-unverified`，不修改其它 handler；
 - 交互 TUI 安装独立 `pi-footer-adapter.ts`，从 Pi 公开 session usage、`getContextUsage()` 与 footer data 显示模型、累计 usage、费用、Git branch 和 `(增强)`，shutdown 时恢复宿主 footer；显示与授权、预算和 compaction 配置隔离；
-- 当前任务 Provider、模型、API、base URL/compat、payload adapter、context window、输出上限、system prompt 和 active tools 形成版本化 `ProviderPayloadProfile`；同一 profile 同时约束增强历史与 CurrentTurn，进入授权证明，并在 hook 对实际 wire 的唯一 system/developer instruction、tools 和输出字段重新核对；
+- 当前任务 Provider、模型、API、context window、输出上限、system prompt 和 active tools 形成版本化 `TaskContextBudget`；Provider/API 只参与预算身份，不形成支持清单。相同预算约束增强历史与 CurrentTurn，构造证明绑定该预算；hook 只递归观察一次性 nonce 增强字符串并重新核对运行代际、路线、检查点和 delta；
 - 当前 user prompt 后的 assistant/tool messages 按 Provider 基线解析为不可拆 `ToolBatch`；call/result ID 在全回合唯一，event taskContent/完成状态与 Pi 权威来源一致时才可 projected；预算内批次保持 raw，超预算时按最旧批次优先形成保持调用/结果协议外壳的确定性 projected 批次，opaque、协议不完整或来源不匹配内容 fail-closed；
 - 来源归档与召回索引以 `MessageSource` 的完整 taskContent、完成状态与两个哈希为准；OpenViking append 对单条派生索引投影限为 32 KiB、单批 JSON 限为 256 KiB，省略时显式保留原始字节数、taskContentHash 和权威来源展开入口，不冒充原文；`fullOutputRef` 在 blob 完整写入后原子发布进同一来源记录，每次请求来源屏障都重验 blob 大小与 SHA-256；权威 entry 明示 locator 的请求在 allow 前完成该来源屏障并精确脱敏，opaque 单元无法发布稳定引用时 fail-closed；
 - 归档格式身份不匹配时丢弃该 session 归档目录并从当前 branch 重建，不存在读取其它格式的路径。
 
-自动上下文请求内部只产生 `allow(enhancedContext, proof)`、`refresh-required` 或 `block(fault)`；`refresh-required` 由 Session 协调转换为唯一必要刷新并重算，最终对 Pi 只返回 allow 或 block，block 调用 `ctx.abort()` 且不携带原始 Pi messages。constructed 输出通过一次性 nonce、运行代际、能力 proof ID、完整 request route fingerprint、HistoricalRoute、MemoryCheckpoint、VerifiedActiveDelta、retention budget、完整增强内容哈希和 `openai-completions-payload-v1` 有序消息哈希，在本扩展 `before_provider_request` 时点重新读取 runtime、完整当前路线、检查点、delta 与 Provider profile 后分为 verified/rejected；其中任一身份或 payload 变化均拒绝。未到达则记 unobserved，记录型 Provider 独立分类 transport。未知公开 block、不完整、孤立、重复或错配 ToolBatch 和含不可投影内容的完整批次形成 opaque，当前授权无法无损表示时直接 block。机会性后台刷新失败保留旧 checkpoint+delta，不锁存；必要工作上下文和来源归档故障锁存当前运行代际，同代际不自动恢复，显式新代际才重新验证；用户状态仅为初始化中、增强记忆和故障。
+自动上下文请求内部只产生 `allow(enhancedContext, proof)`、`refresh-required` 或 `block(fault)`；`refresh-required` 由 Session 协调转换为唯一必要刷新并重算，最终对 Pi 只返回 allow 或 block，block 调用 `ctx.abort()` 且不携带原始 Pi messages。constructed 输出以一次性 nonce、运行代际、能力 proof ID、完整 request/HistoricalRoute、MemoryCheckpoint、VerifiedActiveDelta、retention budget、增强内容哈希和 `TaskContextBudget` 形成扩展内证明；本扩展 `before_provider_request` handler 只在可见 payload 任意层级观察唯一 nonce 字符串，并重新读取扩展自有运行与路线身份，结果分为 `observed | changed | missing | ambiguous`。观察异常发布诊断但不 abort、不锁存故障；未到达记 unobserved，最终 transport 采用仅由独立外部观测证明。未知公开 block、不完整、孤立、重复或错配 ToolBatch 和含不可投影内容的完整批次形成 opaque，当前授权无法无损表示时直接 block。机会性后台刷新失败保留旧 checkpoint+delta，不锁存；必要工作上下文和来源归档故障锁存当前运行代际，同代际不自动恢复，显式新代际才重新验证；用户状态仅为初始化中、增强记忆和故障。
 
 ## 4. 当前证据边界
 
@@ -40,10 +40,10 @@
 
 - [`validation/evidence/source-archive.json`](../validation/evidence/source-archive.json)：Provider 基线、完整 ToolBatch、孤立/重复/不完整/opaque 与 summary 边界、来源隔离、branch 过滤、toolResult/Bash locator 脱敏、完整输出原子发布与有界恢复、复制超时单一错误出口和归档格式重建；
 - [`validation/evidence/source-recall.json`](../validation/evidence/source-recall.json)：来源索引、当前路线过滤、taskContent 展开和权威核对；
-- [`validation/evidence/memory-model-runtime.json`](../validation/evidence/memory-model-runtime.json)：配置与凭据隔离、显式 `MemoryRuntimeProfile` 映射、进程所有权和三态诊断；当前 suite 记忆坐标在真实受管 OpenViking 上完成隔离 Session append、commit、task 终态、来源核验 assembly 与清理，实际 task/usage 绑定 profile、Provider、模型、配置、launch ID 和 child PID；进程退出撤销能力，显式重启以新子进程和 proof 恢复；
-- [`validation/evidence/context-enhancement.json`](../validation/evidence/context-enhancement.json)：`allow | refresh-required | block`、checkpoint+delta、RefreshTarget 并发/预算/迟到隔离、Provider proof、hook/transport 分账、CurrentTurn raw/projected、来源故障与新代恢复；真实 Pi 基准组合中 manual/threshold/overflow 均由本 handler 取消且无 compaction entry，tree 空 summary 无请求/entry，后续受控 handler 恢复 native summary 时形成 `host-behavior-unverified`；真实交互 TUI 完成 footer 安装、任务响应刷新和卸载；权威 fixture 中的三类污染哨兵按记忆投影、受控 OpenViking append 与 assembly 分阶段保持隔离；
+- [`validation/evidence/memory-model-runtime.json`](../validation/evidence/memory-model-runtime.json)：锁定 OpenViking VLM schema、任意 Provider 字符串的上游构造判定、配置与凭据隔离、显式 `MemoryRuntimeProfile` 映射、进程所有权和三态诊断；当前 suite 记忆坐标在真实受管 OpenViking 上完成隔离 Session append、commit、task 终态、来源核验 assembly 与清理，实际 task/usage 绑定 profile、Provider、模型、配置、launch ID 和 child PID；进程退出撤销能力，显式重启以新子进程和 proof 恢复；
+- [`validation/evidence/context-enhancement.json`](../validation/evidence/context-enhancement.json)：`allow | refresh-required | block`、checkpoint+delta、RefreshTarget 并发/预算/迟到隔离、协议无关 `TaskContextBudget`、hook 观察/transport 分账、CurrentTurn raw/projected、来源故障与新代恢复；真实 Pi 基准组合中 manual/threshold/overflow 均由本 handler 取消且无 compaction entry，tree 空 summary 无请求/entry，后续受控 handler 恢复 native summary 时形成 `host-behavior-unverified`；真实交互 TUI 完成 footer 安装、任务响应刷新和卸载；权威 fixture 中的三类污染哨兵按记忆投影、受控 OpenViking append 与 assembly 分阶段保持隔离；
 
-[`validation/evidence/context-quality.json`](../validation/evidence/context-quality.json) 是通过的 actual paired diagnostic：真实受管 OpenViking 和当前记忆模型完成必要 refresh、MemoryCheckpoint 发布与后台刷新并行；当前实际任务 Provider/模型采用 hook-verified 增强请求，native/enhanced 返回相同 checker-valid 答案，增强任务输入显著更小。增强 arm 同时在真实 Pi 中证明 manual compaction 取消、tree 空 summary 无请求/entry，且 compaction/branch/retained-tail 污染哨兵未进入任务 Provider payload。该结果只证明当前单一 fixture，不证明复杂长任务可靠性或完整账单成本优势。
+[`validation/evidence/context-quality.json`](../validation/evidence/context-quality.json) 是通过的 actual paired diagnostic：真实受管 OpenViking 和当前记忆模型完成必要 refresh、MemoryCheckpoint 发布与后台刷新并行；当前实际任务 Provider/模型在 hook 观察到增强字符串并返回有效响应，native/enhanced 得到相同 checker-valid 答案，增强任务输入显著更小。增强 arm 同时在真实 Pi 中证明 manual compaction 取消、tree 空 summary 无请求/entry，且 compaction/branch/retained-tail 污染哨兵未进入任务 Provider payload。该结果只证明当前单一 fixture，不证明复杂长任务可靠性或完整账单成本优势。
 
 现有 evidence 尚未证明：
 

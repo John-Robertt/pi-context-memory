@@ -2,7 +2,7 @@
 
 ## 1. 当前责任
 
-本模块是系统与 Pi 的唯一集成边界。它观察 Pi 生命周期，通过 `pi-session-protocol.ts` 将版本化 session entry 和消息形态规范化为下游稳定输入，注册用户命令与召回工具，并在 Pi 提供的 hook 中构造增强上下文、请求摘要抑制并核验本扩展自己的请求证明。它不拥有 Pi 的 Provider transport、其它扩展或扩展执行顺序。
+本模块是系统与 Pi 的唯一集成边界。它观察 Pi 生命周期，通过 `pi-session-protocol.ts` 将版本化 session entry 和消息形态规范化为下游稳定输入，注册用户命令与召回工具，并在 Pi 提供的 hook 中构造增强上下文、请求摘要抑制和观察本扩展构造内容。它不拥有 Pi 的 Provider transport、其它扩展或扩展执行顺序。
 
 来源、OpenViking Session 和记忆模型能力由长时记忆模块拥有；运行与路线决定由 Session 记忆协调拥有；有界消息构造由工作上下文优化拥有；排序与来源展开由召回模块拥有；OpenViking 子进程由项目启动器拥有。
 
@@ -51,8 +51,7 @@ ControlBoundary = {
 Pi 适配器发现结构化 `fullOutputPath` 时，只用该结构化值和当前版本确定生成的文本片段做精确配对，把匹配路径替换为基于 entry ID 的稳定“完整输出可展开”标记，并把原路径作为瞬时 `FullOutputCandidate` 交给长时记忆复制。这里的文本处理是对已知 locator 的精确脱敏，不解析正文语义。candidate 不参与 task-content hash，不持久化，也不进入 OpenViking、recall、增强 Provider payload 或日志；长时记忆完成 blob 发布后，只保存稳定 `fullOutputRef { blobId, sha256, size }`。
 
 其它扩展 custom 完全沿用 Pi Provider 基线：全 text 可形成 MessageSource；含 image/unsupported public block 的整条 message 或完整 ToolBatch 成为请求内存中的 `OpaqueProviderSegment { reason: "unsupported-content", entryIds, providerMessages, providerViewHash }`；孤立结果、重复调用 ID、缺失结果或错配形成 `reason: "tool-protocol"`，不得发布部分 MessageSource。providerMessages 只能是 `convertToLlm`/版本探针确认的有序输出，不含 raw entry/details；它原样保留，但不持久化、不进 OpenViking/log/stable evidence，也不能被 checkpoint 覆盖。预算要求替换却无法保持该有序 Provider view 时才报告 `opaque-content-unrepresentable`。
-
-`HistoricalRouteKey` 绑定 prompt 前 Pi Provider 基线中实际保留的有序消息、完成状态、协议关系及无文本 control 身份；完整 request route fingerprint 绑定当时当前 parent 链，PayloadProofAdapter 绑定 CurrentTurn 的实际 Provider 消息与顺序。记忆投影可以替代已经由 MessageSource/检查点覆盖的历史内容，但不得静默删除未被覆盖的 Pi Provider 内容。compaction 前仍在当前 parent 链上的原始 message entry 按自身身份读取；branch summary 的 `fromId` 只用于边界身份，不展开废弃 branch。
+`HistoricalRouteKey` 绑定 prompt 前 Pi Provider 基线中实际保留的有序消息、完成状态、协议关系及无文本 control 身份；完整 request route fingerprint 绑定当时当前 parent 链；`TaskContextBudget` 绑定 CurrentTurn 使用的任务模型窗口、输出预留、system/tool 开销和保守估算身份。记忆投影可以替代已经由 MessageSource/检查点覆盖的历史内容，但不得静默删除未被覆盖的 Pi Provider 内容。compaction 前仍在当前 parent 链上的原始 message entry 按自身身份读取；branch summary 的 `fromId` 只用于边界身份，不展开废弃 branch。
 
 临时 session 没有可恢复来源，不能形成跨重启增强记忆。本扩展保持初始化/故障并说明该边界；是否继续临时 session、切换持久化 session 或禁用扩展由用户决定。
 
@@ -62,8 +61,8 @@ Pi 适配器发现结构化 `fullOutputPath` 时，只用该结构化值和当�
 
 - Pi 生命周期到 Session 记忆协调的稳定事件输入；
 - `context` 阶段的增强请求闸门；
-- 为工作上下文优化提供 ProviderPayloadProfile；
-- `before_provider_request` 阶段对本扩展增强证明的时点核验；
+- 为工作上下文优化提供协议无关的 `TaskContextBudget`；
+- `before_provider_request` 阶段对本扩展构造内容和时点身份的观察诊断；
 - `session_before_compact` 中请求取消 Pi compaction；
 - `session_before_tree` 中请求无摘要导航；
 - `recall_session(search|read_source)`；
@@ -88,19 +87,19 @@ Pi 适配器发现结构化 `fullOutputPath` 时，只用该结构化值和当�
 
 扩展抛错不是阻断机制。最外层 handler 捕获所有可预期错误，并把它们转换为确定的授权失败；返回原始 Pi messages 不是合法结果。
 
-### 4.2 Provider 请求时点自检
+### 4.2 Provider hook 观察
 
-`before_provider_request` 重新读取并通过能力模块核对当前 runtime snapshot，再使用与当前任务 Provider API 匹配的 `PayloadProofAdapter`，把本 handler 被调用时可见的 payload 归一化为模型、系统、工具 schema 与有序消息表示，并核对本扩展此前发布的增强证明及其构造时能力 proof ID。需要绑定的完整字段由 [`../system/context-enhancement.md`](../system/context-enhancement.md) §8.2 唯一定义。
+`before_provider_request` 重新读取当前 runtime snapshot、任务预算、完整路线、检查点和 delta，并在本 handler 可见的 payload 任意层级中寻找本扩展一次性 nonce。恰好一个字符串同时携带 nonce 且内容哈希与构造结果一致时记 `observed`；缺失、正文改变或出现多份分别记 `missing | changed | ambiguous`。这项检查不解释 Provider wire 协议，也不要求任务 API 存在扩展适配器。
 
-核验成功只证明 handler 时点一致并记 verified；失败记 hookRejected、锁存到当前 session 与运行代际、停止自身确认并 abort，只有显式新代际可以重新授权。Pi 按既定顺序继续调用其它 handler；本模块的授权只约束自身增强输出。
+观察异常只发布一次脱敏诊断，不调用 `abort()`、不锁存运行代际，也不把任务请求标记为扩展故障。`context` 已经完成的扩展自有来源、路线、运行能力和预算判定不会被放宽；hook 只说明本 handler 时点看见了什么，不能撤销 Pi 已开始的请求，也不能约束后续 handler。
 
-未到达本 handler 的 constructed 输出由 runner 记 hookUnobserved。transport 只由职责外观测分类；本扩展不从自身日志推断，也不自动修改其它组件。
+未到达本 handler 的 constructed 输出由 runner 记 `unobserved`。最终 transport 是否采用、改变或未观察，只能由职责外的记录型 Provider/真实响应证据分类；本扩展不从自身日志推断，也不自动修改其它组件。
 
-### 4.3 Provider payload profile
+### 4.3 任务上下文预算
 
-Pi 集成为当前任务 Provider、模型、API、base URL/compat 与唯一 PayloadProofAdapter 发布版本化 `ProviderPayloadProfile`，统一描述模型上下文窗口、可请求输出上限、system prompt 与 tool schema 的规范化大小、协议 framing、传输余量和估算器身份。该 profile 只提供边界事实，不选择保留哪些任务内容；预算分配由工作上下文优化负责。`before_provider_request` 接受 Pi OpenAI-completions adapter 合法产生的单一首项 `system` 或 `developer` instruction，并核对其内容哈希、tools 与 output 字段；其它 instruction 数量、位置或内容均拒绝。
+Pi 集成从当前任务模型发布的 Provider、模型、API、上下文窗口和最大输出量，以及当前 system prompt、active tool schema，构造版本化 `TaskContextBudget`。固定开销采用稳定 JSON UTF-8 字节数作为 token 保守上界，并额外扣除 framing 与 transport 余量；工作上下文优化只在剩余消息预算内选择内容。
 
-profile 从当前 Pi 模型和本 handler 可见的实际请求接口推导，不读取 footer 百分比，也不由用户记忆模型配置决定。`model_select`、system prompt、active tools、Provider API 或适配版本变化使旧 profile 与预算缓存失效；Provider 请求时点自检核对可见 payload 与 profile 一致，transport 最终采用另由外部观测确定。
+Provider、模型和 API 只进入预算身份，使请求条件变化后重新计算；它们不形成支持清单或准入判断。任务 API 无需拥有扩展 payload adapter，只要 Pi 发布正整数窗口和输出上限就能计算预算。预算不读取 footer 百分比，不由记忆模型配置决定，也不声称等于最终 wire token 计数；hook 只对构造字符串和扩展自有身份作协议无关观察。
 
 ## 5. Pi compaction 与 tree hook
 
@@ -128,7 +127,7 @@ Pi session 中已有 compaction/branch summary 的身份和分支关系仍用于
 
 交互模式使用宿主版本适配器保留 Pi footer 的模型、累计 usage、费用与 branch 信息，并把任务模型上下文用量标识为 `已用比例/窗口 (增强)`；该数值沿用 Pi 对最近任务 Provider usage 与尾部消息估算的语义，不表示记忆模型用量。扩展不修改 Pi 的持久化 compaction setting。非交互模式不安装 footer，只输出同语义观测。
 
-footer 是观测而非授权输入。上下文构造只使用 `ProviderPayloadProfile`；显示失败或响应返回前的估算偏差不能放宽预算、触发回退或改变运行代际。配置文件变化只刷新目标配置诊断，不改变当前 ready 运行代际；重启和能力重新验证由显式命令触发。
+footer 是观测而非授权输入。上下文构造只使用 `TaskContextBudget`；显示失败或响应返回前的估算偏差不能放宽预算、触发回退或改变运行代际。配置文件变化只刷新目标配置诊断，不改变当前 ready 运行代际；重启和能力重新验证由显式命令触发。
 
 ## 7. 来源与召回集成
 
@@ -157,11 +156,10 @@ agent_settled
   → 以完整用户回合后的当前路线安排后台检查点刷新
 
 model_select
-  → 清除 pending 请求证明和预算缓存，重新计算 retentionBudgetIdentity；旧 refresh 只有完整 identity 仍一致时才可共享
-  → 核对新模型 API 的 PayloadProofAdapter
+  → 清除 pending 构造证明和预算缓存，重新计算 `TaskContextBudget` 与 retentionBudgetIdentity；旧 refresh 只有完整 identity 仍一致时才可共享
 
 context / before_provider_request
-  → 授权、应用并核验增强请求
+  → `context` 授权并应用增强请求；Provider hook 只记录协议无关观察
 
 session_tree / session replacement / reload
   → 以操作后的 session 和 leaf 重建
@@ -178,9 +176,9 @@ session_shutdown
 
 本模块必须证明：
 
-- 每个 constructed 输出在 hook 分入 verified/rejected/unobserved；只有 verified 再按 transport adopted/changed/unobserved 分类；
-- 声明支持的任务 Provider/模型/API 具有实际响应证据，本扩展不把 controlled adapter 或自身日志提升为最终采用；
-- 本扩展内部配置、服务、模型、来源、路线、预算和时点 proof 失败时，不确认增强输出；
+- 每个 constructed 输出在 hook 分入 `observed | changed | missing | ambiguous | unobserved`；最终 transport 事实始终由独立外部观测分类；
+- 任务 Provider、模型或 API 名称不形成扩展支持清单；当前实际任务组合的增强采用只由真实响应或记录型 Provider 证据证明；
+- 本扩展内部配置、服务、记忆模型、来源、路线和预算失败时在 `context` 阶段不确认增强输出；hook 观察异常只诊断；
 - Provider 基线与 Pi 转换一致；Pi 可见 foreign/opaque 单元不丢失，thinking/private metadata/locator 不进长期记忆；
 - 多工具和大输出 current turn 保持 Provider 协议合法；中间 `turn_end` 不触发 checkpoint refresh，`agent_settled` 才形成完整用户回合刷新边界；
 - compaction/tree handler 返回与实际宿主请求/entry 结果分别记录，不一致时只发布兼容性诊断；

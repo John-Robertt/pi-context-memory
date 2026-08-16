@@ -10,7 +10,7 @@
 
 扩展启用期间，本扩展负责任务记忆、自己构造的工作上下文和相关 hook 处理。Pi 继续负责 Agent、session 历史、工具执行、tree、branch、扩展调度、Provider transport 和用户交互；本扩展不要求 Pi 或其它扩展改变行为。
 
-本扩展在 context 只产生 `allow(enhancedContext, proof) | block(fault)`。allow 输出到达本 Provider handler 后分为 verified/rejected，未到达则记 unobserved；block 停止本扩展自己的增强处理并诊断。
+本扩展在 `context` 只产生 `allow(enhancedContext, proof) | block(fault)`。allow 输出到达本 Provider handler 后分为 `observed | changed | missing | ambiguous`，未到达则记 `unobserved`；这些只描述本 handler 时点。block 停止本扩展自己的增强处理并诊断。
 
 Pi 或其它扩展在本 handler 之后的变化不属于本扩展证明。最终采用由 transport 观测确认；无法确认时显示兼容性结论，由用户决定是否继续、调整组合或禁用扩展。
 
@@ -74,8 +74,8 @@ Pi 或其它扩展在本 handler 之后的变化不属于本扩展证明。最�
 - 必要检查点刷新失败、到达支持 profile 的运行边界，或当前路线无法形成可信有界历史；
 - OpenViking 返回未知、不完整或不可信内容；
 - 当前回合无法在保持工具协议和必要信息的前提下进入预算；
-- 当前任务 Provider API 没有可核验的 payload 适配；
-- 本扩展的 Provider hook 时点无法核对与当前请求一致的增强证明。
+
+任务 Provider/API 名称不形成支持清单；Provider hook 看不到、看到多份或看到被改变的增强字符串时，只提示观察异常，不调用 `abort()`、不锁存运行故障。最终 transport 是否采用仍由独立观测决定。
 
 故障发生后：
 

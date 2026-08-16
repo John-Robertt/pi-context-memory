@@ -43,21 +43,10 @@ export interface MemoryModelSetting {
   api_version?: string;
 }
 
-export interface ProviderCapability {
-  name: string;
-  required: string[];
-  optional: string[];
-  credential: "api-key" | "api-key-or-native" | "optional-api-key-or-native";
-  apiKeyRequiredModelPrefixes: string[];
-}
-
 export interface MemoryModelCapabilities {
   openVikingVersion: string;
-  providers: ProviderCapability[];
   settingFields: Record<string, unknown>;
   vlmSchemaSha256: string;
-  adapterContractSha256: string;
-  litellmCatalogUrl: string;
 }
 
 export interface CompiledOpenVikingConfig {
@@ -305,53 +294,27 @@ export function describeMemoryModelCapabilities(
 }
 
 function memoryModelTemplate(capabilities: MemoryModelCapabilities): string {
-  const lines = [
+  return [
     "{",
-    "  // 从下方选择一个 OpenViking 已识别的 Provider 示例，用对应对象替换 null。",
-    "  // api_key 可直接填写 key，或用 $NAME / ${NAME} 引用启动器环境变量。",
+    `  // Provider、模型和连接字段来自当前 OpenViking ${capabilities.openVikingVersion} 的 VLM schema。`,
+    "  // OpenViking 配置加载和当前受管进程的真实能力探针共同决定精确配置是否可用。",
+    "  // api_key 可直接填写 key，或用 $NAME / ${NAME} 引用启动器环境变量；省略时不注入凭据。",
+    "  // api_base 与 api_version 仅在目标 Provider 需要时填写。",
     "  // 本文件包含直接 key 时必须保持仅当前用户可读写。",
-    "  // 保存有效配置后，在 Pi 中执行 /restart-viking；当前真实能力探针通过后才授权增强。",
+    "  // 保存有效配置后，在 Pi 中执行 /restart-viking。",
     "  \"memoryModel\": null,",
     "",
-    `  // 当前 OpenViking ${capabilities.openVikingVersion} 配置适配器识别的 Provider：`,
-  ];
-  for (const provider of capabilities.providers) {
-    const model = provider.name === "azure" ? "<deployment-name>" : provider.name === "litellm" ? "<litellm-provider>/<model-id>" : "<model-id>";
-    const apiKeyEnvironment = provider.name === "litellm"
-      ? "SOURCE_API_KEY"
-      : `${provider.name.toUpperCase().replaceAll("-", "_")}_API_KEY`;
-    const credential = provider.credential === "api-key"
-      ? "api_key 必填，可直接填写或引用环境变量"
-      : provider.name === "litellm"
-        ? "OpenRouter 等 API-key 路由必须填写 api_key；无 key 不继承 ambient 认证环境"
-        : "api_key 可选；省略时不向 OpenViking 注入凭据环境变量";
-    lines.push(`  // ${provider.name}:`);
-    if (provider.name === "litellm") {
-      lines.push("  // LiteLLM 是多来源路由层，model 使用 <litellm-provider>/<model-id>。");
-      lines.push("  // 显式云路由示例：bedrock/<model-id>、sagemaker/<endpoint-name>、vertex_ai/<model-id>。");
-      lines.push("  // 自定义 OpenAI-compatible：model 使用 openai/<model-id>，并填写 api_base。");
-      lines.push(`  // 更多路由和来源认证以 LiteLLM 当前目录为准：${capabilities.litellmCatalogUrl}`);
-    }
-    lines.push("  // {");
-    lines.push(`  //   \"provider\": \"${provider.name}\",`);
-    lines.push(`  //   \"model\": \"${model}\",`);
-    lines.push(`  //   \"api_key\": \"$${apiKeyEnvironment}\", // 也可直接填写 key；${credential}`);
-    const fields = [...provider.required, ...provider.optional];
-    fields.forEach((field) => {
-      const required = provider.required.includes(field);
-      const placeholder = field === "api_base"
-        ? provider.name === "litellm" ? "https://<custom-endpoint>" : "https://<service-endpoint>"
-        : "<api-version>";
-      const fieldNote = provider.name === "litellm" && field === "api_base"
-        ? "可选，仅用于自定义端点或要求显式端点的来源"
-        : required ? "必填" : "可选";
-      lines.push(`  //   \"${field}\": \"${placeholder}\", // ${fieldNote}`);
-    });
-    lines.push("  // }");
-    lines.push("");
-  }
-  lines.push("}", "");
-  return lines.join("\n");
+    "  // 示例：",
+    "  // \"memoryModel\": {",
+    "  //   \"provider\": \"<openviking-provider>\",",
+    "  //   \"model\": \"<model-id-or-route>\",",
+    "  //   \"api_key\": \"$PROVIDER_API_KEY\",",
+    "  //   \"api_base\": \"https://<service-endpoint>\",",
+    "  //   \"api_version\": \"<api-version>\"",
+    "  // }",
+    "}",
+    "",
+  ].join("\n");
 }
 
 export async function ensureMemoryModelConfig(
@@ -404,8 +367,7 @@ export async function normalizeMemoryModelSetting(
   const unknown = Object.keys(value).filter((field) => !knownFields.has(field)).sort();
   if (unknown.length > 0) throw new Error(`Unknown memory model setting fields: ${unknown.join(", ")}`);
   const provider = typeof value.provider === "string" ? value.provider.trim().toLowerCase() : "";
-  const descriptor = capabilities.providers.find((item) => item.name === provider);
-  if (!descriptor) throw new Error(provider ? "Unsupported OpenViking VLM provider" : "Memory model provider is required");
+  if (!provider) throw new Error("Memory model provider is required");
   const model = typeof value.model === "string" ? value.model.trim() : "";
   if (!model) throw new Error("Memory model ID is required");
 
@@ -415,22 +377,11 @@ export async function normalizeMemoryModelSetting(
     if (typeof apiKey !== "string" || !apiKey.trim()) throw new Error("api_key must be a non-empty string");
     normalized.api_key = apiKey.trim();
   }
-  const normalizedModel = model.toLowerCase();
-  const apiKeyRequired = descriptor.credential === "api-key"
-    || descriptor.apiKeyRequiredModelPrefixes.some((prefix) => normalizedModel.startsWith(prefix.toLowerCase()));
-  if (apiKeyRequired && !normalized.api_key) {
-    throw new Error(`api_key is required for OpenViking provider ${provider}`);
-  }
-  const acceptedConnections = new Set([...descriptor.required, ...descriptor.optional]);
   for (const field of ["api_base", "api_version"] as const) {
     const input = value[field];
     if (input === undefined || input === "") continue;
-    if (!acceptedConnections.has(field)) throw new Error(`${field} is not supported for OpenViking provider ${provider}`);
     if (typeof input !== "string" || !input.trim()) throw new Error(`${field} must be a non-empty string`);
     normalized[field] = field === "api_base" ? input.trim().replace(/\/+$/, "") : input.trim();
-  }
-  for (const field of descriptor.required) {
-    if (!normalized[field as keyof MemoryModelSetting]) throw new Error(`OpenViking provider ${provider} requires ${field}`);
   }
   return normalized;
 }
